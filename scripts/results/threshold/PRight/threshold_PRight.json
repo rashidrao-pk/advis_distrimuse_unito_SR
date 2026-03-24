@@ -1,0 +1,22 @@
+{
+  "safety_area": "PRight",
+  "mode": "test",
+  "suffix": "PRight_64",
+  "epochs_trained": 1000,
+  "threshold": 0.5070022806823254,
+  "threshold_strategy": "f1c",
+  "offset": 1,
+  "sigma": 1.0,
+  "quantile": 1.0,
+  "score_max": 0.6493170489668848,
+  "score_mean": 0.08616227298536719,
+  "score_std": 0.04599790599406874,
+  "score_p99": 0.30069976597249604,
+  "n_images": 5864,
+  "score_csv": "E:\\PHD\\datacloud_data\\repos\\my_git\\distrimuse_unito\\scripts\\results\\threshold\\PRight\\test_scores_PRight_OFF-o2-q0.999-s1.5.csv",
+  "computed_at": "2026-03-16T15:21:18",
+  "best_method": "OFF-o2-q0.999-s1.5",
+  "best_binormal_auc": 10.10660436935064,
+  "best_recall": 0.6666666666666666,
+  "best_f1": 0.5833333333333334
+}

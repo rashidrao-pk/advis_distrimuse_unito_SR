@@ -1,0 +1,22 @@
+{
+  "safety_area": "PLeft",
+  "mode": "test",
+  "suffix": "PLeft_64",
+  "epochs_trained": 1000,
+  "threshold": 0.4649680554866791,
+  "threshold_strategy": "f1c",
+  "offset": 1,
+  "sigma": 1.0,
+  "quantile": 1.0,
+  "score_max": 0.8392303586006165,
+  "score_mean": 0.11726926149238831,
+  "score_std": 0.10532245138543712,
+  "score_p99": 0.6223340082168577,
+  "n_images": 5864,
+  "score_csv": "E:\\PHD\\datacloud_data\\repos\\my_git\\distrimuse_unito\\scripts\\results\\threshold\\PLeft\\test_scores_PLeft_OFF-o1-q1.0-s1.5.csv",
+  "computed_at": "2026-03-16T15:46:45",
+  "best_method": "OFF-o1-q1.0-s1.5",
+  "best_binormal_auc": 5.121962549871454,
+  "best_recall": 0.9036144578313253,
+  "best_f1": 0.8498583569405099
+}

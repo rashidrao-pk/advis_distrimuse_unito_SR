@@ -1,0 +1,22 @@
+{
+  "safety_area": "RoboArm",
+  "mode": "test",
+  "suffix": "RoboArm_64",
+  "epochs_trained": 1000,
+  "threshold": 0.40554058700799955,
+  "threshold_strategy": "f1c",
+  "offset": 1,
+  "sigma": 1.0,
+  "quantile": 1.0,
+  "score_max": 0.6844995778799057,
+  "score_mean": 0.11864504265955983,
+  "score_std": 0.044569677423213855,
+  "score_p99": 0.2717813866823912,
+  "n_images": 5864,
+  "score_csv": "E:\\PHD\\datacloud_data\\repos\\my_git\\distrimuse_unito\\scripts\\results\\threshold\\RoboArm\\test_scores_RoboArm_OFF-o1-q0.99-s0.0.csv",
+  "computed_at": "2026-03-16T16:19:11",
+  "best_method": "OFF-o1-q0.99-s0.0",
+  "best_binormal_auc": 6.70247522340274,
+  "best_recall": 0.72,
+  "best_f1": 0.8372093023255814
+}

@@ -1,0 +1,2 @@
+TP,TN,FP,FN,accuracy,precision,recall,f1,specificity,balanced_accuracy,component
+0,5813,23,25,0.9918102712847637,0.0,0.0,0.0,0.9960589444825223,0.49802947224126115,RoboArm
