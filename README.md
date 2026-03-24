@@ -21,9 +21,9 @@ ssh -X unito@distrimuse
 ### 1.1 Repo 
 
 ```bash
-
+cd ~/advis/
 git clone https://github.com/rashidrao-pk/distrimuse_unito_SR
-# cd ~/data/distrimuse_unito_SR
+cd ~/advis/distrimuse_unito_SR
 ```
 
 ### 1.2 Setup Image Streaming
@@ -38,9 +38,10 @@ b) use Smart Robotics Repo,
 
 ```bash
 git clone https://github.com/smart-robotics/distrimuse-image-broadcaster
-cd ~/data/distrimuse-image-broadcaster
+cd ~/advis/distrimuse-image-broadcaster
 pixi install
 cp config/config.yaml.example config/config.yaml
+cp ~/advis/distrimuse_unito_SR/scripts/pixi_save_frames.py ~/advis/distrimuse-image-broadcaster
 ```
 
 #### ONLY ONCE
@@ -56,24 +57,59 @@ pixi run ros2 topic echo /camera/front_view/image_raw --once
 
 ### 1.2 Tranport Data
 
+Ship Datasets to server
+
+**Dataset v2**
+
+```bash
+
+# Copy Raw Videos 
+
+scp D:\DS\SR\v2\camera1_20251210_142154_normal.mp4 unito@distrimuse:/home/unito/advis/DS/SR/v2
+
+scp D:\DS\SR\v2\camera1_20251210_150045_box_fall.mp4 unito@distrimuse:/home/unito/advis/DS/SR/v2
+
+scp D:\DS\SR\v2\camera1_20251210_151444_fallen_operator.mp4 unito@distrimuse:/home/unito/advis/DS/SR/v2
+
+## Copy Processed Data
+scp D:\DS\SR\v2\processed.zip unito@distrimuse:/home/unito/advis/DS/SR/v2
+scp D:\DS\SR\v2\refined.zip unito@distrimuse:/home/unito/advis/DS/SR/v2
+scp D:\DS\SR\v2\masks.zip unito@distrimuse:/home/unito/advis/DS/SR/v2
+
+### TEST Data
+scp D:\DS\SR\v2\camera1_20251210_150045_box_fall.zip unito@distrimuse:/home/unito/advis/DS/SR/v2
+scp D:\DS\SR\v2\camera1_20251210_151444_fallen_operator.zip unito@distrimuse:/home/unito/advis/DS/SR/v2
+
+
+cd /home/unito/advis/DS/SR/v2
+unzip processed.zip -d /home/unito/advis/DS/SR/v2
+unzip refined.zip -d /home/unito/advis/DS/SR/v2
+unzip masks.zip -d /home/unito/advis/DS/SR/v2
+
+unzip camera1_20251210_150045_box_fall.zip -d /home/unito/advis/DS/SR/v2
+unzip camera1_20251210_151444_fallen_operator.zip -d /home/unito/advis/DS/SR/v2
+```
+
+**Dataset V3**
+
 ```bash
 scp D:/DS/SR/v3/recording_20260313_133316.zip unito@HPZ2miniDistriMuSe:
-cd /home/unito/data
+cd /home/unito/distrimuse
 mkdir -p bags
 unzip recording_20260313_133316.zip -d bags
-find /home/unito/data/bags/recording_20260313_133316 -maxdepth 2 -type f
+find /home/unito/advis/bags/recording_20260313_133316 -maxdepth 2 -type f
 ```
 
 Verify ROS:
 ```bash
-cd ~/data/distrimuse-image-broadcaster
-pixi run ros2 bag info /home/unito/data/bags/recording_20260313_133316
+cd ~/advis/distrimuse-image-broadcaster
+pixi run ros2 bag info /home/unito/advis/bags/recording_20260313_133316
 ```
 
 Now Play the video
 
 ```bash
-pixi run replay /home/unito/data/bags/recording_20260313_133316/
+pixi run replay /home/unito/advis/bags/recording_20260313_133316/
 ```
 
 ```bash
@@ -83,12 +119,16 @@ pixi run replay /home/unito/data/bags/recording_20260313_133316/
 pixi run python -c "import cv2, numpy as np; img=np.zeros((300,300,3)); cv2.imshow('test', img); cv2.waitKey(0)"
 ```
 
+```bash
+cp ~/advis/distrimuse_unito_SR/scripts/pixi_save_frames.py ~/advis/distrimuse-image-broadcaster
+```
+
 ### 1.3 Replay or Save frames
 
 run following command to `replay` frames
 ```bash
 ## Run in Termiinal 1
-pixi run replay /home/unito/data/bags/recording_20260313_133316/ --no-display
+pixi run replay /home/unito/advis/bags/recording_20260313_133316/ --no-display
 ```
 follow script or create to save_frames
 ```bash
@@ -100,23 +140,99 @@ and run following command to `Save` frames
 1️⃣  Custom save directory + one camera
 
 ```bash
-pixi run python pixi_save_frames.py --ros-args -p save_dir:=/home/unito/data/back_frames -p topics:="['/camera/back_view/image_raw']"
+pixi run python pixi_save_frames.py --ros-args -p save_dir:=/home/unito/advis/back_frames -p topics:="['/camera/back_view/image_raw']"
 ```
 
 3️⃣ Multiple cameras 🔥
 
 ```bash
-pixi run python pixi_save_frames.py --ros-args -p save_dir:=/home/unito/data/all_frames -p topics:="['/camera/front_view/image_raw','/camera/back_view/image_raw','/camera/side_view/image_raw']"
+pixi run python pixi_save_frames.py --ros-args -p save_dir:=/home/unito/advis/all_frames -p topics:="['/camera/front_view/image_raw','/camera/back_view/image_raw','/camera/side_view/image_raw']"
 
 ```
 ```bash
 # Verify saved frames
-ls /home/unito/data/back_frames | head 
+ls /home/unito/advis/back_frames | head 
 ```
 
 This will save images in 
 
 > 
+
+>
+
+<!-- camera_back_view_image_raw -->
+
+```bash
+cd ~/advis/distrimuse-image-broadcaster
+
+pixi run python scripts/pixi_flow.py \
+  --ros-args \
+  -p save_dir:=/home/unito/advis/DS/SR/v2/train_processed/back_view \
+  -p camera_topic:=/camera/back_view/image_raw \
+  -p area_names:="['ConvBelt','PLeft','PRight','RoboArm']" \
+  -p static_mask_paths:="['/home/unito/advis/DS/SR/v2/masks/Mask Generation_ConvBelt_MASK.png','/home/unito/advis/DS/SR/v2/masks/Mask Generation_PLeft_MASK.png','/home/unito/advis/DS/SR/v2/masks/Mask Generation_PRight_MASK.png','/home/unito/advis/DS/SR/v2/masks/Mask Generation_RoboArm_MASK.png']" \
+  -p save_every_n:=5 \
+  -p image_format:=png \
+  -p keep_aspect:=true \
+  -p save_masked_full:=False
+```
+
+
+
+Saved folders should be like this
+
+```
+train_processed/
+/home/unito/advis/DS/SR/v2/back_camera/
+├── masked_input/
+│   ├── masked_input_2026....png
+│   ├── masked_input_2026....png
+│   └── ...
+├── ConvBelt/
+├── PLeft/
+├── PRight/
+└── RoboArm/
+```
+
+
+```bash
+cd ~/advis/distrimuse-image-broadcaster
+
+pixi run python scripts/pixi_flow.py \
+  --ros-args \
+  -p save_dir:=/home/unito/advis/DS/SR/v2/train_processed/back_view \
+  -p camera_topic:=/camera/back_view/image_raw \
+  -p area_names:="['ConvBelt','PLeft','PRight','RoboArm']" \
+  -p static_mask_paths:="['/home/unito/advis/DS/SR/v2/masks/Mask Generation_ConvBelt_MASK.png','/home/unito/advis/DS/SR/v2/masks/Mask Generation_PLeft_MASK.png','/home/unito/advis/DS/SR/v2/masks/Mask Generation_PRight_MASK.png','/home/unito/advis/DS/SR/v2/masks/Mask Generation_RoboArm_MASK.png']" \
+  -p save_every_n:=1 \
+  -p image_format:=png \
+  -p keep_aspect:=true \
+  -p save_masked_full:=false \
+  -p save_masked_input:=true \
+  -p masked_input_subdir:=masked_input \
+  -p masked_input_blur_ksize:=31 \
+  -p masked_input_dim_factor:=0.35 \
+  -p masked_input_outline_thickness:=6
+
+```
+
+
+```bash
+# upload masks
+scp -P 10022 "/Users/rashid/Mask Generation_PRight_MASK.png" \
+unito@distrimuse.idrago.org:/home/unito/advis/DS/SR/v2/
+```
+
+
+
+```bash
+# COUNT NUMBER OF FILES
+ls /home/unito/advis/DS/SR/v2/train_processed/back_view/masked_input -l . | egrep -c '^-'
+ls /home/unito/advis/DS/SR/v2/train_processed/back_view/ConvBelt -l . | egrep -c '^-'
+ls /home/unito/advis/DS/SR/v2/train_processed/back_view/ConvBelt -l . | egrep -c '^-'
+ls /home/unito/advis/DS/SR/v2/train_processed/back_view/ConvBelt -l . | egrep -c '^-'
+
+
 
 ## Pipeline Overview
 
@@ -258,7 +374,7 @@ or
 ```bash
 # Test mode — labelled CSV required
 python scripts/calibrate_threshold.py --mode test --safety_area ALL \
-    --gt_csv scripts/data/annotations/anom_metadata_unexpected_person.csv
+    --gt_csv scripts/advis/annotations/anom_metadata_unexpected_person.csv
 ```
 
 ```bash
@@ -286,14 +402,14 @@ Run anomaly detection from multiple `input sources` inluding following input sou
 ### 4.2 Scripts:
 ```bash
 # Pre-cropped frames, evaluate against annotations
-python scripts/inference.py --data_source preprocessed --input_dir /home/unito/data/DS/ValeriaLab/V6/fronttop/test_processed/unexpected_person --safety_area RoboArm --gt_csv scripts/data/annotations.csv
+python scripts/inference.py --data_source preprocessed --input_dir /home/unito/advis/DS/ValeriaLab/V6/fronttop/test_processed/unexpected_person --safety_area RoboArm --gt_csv scripts/data/annotations.csv
 ```
 
 ```bash
 # Raw video frames, all areas, save output figures
 python scripts/inference.py \
     --data_source raw \
-    --input_dir /data/frames \
+    --input_dir /advis/frames \
     --safety_area ALL \
     --save_figures
 ```
@@ -302,7 +418,7 @@ python scripts/inference.py \
 # Video file, process first 500 frames
 python scripts/inference.py \
     --data_source video \
-    --input_video /data/test.avi \
+    --input_video /advis/test.avi \
     --max_frames 500
 ```
 
