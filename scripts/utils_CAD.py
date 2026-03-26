@@ -3004,7 +3004,10 @@ def get_parameters_by_experiment(params, verbose=False):
         print('Adversarial loss function:', params.adversarial_loss_fn)
     return params
 ########################################################################################################
-def get_dataset_version(paths,params, dataset_version='V6',dataset_type='fronttop',subgroup='RoboArm',mask_image_name=3015, verbose=False):
+def get_dataset_version(paths,params, 
+                        dataset_version='V6',dataset_type='fronttop',
+                        train_name = 'train',test_name= 'test_processed',
+                        subgroup='RoboArm',mask_image_name=3015, verbose=False):
 
     paths.dataset_version      = dataset_version #'V6'
     paths.path_datasets        =  os.path.join(paths.path_datasets_main,paths.dataset_version)
@@ -3037,10 +3040,8 @@ def get_dataset_version(paths,params, dataset_version='V6',dataset_type='frontto
 
         paths.train_dir_processed_subgroup = os.path.join(paths.path_dataset_selected, paths.train_dirn_processed)
     else:
-
-
-        paths.train_dirn_processed    = 'train_processed'
-        paths.test_sel_dirn_processed = 'test_processed'
+        paths.train_dirn_processed    = train_name
+        paths.test_sel_dirn_processed = test_name
 
         paths.train_dir = os.path.join(paths.path_dataset_selected, paths.train_dirn)
         paths.test_dir = os.path.join(paths.path_dataset_selected, paths.test_sel_dirn)
