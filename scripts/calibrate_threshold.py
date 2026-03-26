@@ -746,9 +746,9 @@ def parse_args():
                    help="[test mode] Root of labelled test ImageFolder.\n"
                         "May contain per-area sub-dirs or be a flat folder.")
     p.add_argument("--checkpoints",
-                   default="scripts/dm_checkpoints/checkpoints_33", 
-                   choices=["scripts/dm_checkpoints/checkpoints_32", 
-                            "scripts/dm_checkpoints/checkpoints_33"])
+                   default="scripts/checkpoints_33", 
+                   choices=["scripts/checkpoints_32", 
+                            "scripts/checkpoints_33"])
     p.add_argument("--gt_csv",   default="scripts/data/annotations/anom_metadata_operator_fall.csv",
                    help="[test mode] Ground-truth CSV with columns:\n"
                         "  frame_no, component, component_anomaly\n"
