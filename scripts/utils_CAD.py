@@ -336,8 +336,8 @@ def get_paths(paths,dataset_type='SR', verbose=False):
             paths.path_results_local  = '/beegfs/home/mrashid/repos/AD_CAD_v3'
         if 'distrimuse' in platform_node:
             paths.path_results        = os.getcwd()
-            paths.path_datasets_main  = f'/home/unito/data/DS/{dataset_type}'
-            paths.path_results_local  = '/home/unito/data/'
+            paths.path_datasets_main  = f'/home/unito/advis/DS/{dataset_type}'
+            paths.path_results_local  = '/home/unito/advis/'
 
     if verbose:
         print('OS type:', os.name)
