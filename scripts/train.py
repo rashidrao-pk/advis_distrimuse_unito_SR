@@ -248,6 +248,7 @@ def get_data_loaders_from_preprocessed_with_saved_split(
 
 def train(
     train_loader,
+    val_loader,
     Enc, Dec, Dis,
     optEncDec, optDis,
     reconstruction_loss_fn,
@@ -410,7 +411,28 @@ def train(
 
         # ── Periodic checkpoint ──────────────────────────────────────────────
         if (iter_num + 1) % model_save_interval == 0:
-            utmc.save_model(Enc, Dec, Dis, optEncDec, optDis, paths, loss_history, suffix)
+            # utmc.save_model(Enc, Dec, Dis, optEncDec, optDis, paths, loss_history, suffix)
+            utmc.save_model(Enc=Enc,Dec=Dec,D=Dis,
+                    optEncDec=optEncDec,
+                    optD=optDis,
+                    loss_history=loss_history,
+                    path_models=paths.path_models,
+                    suffix=f"{params.subgroup}_{params.latent_dims}",
+                    epoch=params.epochs,
+                    train_loader=train_loader,
+                    val_loader=val_loader,
+                    params={"latent_dim": params.latent_dims,
+                            "lr_encdec": params.learning_rate_enc_dec,
+                            "lr_d": params.learning_rate_dis,
+                            "image_size": (params.input_shape[1],params.input_shape[-1]) ,
+                            "beta_gan": params.beta_gan,
+                            "beta_kl": params.beta_kl,
+                            },
+                    augmentation=train_loader.dataset.transform,
+                    dataset_name= f'{args.dataset_source}_{args.dataset_version}_{args.dataset_cam_type}', #"MVTec_hazelnut",
+                    train_dir=paths.train_dir_processed_subgroup,   
+                    notes="VAE-GAN trained on normal images only",
+                    verbose=True)
 
         # ── ETA after first real epoch ───────────────────────────────────────
         if iter_num_id == 1:
@@ -452,8 +474,10 @@ def parse_args():
     p = argparse.ArgumentParser(description="Train VAE-GAN for CAD anomaly detection")
     p.add_argument("--safety_area",         default="RoboArm",
                    help="Safety area (subgroup) to train. Pass 'ALL' to train every area sequentially.")
+    
+    p.add_argument("--dataset_source",     default="SR",       help="Dataset version tag")
     p.add_argument("--dataset_version",     default="v2",       help="Dataset version tag")
-    p.add_argument("--dataset_type",        default="refined", help="Camera / dataset type")
+    p.add_argument("--dataset_cam_type",        default="refined", help="Camera / dataset type")
     p.add_argument("--mask_image_name",     default=3015,   type=int)
     p.add_argument("--epochs",              default=200,   type=int)
     p.add_argument("--batch_size",          default=16,     type=int)
@@ -501,7 +525,7 @@ def train_one_safety_area(safety_area: str, args, device):
     paths, params = utc.get_dataset_version(
         paths, params,
         dataset_version  = args.dataset_version,
-        dataset_type     = args.dataset_type,
+        dataset_type     = args.dataset_cam_type,
         mask_image_name  = args.mask_image_name,
         subgroup         = safety_area,
         verbose          = True and args.verbose_level > 1,
@@ -598,9 +622,13 @@ def train_one_safety_area(safety_area: str, args, device):
         utmc.model_override(paths.path_models, suffix)
 
     # ── Resume from checkpoint ────────────────────────────────────────────
-    loss_history = utmc.load_model(
-        Enc, Dec, Dis, optEncDec, optDis, paths, suffix, device=device, verbose=True and args.verbose_level > 0
-    )
+    # loss_history = utmc.load_model(
+    #     Enc, Dec, Dis, optEncDec, optDis, paths, suffix, device=device, verbose=True and args.verbose_level > 0
+    # )
+    loss_history, config = utmc.load_model(Enc, Dec, Dis, optEncDec, optDis,
+                                           path_models=paths.path_models,
+                                           suffix=f"{params.subgroup}_{params.latent_dims}",
+                                           verbose=True,device=device)
     if args.verbose_level >= 0:
         print(f"Epochs already trained: {len(loss_history)}")
 
@@ -609,6 +637,7 @@ def train_one_safety_area(safety_area: str, args, device):
     # ── Training ─────────────────────────────────────────────────────────
     loss_history, log_messages = train(
         train_loader            = train_loader,
+        val_loader            = val_loader,
         Enc=Enc, Dec=Dec, Dis=Dis,
         optEncDec=optEncDec, optDis=optDis,
         reconstruction_loss_fn  = reconstruction_loss_fn,
@@ -625,7 +654,29 @@ def train_one_safety_area(safety_area: str, args, device):
     )
 
     # ── Final save ───────────────────────────────────────────────────────
-    utmc.save_model(Enc, Dec, Dis, optEncDec, optDis, paths, loss_history, suffix, verbose=True and args.verbose_level > 0)
+    # utmc.save_model(Enc, Dec, Dis, optEncDec, optDis, paths, loss_history, suffix, verbose=True and args.verbose_level > 0)
+    utmc.save_model(Enc=Enc,Dec=Dec,D=Dis,
+                    optEncDec=optEncDec,
+                    optD=optDis,
+                    loss_history=loss_history,
+                    path_models=paths.path_models,
+                    suffix=f"{params.subgroup}_{params.latent_dims}",
+                    epoch=params.epochs,
+                    train_loader=train_loader,
+                    val_loader=val_loader,
+                    params={"latent_dim": params.latent_dims,
+                            "lr_encdec": params.learning_rate_enc_dec,
+                            "lr_d": params.learning_rate_dis,
+                            "image_size": (params.input_shape[1],params.input_shape[-1]) ,
+                            "beta_gan": params.beta_gan,
+                            "beta_kl": params.beta_kl,
+                            },
+                    augmentation=train_loader.dataset.transform,
+                    dataset_name= f'{args.dataset_source}_{args.dataset_version}_{args.dataset_cam_type}', #"MVTec_hazelnut",
+                    train_dir=paths.train_dir_processed_subgroup,   
+                    notes="VAE-GAN trained on normal images only",
+                    verbose=True)
+    
     utc.save_log_file(f'paths.log_file_full_{suffix}', log_messages, verbose= args.verbose_level > 0)
     
     print(f"[safety_area] Done: {safety_area}")
