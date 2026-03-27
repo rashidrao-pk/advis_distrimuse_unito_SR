@@ -184,6 +184,14 @@ def safe_transform_to_string(transform_obj):
         return str(transform_obj)
     except Exception:
         return "Unavailable"
+import os
+import json
+import platform
+from datetime import datetime
+
+import pandas as pd
+import torch
+
 
 def save_model(
     Enc,
@@ -215,9 +223,13 @@ def save_model(
     n_train_images = None
     n_val_images = None
     batch_size = None
+    num_workers = None
+    pin_memory = None
 
     if train_loader is not None:
         batch_size = getattr(train_loader, "batch_size", None)
+        num_workers = getattr(train_loader, "num_workers", None)
+        pin_memory = getattr(train_loader, "pin_memory", None)
         try:
             n_train_images = len(train_loader.dataset)
         except Exception:
@@ -238,6 +250,64 @@ def save_model(
         loss_history_to_save = pd.DataFrame(loss_history)
 
     # -----------------------------
+    # device / hardware info
+    # -----------------------------
+    cuda_available = torch.cuda.is_available()
+    device_type = "cuda" if cuda_available else "cpu"
+
+    gpu_info = {
+        "cuda_available": cuda_available,
+        "cuda_version": torch.version.cuda if cuda_available else None,
+        "cudnn_enabled": torch.backends.cudnn.enabled if cuda_available else None,
+        "cudnn_version": torch.backends.cudnn.version() if cuda_available else None,
+        "gpu_count": torch.cuda.device_count() if cuda_available else 0,
+        "current_gpu_index": torch.cuda.current_device() if cuda_available else None,
+        "current_gpu_name": torch.cuda.get_device_name(torch.cuda.current_device()) if cuda_available else None,
+        "gpu_properties": None,
+        "memory": None,
+    }
+
+    if cuda_available:
+        dev_idx = torch.cuda.current_device()
+        props = torch.cuda.get_device_properties(dev_idx)
+
+        gpu_info["gpu_properties"] = {
+            "name": props.name,
+            "total_memory_bytes": props.total_memory,
+            "total_memory_gb": round(props.total_memory / (1024 ** 3), 2),
+            "multi_processor_count": getattr(props, "multi_processor_count", None),
+            "major": getattr(props, "major", None),
+            "minor": getattr(props, "minor", None),
+        }
+
+        try:
+            free_mem, total_mem = torch.cuda.mem_get_info(dev_idx)
+            gpu_info["memory"] = {
+                "free_bytes": free_mem,
+                "free_gb": round(free_mem / (1024 ** 3), 2),
+                "total_bytes": total_mem,
+                "total_gb": round(total_mem / (1024 ** 3), 2),
+                "allocated_bytes": torch.cuda.memory_allocated(dev_idx),
+                "allocated_gb": round(torch.cuda.memory_allocated(dev_idx) / (1024 ** 3), 2),
+                "reserved_bytes": torch.cuda.memory_reserved(dev_idx),
+                "reserved_gb": round(torch.cuda.memory_reserved(dev_idx) / (1024 ** 3), 2),
+            }
+        except Exception:
+            gpu_info["memory"] = None
+
+    system_info = {
+        "hostname": platform.node(),
+        "platform": platform.platform(),
+        "system": platform.system(),
+        "system_release": platform.release(),
+        "system_version": platform.version(),
+        "machine": platform.machine(),
+        "processor": platform.processor(),
+        "python_version": platform.python_version(),
+        "pytorch_version": torch.__version__,
+    }
+
+    # -----------------------------
     # build metadata/config
     # -----------------------------
     config = {
@@ -256,8 +326,13 @@ def save_model(
 
         "training": {
             "batch_size": batch_size,
-            "device": "cuda" if torch.cuda.is_available() else "cpu",
+            "num_workers": num_workers,
+            "pin_memory": pin_memory,
+            "device": device_type,
         },
+
+        "system": system_info,
+        "gpu": gpu_info,
 
         "augmentation": {
             "pipeline": safe_transform_to_string(augmentation)
@@ -275,8 +350,8 @@ def save_model(
         "encoder_state_dict": Enc.state_dict(),
         "decoder_state_dict": Dec.state_dict(),
         "discriminator_state_dict": D.state_dict(),
-        "optimizer_enc_state_dict": optEncDec.state_dict(),
-        "optimizer_dec_state_dict": optD.state_dict(),
+        "optimizer_encdec_state_dict": optEncDec.state_dict(),
+        "optimizer_d_state_dict": optD.state_dict(),
         "loss_history": loss_history_to_save,
         "config": config,
     }
@@ -294,10 +369,14 @@ def save_model(
         print(f"Train images: {n_train_images}")
         print(f"Val images: {n_val_images}")
         print(f"Epochs trained: {len(loss_history_to_save)}")
-
+        print(f"Device: {device_type}")
+        if cuda_available:
+            print(f"GPU: {gpu_info['current_gpu_name']}")
+            if gpu_info["memory"] is not None:
+                print(f"GPU total memory: {gpu_info['memory']['total_gb']} GB")
 #############################################################################################################
 
-def load_model(Enc, Dec, D, optEncDec, optD, path_models, suffix, verbose=False, device='cuda'):
+def load_model(Enc, Dec, D, optEncDec, optD, path_models, suffix, verbose=False,weights_only=True, device='cuda'):
     model_path = os.path.join(path_models, f"model_{suffix}.pt")
 
     # if verbose:
@@ -308,7 +387,7 @@ def load_model(Enc, Dec, D, optEncDec, optD, path_models, suffix, verbose=False,
             print(f"Model Not Found --> {model_path}")
         return [], None
 
-    checkpoint = torch.load(model_path, map_location=device)
+    checkpoint = torch.load(model_path, map_location=device, weights_only=weights_only)
 
     Enc.load_state_dict(checkpoint['encoder_state_dict'])
     Dec.load_state_dict(checkpoint['decoder_state_dict'])
