@@ -20,35 +20,15 @@ ssh -X unito@distrimuse
 
 ```bash
 cd ~/advis/
-git clone https://github.com/rashidrao-pk/advis_distrimuse_unito_SR
 cd ~/advis/advis_distrimuse_unito_SR
 ```
 
-### 1.2 Setup Image Streaming
 
-a) Install Pixi first,
-```bash
-curl -fsSL https://pixi.sh/install.sh | sh
-```
-> Follow [this page](https://pixi.prefix.dev/latest/#installation) to setup and check if Pixi is working. 
-
-b) use Smart Robotics Repo,
-
-```bash
-git clone https://github.com/smart-robotics/distrimuse-image-broadcaster
-cd ~/advis/distrimuse-image-broadcaster
-pixi install
-cp config/config.yaml.example config/config.yaml
-cp ~/advis/advis_distrimuse_unito_SR/scripts/pixi_save_frames.py ~/advis/distrimuse-image-broadcaster
-```
-
+### Verify Models
 
 
 ---
-
-
-
-Verify ROS:
+Verify ROS-bag:
 ```bash
 cd ~/advis/distrimuse-image-broadcaster
 pixi run ros2 bag info /home/unito/advis/bags/recording_20260313_133316
@@ -72,14 +52,6 @@ pixi run replay /home/unito/advis/bags/recording_20260313_133316/ --no-display
 and run following command to `Save` frames
 
 
-
-
-> 
-
->
-
-<!-- camera_back_view_image_raw -->
-
 ```bash
 cd ~/advis/distrimuse-image-broadcaster
 
@@ -97,32 +69,13 @@ pixi run python ../advis_distrimuse_unito_SR/scripts/pixi_flow.py   \
 
 
 ### RUN IN ADVIS
-Either 
- - 1. Initiate new Pixi env
 
+**1. Install Pixi env**
 ```bash
-pixi init
-pixi add \
-  python=3.12 \
-  ros-jazzy-rclpy \
-  ros-jazzy-sensor-msgs \
-  ros-jazzy-std-msgs    \
-  ros-jazzy-cv-bridge \
-  opencv \
-  numpy
-```
-Or
--2 Install from TOML file
-
-```bash
-# Step 2 — Add ROS2 + dependencies
-cd ~/advis/advis_advis_distrimuse_unito_SR
-# rm -rf .pixi
 pixi install
-# Step 1 — Create Pixi env inside ADVIS repo
 ```
 
-### test ROS Installation
+**2. test ROS Installation**
 
 ```bash
 pixi run python -c "import rclpy; from sensor_msgs.msg import Image; print('ROS OK')"
@@ -150,7 +103,7 @@ train_processed/
 ```bash
 cd ~/advis/distrimuse-image-broadcaster
 
-pixi run python scripts/pixi_flow.py \
+pixi run python scripts/pixi/pixi_flow.py \
   --ros-args \
   -p save_dir:=/home/unito/advis/DS/SR/v2/train_processed/back_view \
   -p camera_topic:=/camera/back_view/image_raw \
@@ -168,11 +121,7 @@ pixi run python scripts/pixi_flow.py \
 
 ```
 
-```bash
-# upload masks
-scp -P 10022 "/Users/rashid/Mask Generation_PRight_MASK.png" \
-unito@distrimuse.idrago.org:/home/unito/advis/DS/SR/v2/
-```
+
 
 
 
@@ -228,26 +177,10 @@ conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvi
 ### 1.2 Clone GitHub Repo
 
 ```bash
-git clone https://github.com/rashidrao-pk/advis_distrimuse_unito_SR
 conda activate dm_unito
-pip install -r requirments.txt
 ```
 
-### 1.3 Retreive Model Checkpoints (Demo 3.3)
-Model Checkpoints are seperately provided and are available at following GitLab repo
 
--   [https://GitLab.di.unito.it/rashid/**_`dm_checkpoints_demo33`_**](https://gitlab.di.unito.it/rashid/dm_checkpoints_demo33)
-
-
-#### Demo 3.3
-
-Download Model checkpoints uploaded on following `GitLab` repo for `Real Palletizing` dataset for UC3 ( dataset provided by `Smart Robotics`, Netherlands for `DEMO-3.3` of UC3):
-```bash
-cd distrimuse_unito/scripts
-git init
-git pull https://gitlab.di.unito.it/rashid/dm_checkpoints_demo33    # FOR REAL ROBOT Palletizing - DEMO 3.3
-cd ..
-```
 
 ---
 

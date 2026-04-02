@@ -261,7 +261,7 @@ class FrameSaver(Node):
                     continue
 
                 if self.save_masked_full and masked_full is not None:
-                    masked_dir = os.path.join(self.save_dir, area_name, "masked_full")
+                    masked_dir = os.path.join(self.save_dir, area_name, class_label, "masked_full")
                     masked_path = os.path.join(masked_dir, f"masked_{timestamp}.{self.image_format}")
                     cv2.imwrite(masked_path, masked_full)
 
