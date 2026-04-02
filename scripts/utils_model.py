@@ -375,26 +375,104 @@ def save_model(
             if gpu_info["memory"] is not None:
                 print(f"GPU total memory: {gpu_info['memory']['total_gb']} GB")
 #############################################################################################################
+def load_model(Enc, Dec, D, optEncDec, optD, path_models, suffix,
+               verbose=False, weights_only=False, device='cuda'):
+    print('suffix --> ', suffix, path_models)
+    print('path_models --> ', path_models)
+    print('-' * 100)
 
-def load_model(Enc, Dec, D, optEncDec, optD, path_models, suffix, verbose=False,weights_only=True, device='cuda'):
     model_path = os.path.join(path_models, f"model_{suffix}.pt")
 
-    # if verbose:
-    #     print(f"TRYING MODEL FROM --> {model_path}")
     if not os.path.exists(model_path):
         if verbose:
-            print('-'*50)
+            print('-' * 50)
             print(f"Model Not Found --> {model_path}")
         return [], None
 
     checkpoint = torch.load(model_path, map_location=device, weights_only=weights_only)
 
-    Enc.load_state_dict(checkpoint['encoder_state_dict'])
-    Dec.load_state_dict(checkpoint['decoder_state_dict'])
-    D.load_state_dict(checkpoint['discriminator_state_dict'])
-    optEncDec.load_state_dict(checkpoint['optimizer_enc_state_dict'])
-    optD.load_state_dict(checkpoint['optimizer_dec_state_dict'])
+    if not isinstance(checkpoint, dict):
+        raise RuntimeError(f"Unexpected checkpoint format in {model_path}: {type(checkpoint)}")
 
+    if verbose:
+        print("Checkpoint keys:", list(checkpoint.keys()))
+
+    # ---- model weights ----
+    enc_key = None
+    dec_key = None
+    dis_key = None
+
+    for k in ['encoder_state_dict', 'Enc_state_dict', 'enc_state_dict', 'encoder']:
+        if k in checkpoint:
+            enc_key = k
+            break
+
+    for k in ['decoder_state_dict', 'Dec_state_dict', 'dec_state_dict', 'decoder']:
+        if k in checkpoint:
+            dec_key = k
+            break
+
+    for k in ['discriminator_state_dict', 'D_state_dict', 'dis_state_dict', 'discriminator']:
+        if k in checkpoint:
+            dis_key = k
+            break
+
+    if enc_key is None:
+        raise KeyError(f"No encoder state dict key found in checkpoint: {list(checkpoint.keys())}")
+    if dec_key is None:
+        raise KeyError(f"No decoder state dict key found in checkpoint: {list(checkpoint.keys())}")
+
+    Enc.load_state_dict(checkpoint[enc_key])
+    Dec.load_state_dict(checkpoint[dec_key])
+
+    if dis_key is not None:
+        D.load_state_dict(checkpoint[dis_key])
+    elif verbose:
+        print("Warning: discriminator state dict not found, skipping.")
+
+    # ---- optimizer states (optional) ----
+    opt_enc_key = None
+    opt_dec_key = None
+    opt_dis_key = None
+
+    for k in ['optimizer_enc_state_dict', 'optimizer_ed_state_dict', 'optimizer_state_dict_enc', 'optimizer_state_dict']:
+        if k in checkpoint:
+            opt_enc_key = k
+            break
+
+    for k in ['optimizer_dec_state_dict', 'optimizer_dis_state_dict', 'optimizer_state_dict_dec', 'optimizer_D_state_dict']:
+        if k in checkpoint:
+            opt_dec_key = k
+            break
+
+    for k in ['optimizer_dis_state_dict', 'optimizer_d_state_dict', 'optimizer_state_dict_dis']:
+        if k in checkpoint:
+            opt_dis_key = k
+            break
+
+    try:
+        if opt_enc_key is not None:
+            optEncDec.load_state_dict(checkpoint[opt_enc_key])
+        elif verbose:
+            print("Warning: encoder/ED optimizer state not found, skipping.")
+    except Exception as e:
+        if verbose:
+            print(f"Warning: failed to load optEncDec state: {e}")
+
+    try:
+        # keep backward compatibility with your previous code:
+        # if checkpoint stored discriminator optimizer under optimizer_dec_state_dict
+        if opt_dis_key is not None:
+            optD.load_state_dict(checkpoint[opt_dis_key])
+        elif opt_dec_key is not None:
+            optD.load_state_dict(checkpoint[opt_dec_key])
+        elif verbose:
+            print("Warning: discriminator optimizer state not found, skipping.")
+    except Exception as e:
+        if verbose:
+            print(f"Warning: failed to load optD state: {e}")
+
+    # ---- history / config ----
     loss_history_raw = checkpoint.get('loss_history', [])
     if hasattr(loss_history_raw, "to_dict"):
         loss_history = loss_history_raw.to_dict('records')
@@ -407,17 +485,13 @@ def load_model(Enc, Dec, D, optEncDec, optD, path_models, suffix, verbose=False,
     if verbose:
         print(f"Loaded model from {model_path}")
         print(f"Model loaded at epoch {last_saved_epoch}")
-        # print(f"Model saved at  {config.get('saved_at', {})}")   
 
         if config is not None:
             print("Loaded config:")
-
             print(f"  Dataset name: {config.get('dataset', {}).get('dataset_name', None)}")
             print(f"  Train images: {config.get('dataset', {}).get('n_train_images', None)}")
             print(f"  Val images:   {config.get('dataset', {}).get('n_val_images', None)}")
             print(f"  Batch size:   {config.get('training', {}).get('batch_size', None)}")
-
-            # print(f"  Augment:      {config.get('augmentation', {}).get('pipeline', None)}")
 
     return loss_history, config
 

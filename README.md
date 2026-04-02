@@ -55,8 +55,8 @@ and run following command to `Save` frames
 ```bash
 cd ~/advis/distrimuse-image-broadcaster
 
-pixi run python ../advis_distrimuse_unito_SR/scripts/pixi_flow.py   \
-    --ros-args   -p save_dir:=/home/unito/advis/DS/SR/v2/train_processed/back_view \
+pixi run python scripts/pixi/pixi_flow.py   \
+    --ros-args   -p save_dir:=/home/unito/advis/DS/SR/v3/train_processed/back_view \
     -p camera_topic:=/camera/back_view/image_raw    \
     -p area_names:="['ConvBelt','PLeft','PRight','RoboArm']"    \
     -p static_mask_paths:="['/home/unito/advis/DS/SR/v2/masks/Mask Generation_ConvBelt_MASK.png','/home/unito/advis/DS/SR/v2/masks/Mask Generation_PLeft_MASK.png','/home/unito/advis/DS/SR/v2/masks/Mask Generation_PRight_MASK.png','/home/unito/advis/DS/SR/v2/masks/Mask Generation_RoboArm_MASK.png']" \
@@ -64,8 +64,26 @@ pixi run python ../advis_distrimuse_unito_SR/scripts/pixi_flow.py   \
     -p image_format:=png    \
     -p keep_aspect:=true    \
     -p save_masked_full:=false  \
-    -p save_masked_input:=true  \
+    -p save_masked_input:=false
 ```
+
+
+### TRAIN USING NEW DATA THROGH ROS
+
+
+```bash
+python scripts/train.py \
+  --safety_area PLeft \
+  --dataset_source SR \
+  --dataset_version v3 \
+  --dataset_cam_type back_view \
+  --epochs 200 \
+  --batch_size 16 \
+  --latent_dims 64 \
+  --augmentation_type custom
+```
+
+
 
 
 ### RUN IN ADVIS
@@ -103,9 +121,9 @@ train_processed/
 ```bash
 cd ~/advis/distrimuse-image-broadcaster
 
-pixi run python scripts/pixi/pixi_flow.py \
+pixi run python scripts/pixi/pixi_saveframes.py \
   --ros-args \
-  -p save_dir:=/home/unito/advis/DS/SR/v2/train_processed/back_view \
+  -p save_dir:=/home/unito/advis/DS/SR/v3/back_view/train \
   -p camera_topic:=/camera/back_view/image_raw \
   -p area_names:="['ConvBelt','PLeft','PRight','RoboArm']" \
   -p static_mask_paths:="['/home/unito/advis/DS/SR/v2/masks/Mask Generation_ConvBelt_MASK.png','/home/unito/advis/DS/SR/v2/masks/Mask Generation_PLeft_MASK.png','/home/unito/advis/DS/SR/v2/masks/Mask Generation_PRight_MASK.png','/home/unito/advis/DS/SR/v2/masks/Mask Generation_RoboArm_MASK.png']" \
@@ -122,15 +140,102 @@ pixi run python scripts/pixi/pixi_flow.py \
 ```
 
 
+## TRAIN FROM ROS Saved Data
+```bash
 
+python scripts/train.py \
+  --safety_area PLeft \
+  --dataset_source SR \
+  --dataset_version v3 \
+  --dataset_cam_type back_view \
+  --epochs 200 \
+  --batch_size 16 \
+  --latent_dims 64 \
+  --augmentation_type custom
+
+
+```
+
+
+TRAIN FOR ALL 
 
 
 ```bash
+python scripts/train.py \
+  --safety_area ALL \
+  --dataset_source SR \
+  --dataset_version v3 \
+  --dataset_cam_type back_view \
+  --epochs 20 \
+  --batch_size 16 \
+  --latent_dims 64 \
+  --augmentation_type custom
+```
+
+
+```bash
+# NEW MODEL
+python scripts/calibrate_threshold.py --mode val --safety_area PLeft --dataset_version v3 --dataset_type back_view --checkpoints scripts/results
+
+python scripts/calibrate_threshold.py --mode val --safety_area ALL --dataset_version v3 --dataset_type back_view --checkpoints scripts/results
+
+```
+
+
+## CHECK GPU BEFORE INF
+
+```bash
+pixi run python -c "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available()); print(torch.cuda.device_count())"
+nvidia-smi
+```
+
+```bash
+pixi run python scripts/infer_ros_live.py
+```
+
+<!-- /home/unito/advis/advis_distrimuse_unito_SR/scripts/results/models -->
+<!-- /home/unito/advis/advis_distrimuse_unito_SR/scripts/results/threshold/RoboArm/threshold_RoboArm.json
+<!-- /home/unito/advis/advis_distrimuse_unito_SR/scripts/results/thresholds/RoboArm/threshold_RoboArm.json -->
+
+
+```bash
+pixi run python scripts/infer_ros_live.py \
+  --camera_topic /camera/back_view/image_raw \
+  --safety_area ALL \
+  --static_mask_paths \
+    /home/unito/advis/DS/SR/v3/masks/Mask\ Generation_PLeft_MASK.png \
+    /home/unito/advis/DS/SR/v3/masks/Mask\ Generation_PRight_MASK.png \
+    /home/unito/advis/DS/SR/v3/masks/Mask\ Generation_ConvBelt_MASK.png \
+    /home/unito/advis/DS/SR/v3/masks/Mask\ Generation_RoboArm_MASK.png \
+  --threshold_dir /home/unito/advis/advis_distrimuse_unito_SR/scripts/results/threshold \
+  --checkpoints ../advis_distrimuse_unito_SR/scripts/results/models \
+  --latent_dims 64 \
+  --frame_stride 5
+```
+
+**Verify Inference Setup**
+
+```bash
+pixi run python -c "import torch; print(torch.__version__)"
+pixi run python -c "import rclpy; print('ROS OK')"
+pixi run python -c "import cv2; print('CV OK')"
+```
+
+```bash
+python scripts/inference.py \
+    --data_source raw \
+    --input_dir /advis/frames \
+    --safety_area PLeft \
+    --threshold_dir scripts/results/threshold \
+    --save_figures
+```
+
+```bash
 # COUNT NUMBER OF FILES
-ls /home/unito/advis/DS/SR/v2/train_processed/back_view/masked_input -l . | egrep -c '^-'
-ls /home/unito/advis/DS/SR/v2/train_processed/back_view/ConvBelt -l . | egrep -c '^-'
-ls /home/unito/advis/DS/SR/v2/train_processed/back_view/ConvBelt -l . | egrep -c '^-'
-ls /home/unito/advis/DS/SR/v2/train_processed/back_view/ConvBelt -l . | egrep -c '^-'
+ls /home/unito/advis/DS/SR/v3/train/back_view/masked_input -l . | egrep -c '^-'
+ls /home/unito/advis/DS/SR/v3/train/back_view/ConvBelt -l . | egrep -c '^-'
+ls /home/unito/advis/DS/SR/v3/train/back_view/ConvBelt -l . | egrep -c '^-'
+ls /home/unito/advis/DS/SR/v3/train/back_view/ConvBelt -l . | egrep -c '^-'
 ```
 
 
@@ -239,7 +344,9 @@ python scripts/train.py --safety_area RoboArm --save_figures
 
 ```bash
 # Validation mode — no labels required
-python scripts/calibrate_threshold.py --mode val --safety_area ALL
+python scripts/calibrate_threshold.py --mode val --safety_area ALL --dataset_version v3 --dataset_type back_view
+
+python scripts/calibrate_threshold.py --mode val --safety_area ALL --dataset_version v3 --dataset_type back_view
 ```
 
 or 
@@ -285,7 +392,7 @@ python scripts/inference.py --data_source preprocessed --input_dir /home/unito/a
 python scripts/inference.py \
     --data_source raw \
     --input_dir /advis/frames \
-    --safety_area ALL \
+    --safety_area PLeft \
     --save_figures
 ```
 

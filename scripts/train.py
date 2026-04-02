@@ -432,7 +432,7 @@ def train(
                     dataset_name= f'{args.dataset_source}_{args.dataset_version}_{args.dataset_cam_type}', #"MVTec_hazelnut",
                     train_dir=paths.train_dir_processed_subgroup,   
                     notes="VAE-GAN trained on normal images only",
-                    verbose=True)
+                    verbose=True and args.verbose_level > 1)
 
         # ── ETA after first real epoch ───────────────────────────────────────
         if iter_num_id == 1:
@@ -597,6 +597,7 @@ def train_one_safety_area(safety_area: str, args, device):
     paths.class_names_train = train_dataset.classes
     if args.verbose_level >= 0:
         print(f"Samples (Train/Validation) : {len(train_dataset)} / {len(val_dataset)}")
+        print(f"Data Loaded from : {paths.train_dir_processed_subgroup}")
     # ── Fixed monitoring batch ────────────────────────────────────────────
     data_train_fx, _ = next(iter(train_loader))
 

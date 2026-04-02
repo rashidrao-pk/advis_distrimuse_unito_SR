@@ -92,7 +92,7 @@ def _handle_sigint(sig, frame):
 signal.signal(signal.SIGINT, _handle_sigint)
 
 # ALL_SAFETY_AREAS = ["RoboArm", "ConvBelt", "PLeft", "PRight"]
-ALL_SAFETY_AREAS = ["PRight","PLeft", "RoboArm"]
+ALL_SAFETY_AREAS = ["PRight","PLeft", "RoboArm","ConvBelt"]
 
 # ---------------------------------------------------------------------------
 # Shared: anomaly scoring (pure-NumPy, matches Cython version in notebooks)
@@ -204,7 +204,7 @@ def load_model_for_area(area: str, params, paths, args, device):
     )
     paths.path_models      = os.path.join(os.getcwd(), args.checkpoints)
     history = utmc.load_model(Enc, Dec, Dis, optED, optD,
-                               paths, suffix, device=device, verbose=True and args.verbose_level>0)
+                               paths.path_models, suffix, device=device, verbose=True and args.verbose_level>0)
     if not history:
         if args.verbose_level>0:
             print('-'*100, f'\nmodel path -- {os.path.exists(paths.path_models)} - {paths.path_models}\n', '-'*100)
@@ -747,8 +747,8 @@ def parse_args():
                         "May contain per-area sub-dirs or be a flat folder.")
     p.add_argument("--checkpoints",
                    default="scripts/checkpoints_33", 
-                   choices=["scripts/checkpoints_32", 
-                            "scripts/checkpoints_33"])
+                   choices=[ "scripts/checkpoints_33",
+                            "scripts/results"],)
     p.add_argument("--gt_csv",   default="scripts/data/annotations/anom_metadata_operator_fall.csv",
                    help="[test mode] Ground-truth CSV with columns:\n"
                         "  frame_no, component, component_anomaly\n"
