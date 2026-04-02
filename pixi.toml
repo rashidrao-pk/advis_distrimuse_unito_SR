@@ -1,0 +1,27 @@
+[workspace]
+authors = ["rashid <muhammad.rashid@unito.it>"]
+channels = ["robostack-kilted", "conda-forge"]
+name = "advis"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[activation.env]
+PYTHONPATH = "${PIXI_PROJECT_ROOT}/src:${PYTHONPATH}"
+
+[tasks]
+replay = "python -m cam_recorder.replay"
+view = "python -m cam_recorder.viewer"
+test = "pytest tests/ -v"
+
+[dependencies]
+python = ">=3.11"
+ros-kilted-rclpy = "*"
+ros-kilted-sensor-msgs = "*"
+ros-kilted-cv-bridge = "*"
+ros-kilted-rosbag2-py = "*"
+ros-kilted-rosbag2-storage-mcap = "*"
+ros-kilted-ros-base = "*"
+opencv = "*"
+numpy = "*"
+pytest = "*"
+pyyaml = "*"

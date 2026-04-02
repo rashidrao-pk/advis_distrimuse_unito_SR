@@ -20,8 +20,8 @@ ssh -X unito@distrimuse
 
 ```bash
 cd ~/advis/
-git clone https://github.com/rashidrao-pk/distrimuse_unito_SR
-cd ~/advis/distrimuse_unito_SR
+git clone https://github.com/rashidrao-pk/advis_distrimuse_unito_SR
+cd ~/advis/advis_distrimuse_unito_SR
 ```
 
 ### 1.2 Setup Image Streaming
@@ -39,68 +39,14 @@ git clone https://github.com/smart-robotics/distrimuse-image-broadcaster
 cd ~/advis/distrimuse-image-broadcaster
 pixi install
 cp config/config.yaml.example config/config.yaml
-cp ~/advis/distrimuse_unito_SR/scripts/pixi_save_frames.py ~/advis/distrimuse-image-broadcaster
+cp ~/advis/advis_distrimuse_unito_SR/scripts/pixi_save_frames.py ~/advis/distrimuse-image-broadcaster
 ```
 
-#### ONLY ONCE
-```bash
-# INTALL DISPLAY Settings 
-sudo apt install -y libxcb-cursor0
-pixi run ros2 topic list
-pixi run ros2 topic hz /camera/front_view/image_raw
-pixi run ros2 topic echo /camera/front_view/image_raw --once
-```
+
 
 ---
 
-### 1.2 Tranport Data
 
-Ship Datasets to server
-
-**Dataset v2**
-
-```bash
-
-# Copy Raw Videos 
-
-scp D:\DS\SR\v2\camera1_20251210_142154_normal.mp4 unito@distrimuse:/home/unito/advis/DS/SR/v2
-
-scp D:\DS\SR\v2\camera1_20251210_150045_box_fall.mp4 unito@distrimuse:/home/unito/advis/DS/SR/v2
-
-scp D:\DS\SR\v2\camera1_20251210_151444_fallen_operator.mp4 unito@distrimuse:/home/unito/advis/DS/SR/v2
-
-## Copy Processed Data
-scp D:\DS\SR\v2\processed.zip unito@distrimuse:/home/unito/advis/DS/SR/v2
-scp D:\DS\SR\v2\refined.zip unito@distrimuse:/home/unito/advis/DS/SR/v2
-scp D:\DS\SR\v2\masks.zip unito@distrimuse:/home/unito/advis/DS/SR/v2
-
-### TEST Data
-scp D:\DS\SR\v2\camera1_20251210_150045_box_fall.zip unito@distrimuse:/home/unito/advis/DS/SR/v2
-scp D:\DS\SR\v2\camera1_20251210_151444_fallen_operator.zip unito@distrimuse:/home/unito/advis/DS/SR/v2
-
-
-cd /home/unito/advis/DS/SR/v2
-unzip processed.zip -d /home/unito/advis/DS/SR/v2
-unzip refined.zip -d /home/unito/advis/DS/SR/v2
-unzip masks.zip -d /home/unito/advis/DS/SR/v2
-
-unzip camera1_20251210_150045_box_fall.zip -d /home/unito/advis/DS/SR/v2
-unzip camera1_20251210_151444_fallen_operator.zip -d /home/unito/advis/DS/SR/v2
-
-rm camera1_20251210_150045_box_fall.zip
-rm camera1_20251210_151444_fallen_operator.zip
-
-```
-
-**Dataset V3**
-
-```bash
-scp D:/DS/SR/v3/recording_20260313_133316.zip unito@HPZ2miniDistriMuSe:
-cd /home/unito/distrimuse
-mkdir -p bags
-unzip recording_20260313_133316.zip -d bags
-find /home/unito/advis/bags/recording_20260313_133316 -maxdepth 2 -type f
-```
 
 Verify ROS:
 ```bash
@@ -108,55 +54,25 @@ cd ~/advis/distrimuse-image-broadcaster
 pixi run ros2 bag info /home/unito/advis/bags/recording_20260313_133316
 ```
 
+Open Terminal and broadcast Frames
+
+
 Now Play the video
 
 ```bash
 pixi run replay /home/unito/advis/bags/recording_20260313_133316/
-```
+pixi run replay /home/unito/advis/bags/recording_20260313_133316/ --no-display
 
-```bash
-# or
-# ssh -Y unito@distrimuse
-## check if the display for images is working
-pixi run python -c "import cv2, numpy as np; img=np.zeros((300,300,3)); cv2.imshow('test', img); cv2.waitKey(0)"
-```
-
-```bash
-cp ~/advis/distrimuse_unito_SR/scripts/pixi_save_frames.py ~/advis/distrimuse-image-broadcaster
 ```
 
 ### 1.3 Replay or Save frames
 
-run following command to `replay` frames
-```bash
-## Run in Termiinal 1
-pixi run replay /home/unito/advis/bags/recording_20260313_133316/ --no-display
-```
-follow script or create to save_frames
-```bash
-nano pixi_save_frames.py
-```
+
+
 and run following command to `Save` frames
 
 
-1️⃣  Custom save directory + one camera
 
-```bash
-pixi run python pixi_save_frames.py --ros-args -p save_dir:=/home/unito/advis/back_frames -p topics:="['/camera/back_view/image_raw']"
-```
-
-3️⃣ Multiple cameras 🔥
-
-```bash
-pixi run python pixi_save_frames.py --ros-args -p save_dir:=/home/unito/advis/all_frames -p topics:="['/camera/front_view/image_raw','/camera/back_view/image_raw','/camera/side_view/image_raw']"
-
-```
-```bash
-# Verify saved frames
-ls /home/unito/advis/back_frames | head 
-```
-
-This will save images in 
 
 > 
 
@@ -167,23 +83,57 @@ This will save images in
 ```bash
 cd ~/advis/distrimuse-image-broadcaster
 
-pixi run python scripts/pixi_flow.py \
-  --ros-args \
-  -p save_dir:=/home/unito/advis/DS/SR/v2/train_processed/back_view \
-  -p camera_topic:=/camera/back_view/image_raw \
-  -p area_names:="['ConvBelt','PLeft','PRight','RoboArm']" \
-  -p static_mask_paths:="['/home/unito/advis/DS/SR/v2/masks/Mask Generation_ConvBelt_MASK.png','/home/unito/advis/DS/SR/v2/masks/Mask Generation_PLeft_MASK.png','/home/unito/advis/DS/SR/v2/masks/Mask Generation_PRight_MASK.png','/home/unito/advis/DS/SR/v2/masks/Mask Generation_RoboArm_MASK.png']" \
-  -p save_every_n:=5 \
-  -p image_format:=png \
-  -p keep_aspect:=true \
-  -p save_masked_full:=False
+pixi run python ../advis_distrimuse_unito_SR/scripts/pixi_flow.py   \
+    --ros-args   -p save_dir:=/home/unito/advis/DS/SR/v2/train_processed/back_view \
+    -p camera_topic:=/camera/back_view/image_raw    \
+    -p area_names:="['ConvBelt','PLeft','PRight','RoboArm']"    \
+    -p static_mask_paths:="['/home/unito/advis/DS/SR/v2/masks/Mask Generation_ConvBelt_MASK.png','/home/unito/advis/DS/SR/v2/masks/Mask Generation_PLeft_MASK.png','/home/unito/advis/DS/SR/v2/masks/Mask Generation_PRight_MASK.png','/home/unito/advis/DS/SR/v2/masks/Mask Generation_RoboArm_MASK.png']" \
+    -p save_every_n:=5  \
+    -p image_format:=png    \
+    -p keep_aspect:=true    \
+    -p save_masked_full:=false  \
+    -p save_masked_input:=true  \
 ```
+
+
+### RUN IN ADVIS
+Either 
+ - 1. Initiate new Pixi env
+
+```bash
+pixi init
+pixi add \
+  python=3.12 \
+  ros-jazzy-rclpy \
+  ros-jazzy-sensor-msgs \
+  ros-jazzy-std-msgs    \
+  ros-jazzy-cv-bridge \
+  opencv \
+  numpy
+```
+Or
+-2 Install from TOML file
+
+```bash
+# Step 2 — Add ROS2 + dependencies
+cd ~/advis/advis_advis_distrimuse_unito_SR
+# rm -rf .pixi
+pixi install
+# Step 1 — Create Pixi env inside ADVIS repo
+```
+
+### test ROS Installation
+
+```bash
+pixi run python -c "import rclpy; from sensor_msgs.msg import Image; print('ROS OK')"
+```
+
 
 
 
 Saved folders should be like this
 
-```
+```text
 train_processed/
 /home/unito/advis/DS/SR/v2/back_camera/
 ├── masked_input/
@@ -278,7 +228,7 @@ conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvi
 ### 1.2 Clone GitHub Repo
 
 ```bash
-git clone https://github.com/rashidrao-pk/distrimuse_unito_SR
+git clone https://github.com/rashidrao-pk/advis_distrimuse_unito_SR
 conda activate dm_unito
 pip install -r requirments.txt
 ```
