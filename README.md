@@ -99,7 +99,34 @@ pixi install
 pixi run python -c "import rclpy; from sensor_msgs.msg import Image; print('ROS OK')"
 ```
 
+## RUN ADVIS ROS in DM_UNITO
 
+
+conda config --env --remove channels defaults || true
+conda config --env --add channels conda-forge
+conda config --env --add channels robostack-jazzy
+conda config --env --set channel_priority strictconda config --env --remove channels defaults || true
+conda config --env --add channels conda-forge
+conda config --env --add channels robostack-jazzy
+conda config --env --set channel_priority strict
+
+
+mamba install -y \
+  ros-jazzy-ros-base \
+  ros-jazzy-rclpy \
+  ros-jazzy-sensor-msgs \
+  ros-jazzy-cv-bridge \
+  ros-jazzy-vision-opencv
+
+
+
+conda activate dm_unito
+
+python -c "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available())"
+python -c "import rclpy; print('rclpy ok')"
+python -c "from sensor_msgs.msg import Image; print('sensor_msgs ok')"
+python -c "from cv_bridge import CvBridge; print('cv_bridge ok')"
+python -c "import cv2; print(cv2.__version__)"
 
 
 Saved folders should be like this
