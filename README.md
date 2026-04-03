@@ -213,8 +213,6 @@ pixi run python scripts/infer_ros_live.py \
 --frame_stride 5
 # ---------
 
-
-
 pixi run python scripts/infer_ros_live.py \
   --camera_topic /camera/back_view/image_raw \
   --safety_area ALL \

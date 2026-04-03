@@ -8,4 +8,4 @@ tqdm
 scipy
 scikit-learn
 scikit-image
-
+pillow

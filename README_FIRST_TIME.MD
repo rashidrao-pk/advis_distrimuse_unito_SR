@@ -196,23 +196,7 @@ pixi run python -c "import torch; print(torch.__version__); print(torch.version.
 nvidia-smi
 ```
 
----
-Verify ROS-bag:
-```bash
-cd ~/advis/distrimuse-image-broadcaster
 
-```
-
-Open Terminal and broadcast Frames
-
-
-Now Play the video
-
-```bash
-pixi run replay /home/unito/advis/bags/recording_20260313_133316/
-pixi run replay /home/unito/advis/bags/recording_20260313_133316/ --no-display
-
-```
 
 ### COPY DATA
 
