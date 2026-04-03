@@ -392,7 +392,7 @@ def train(
             colormap_anomaly_map = ut.get_colormap()  # noqa: F841
             ut.plot_images(
                 real_images, reconstructed_images, len(loss_history), paths,
-                plot_anomaly_scores=True, save_fig=True, interval=5, destroy_fig=True,
+                plot_anomaly_scores=True, save_fig=True, interval=args.save_fig_interval, destroy_fig=True,
             )
 
             if data_train_fx is not None:
@@ -467,7 +467,7 @@ def train(
 # ---------------------------------------------------------------------------
 
 # All known safety areas — used when --safety_area ALL is passed
-ALL_SAFETY_AREAS = ["RoboArm", "ConvBelt", "PLeft", "PRight"]
+ALL_SAFETY_AREAS = ["PLeft", "PRight","RoboArm", "ConvBelt"]
 
 
 def parse_args():
@@ -477,7 +477,8 @@ def parse_args():
     
     p.add_argument("--dataset_source",     default="SR",       help="Dataset version tag")
     p.add_argument("--dataset_version",     default="v2",       help="Dataset version tag")
-    p.add_argument("--dataset_cam_type",        default="refined", help="Camera / dataset type")
+    p.add_argument("--dataset_cam_type",    default="refined", help="Camera / dataset type")
+    p.add_argument("--model_path",          default="scripts/models", help="Model Save Path")
     p.add_argument("--mask_image_name",     default=3015,   type=int)
     p.add_argument("--epochs",              default=200,   type=int)
     p.add_argument("--batch_size",          default=16,     type=int)
@@ -491,18 +492,19 @@ def parse_args():
     p.add_argument("--force_rebuild_split", action="store_true", help="Force rebuild the train/val split JSON")
     p.add_argument("--model_override",      action="store_true", help="Rename existing checkpoint before training")
     p.add_argument("--model_save_interval", default=10,     type=int)
+    p.add_argument("--save_fig_interval", default=5,     type=int)
     p.add_argument("--verbose_level",       default=0,      type=int, choices=[0, 1, 2])
     p.add_argument("--save_path_type",      default="cloud", choices=["cloud", "local"])
+    p.add_argument("--dry_run",             action="store_true", default=False)
     p.add_argument("--checkpoints",
-                   default="scripts/dm_checkpoints/checkpoints_32", 
-                   choices=["scripts/dm_checkpoints/checkpoints_32", 
+                   default="scripts/results/models", 
+                   choices=["scripts/results/models", 
                             "scripts/dm_checkpoints/checkpoints_33"])
     p.add_argument("--save_figures",        action="store_true", default=False,
                    help="Save reconstruction & tracking figures during training. "
                         "When disabled only loss curves (results/training) and model "
                         "checkpoints (results/models) are written.")
     return p.parse_args()
-
 
 def train_one_safety_area(safety_area: str, args, device):
     """Set up and train a single safety area. Returns when done or interrupted."""
@@ -547,7 +549,7 @@ def train_one_safety_area(safety_area: str, args, device):
     # paths.path_models      = os.path.join(paths.path_codes_main, args.checkpoints)
     paths.path_models      = os.path.join(os.getcwd(), args.checkpoints)
     os.makedirs(paths.path_training_curves, exist_ok=True)
-    os.makedirs(paths.path_models,          exist_ok=True)
+    # os.makedirs(paths.path_models,          exist_ok=True)
     if args.verbose_level > 0:
         if args.save_figures:
             print("[save] Figure saving ENABLED  — reconstruction & tracking images will be written.")
@@ -559,7 +561,8 @@ def train_one_safety_area(safety_area: str, args, device):
     suffix, paths = ut.get_create_results_path(
         params.subgroup, params, args,paths,
         save_path_type = args.save_path_type,
-        dir            = 'scripts/results',
+        dir            = args.model_path,
+        models_dir      = f'models_{args.dataset_version}',
         verbose        = True  and args.verbose_level > 1,
     )
     paths.suffix = suffix
@@ -632,11 +635,17 @@ def train_one_safety_area(safety_area: str, args, device):
                                            verbose=True,
                                            device=device)
     if args.verbose_level >= 0:
-        print(f"Epochs already trained: {len(loss_history)}")
+        if len(loss_history) ==0:
+            print("No checkpoint found, starting fresh training.")
+        else:
+            print(f"Epochs already trained: {len(loss_history)}")
 
     _ = ut.get_header(params, paths, verbose=True and args.verbose_level > 1)
     
     # ── Training ─────────────────────────────────────────────────────────
+    if args.dry_run:
+        print("[dry_run] Dry run enabled — skipping training loop.")
+        return loss_history, ""
     loss_history, log_messages = train(
         train_loader            = train_loader,
         val_loader            = val_loader,
@@ -679,7 +688,7 @@ def train_one_safety_area(safety_area: str, args, device):
                     notes="VAE-GAN trained on normal images only",
                     verbose=True)
     
-    ut.save_log_file(f'paths.log_file_full_{suffix}', log_messages, verbose= args.verbose_level > 0)
+    ut.save_log_file(f'log_file_{suffix}.txt', log_messages, verbose= args.verbose_level > 0)
     
     print(f"[safety_area] Done: {safety_area}")
 

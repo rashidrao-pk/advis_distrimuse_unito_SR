@@ -9,6 +9,20 @@
 An anomaly detection pipeline based on variational autoencoder models that monitors industrial safety areas in real time. The system processes video input, trains per-area models, calibrates detection thresholds, and runs inference on live or recorded footage.
 
 
+
+## Smart Robotics Libraries for Sending and Receiving Data:
+
+`distrimuse-image-broadcaster` will be used to broadcast and `distrimuse-ros2-api` will be used to receive the message back.
+
+
+
+  - https://github.com/smart-robotics/distrimuse-image-broadcaster
+  - https://github.com/smart-robotics/distrimuse-ros2-api
+
+#### ROS2
+ **_Rulex/UniTo_**
+
+ 
 ## 1. Setup
 
 **Connect to remote device**
@@ -61,6 +75,36 @@ cd ~/advis/advis_distrimuse_unito_SR
 ### Verify Models
 
 
+### TRAINING ON MODELS AGAIN OLD DATA
+It will train models on OLD Data `v2` and its (_cleaned version_) called `refined` for `200` epochs
+
+- **_Clean the exitisting model first?_**
+
+```bash
+pixi run python scripts/flush_data.py \
+  --safety_area ALL \
+  --latent_dims 64 \
+  --checkpoints /home/unito/advis/advis_distrimuse_unito_SR/scripts/results/models_v2 \
+  --threshold_dir /home/unito/advis/advis_distrimuse_unito_SR/scripts/results/thresholds \
+  --dry_run
+```
+
+/home/unito/advis/advis_distrimuse_unito_SR/scripts/results/models_v2
+```bash
+python scripts/train.py \
+   --safety_area ALL   \
+   --dataset_source SR   \
+   --dataset_version v2   \
+   --dataset_cam_type refined   \
+   --epochs 200   \
+   --batch_size 16   \
+   --latent_dims 64   \
+   --augmentation_type custom
+   --save_figures
+   --verbose_level 1
+
+```
+
 
 ### TRAIN USING NEW DATA THROGH ROS
 
@@ -75,6 +119,8 @@ python scripts/train.py \
   --latent_dims 64 \
   --augmentation_type custom
 ```
+
+
 
 
 ### Setup ADVIS using PIXI (RUN IN ADVIS)
@@ -179,13 +225,22 @@ pixi run python scripts/pixi/pixi_saveframes.py \
 
 ### Step 3 - Live Inference
 
-- CHECK GPU BEFORE INF
+
+- **CHECK GPU BEFORE INFerence**
 
   ```python
   cd ~/advis/advis_distrimuse_unito_SR
   pixi run python -c "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available()); print(torch.cuda.device_count())"
   #nvidia-smi
   ```
+
+**Verify Inference Setup**
+
+```bash
+pixi run python -c "import torch; print(torch.__version__)"
+pixi run python -c "import rclpy; print('ROS OK')"
+pixi run python -c "import cv2; print('CV OK')"
+```
 
 - Verify topics in from Image-Broadcast 
 
@@ -249,13 +304,59 @@ pixi run python scripts/infer_ros_live.py \
   --log_every_n 1
 ```
 
-**Verify Inference Setup**
+
+### RUN INFERENCE ON MODEL-SR-V2
+it will load models checkpoint from `scripts/checkpoints_33` 
+
+
 
 ```bash
-pixi run python -c "import torch; print(torch.__version__)"
-pixi run python -c "import rclpy; print('ROS OK')"
-pixi run python -c "import cv2; print('CV OK')"
+pixi run python scripts/infer_ros_live.py   --camera_topic /camera/back_view/image_raw   --safety_area ALL   --area_names RoboArm ConvBelt PLeft PRight   --static_mask_paths     /home/unito/advis/DS/SR/v3/masks/Mask\ Generation_RoboArm_MASK.png     /home/unito/advis/DS/SR/v3/masks/Mask\ Generation_ConvBelt_MASK.png     /home/unito/advis/DS/SR/v3/masks/Mask\ Generation_PLeft_MASK.png     /home/unito/advis/DS/SR/v3/masks/Mask\ Generation_PRight_MASK.png   --threshold_dir /home/unito/advis/advis_distrimuse_unito_SR/scripts/results/thresholds   --checkpoints /home/unito/advis/advis_distrimuse_unito_SR/scripts/checkpoints_33   --latent_dims 64   --frame_stride 1   --verbose_level 2   --log_every_n 1
 ```
+
+
+```bash
+pixi run python scripts/infer_ros_live_GUI.py \
+  --camera_topic /camera/back_view/image_raw \
+  --safety_area ALL \
+  --area_names RoboArm ConvBelt PLeft PRight \
+  --static_mask_paths \
+    /home/unito/advis/DS/SR/v3/masks/Mask\ Generation_RoboArm_MASK.png \
+    /home/unito/advis/DS/SR/v3/masks/Mask\ Generation_ConvBelt_MASK.png \
+    /home/unito/advis/DS/SR/v3/masks/Mask\ Generation_PLeft_MASK.png \
+    /home/unito/advis/DS/SR/v3/masks/Mask\ Generation_PRight_MASK.png \
+  --threshold_dir /home/unito/advis/advis_distrimuse_unito_SR/scripts/results/thresholds \
+  --checkpoints /home/unito/advis/advis_distrimuse_unito_SR/scripts/results/models \
+  --latent_dims 64 \
+  --frame_stride 1 \
+  --verbose_level 1 \
+  --log_every_n 10 \
+  --process_period 0.02 \
+  --show_timeline
+
+```
+
+**_RESPONSE_**
+
+```bash
+pixi run python scripts/infer_ros_live_MSG.py \
+  --camera_topic /camera/back_view/image_raw \
+  --safety_area ALL \
+  --area_names RoboArm ConvBelt PLeft PRight \
+  --static_mask_paths \
+    /home/unito/advis/DS/SR/v3/masks/Mask\ Generation_RoboArm_MASK.png \
+    /home/unito/advis/DS/SR/v3/masks/Mask\ Generation_ConvBelt_MASK.png \
+    /home/unito/advis/DS/SR/v3/masks/Mask\ Generation_PLeft_MASK.png \
+    /home/unito/advis/DS/SR/v3/masks/Mask\ Generation_PRight_MASK.png \
+  --threshold_dir /home/unito/advis/advis_distrimuse_unito_SR/scripts/results/thresholds \
+  --checkpoints /home/unito/advis/advis_distrimuse_unito_SR/scripts/results/models \
+  --latent_dims 64 \
+  --frame_stride 1 \
+  --process_period 0.02 \
+  --publish_rulex \
+  --rulex_topic /rulex/detection_result
+```
+
 
 ```bash
 python scripts/inference.py \

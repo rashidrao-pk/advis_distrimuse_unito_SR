@@ -375,14 +375,13 @@ def save_model(
             if gpu_info["memory"] is not None:
                 print(f"GPU total memory: {gpu_info['memory']['total_gb']} GB")
 #############################################################################################################
-def load_model(Enc, Dec, D, optEncDec, optD, path_models, suffix,
+def load_model(Enc, Dec, D, optEncDec, optD, path_models, suffix,verbose_level=1,
                verbose=False, weights_only=False, device='cuda'):
-    print('suffix --> ', suffix, path_models)
-    print('path_models --> ', path_models)
-    print('-' * 100)
 
     model_path = os.path.join(path_models, f"model_{suffix}.pt")
-
+    if verbose:
+        print(f'path_models --> ', {model_path})
+        print('-' * 100)
     if not os.path.exists(model_path):
         if verbose:
             print('-' * 50)
@@ -394,7 +393,7 @@ def load_model(Enc, Dec, D, optEncDec, optD, path_models, suffix,
     if not isinstance(checkpoint, dict):
         raise RuntimeError(f"Unexpected checkpoint format in {model_path}: {type(checkpoint)}")
 
-    if verbose:
+    if verbose and verbose_level >= 2:
         print("Checkpoint keys:", list(checkpoint.keys()))
 
     # ---- model weights ----
@@ -454,7 +453,8 @@ def load_model(Enc, Dec, D, optEncDec, optD, path_models, suffix,
         if opt_enc_key is not None:
             optEncDec.load_state_dict(checkpoint[opt_enc_key])
         elif verbose:
-            print("Warning: encoder/ED optimizer state not found, skipping.")
+            if verbose_level >= 2:
+                print("Warning: encoder/ED optimizer state not found, skipping.")
     except Exception as e:
         if verbose:
             print(f"Warning: failed to load optEncDec state: {e}")
@@ -483,16 +483,15 @@ def load_model(Enc, Dec, D, optEncDec, optD, path_models, suffix,
     last_saved_epoch = checkpoint.get("epoch", len(loss_history))
 
     if verbose:
-        print(f"Loaded model from {model_path}")
-        print(f"Model loaded at epoch {last_saved_epoch}")
+        print('='*80)
+        print(f"Loaded model from {model_path} [ Trained for Num Epochs: {last_saved_epoch} ]")
 
         if config is not None:
-            print("Loaded config:")
-            print(f"  Dataset name: {config.get('dataset', {}).get('dataset_name', None)}")
-            print(f"  Train images: {config.get('dataset', {}).get('n_train_images', None)}")
-            print(f"  Val images:   {config.get('dataset', {}).get('n_val_images', None)}")
-            print(f"  Batch size:   {config.get('training', {}).get('batch_size', None)}")
-
+            
+            if verbose_level >= 2:
+                print(f"  Dataset name: {config.get('dataset', {}).get('dataset_name', None)}")
+            print(f"Loaded Config:  (Train images: {config.get('dataset', {}).get('n_train_images', None)}) \t| (Val images:   {config.get('dataset', {}).get('n_val_images', None)}) \t| Batch size:   {config.get('training', {}).get('batch_size', None)}")
+    print('-'*50)
     return loss_history, config
 
 #############################################################################################################

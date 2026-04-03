@@ -2,6 +2,7 @@ import os
 import json
 import time
 import argparse
+from collections import deque
 
 import cv2
 import numpy as np
@@ -162,7 +163,7 @@ def build_suffix_for_area(area, args):
     return suffix
 
 
-def load_models_and_thresholds(areas, args, device, log_fn=None, verbose=True):
+def load_models_and_thresholds(areas, args, device, log_fn=None):
     models = {}
     thresholds = {}
 
@@ -170,22 +171,22 @@ def load_models_and_thresholds(areas, args, device, log_fn=None, verbose=True):
 
     for area in areas:
         if log_fn:
-            log_fn(1, f"[model-load] preparing area= | {area} |")
+            log_fn(1, f"[model-load] preparing area={area}")
 
         enc = Encoder(z_size=args.latent_dims).to(device)
         dec = Decoder(z_size=args.latent_dims).to(device)
         dis = Discriminator().to(device)
 
-        optED, optD = utmc.get_optimizers(enc, dec, dis, verbose=verbose)
+        optED, optD = utmc.get_optimizers(enc, dec, dis, verbose=False)
         suffix = build_suffix_for_area(area, args)
 
         if log_fn:
-            log_fn(2, f"[model-load] area= | {area} | suffix={suffix}")
-            log_fn(2, f"[model-load] checkpoint_root={checkpoint_root} - {suffix}")
+            log_fn(2, f"[model-load] area={area} suffix={suffix}")
+            log_fn(2, f"[model-load] checkpoint_root={checkpoint_root}")
 
         history = utmc.load_model(
             enc, dec, dis, optED, optD,
-            checkpoint_root, suffix, device=device, verbose=verbose
+            checkpoint_root, suffix, device=device, verbose=False
         )
 
         if len(history) == 0:
@@ -205,9 +206,84 @@ def load_models_and_thresholds(areas, args, device, log_fn=None, verbose=True):
     return models, thresholds
 
 
+def _safe_color(name):
+    colors = {
+        "RoboArm": (255, 100, 100),
+        "ConvBelt": (100, 255, 100),
+        "PLeft": (100, 180, 255),
+        "PRight": (255, 220, 100),
+    }
+    return colors.get(name, (200, 200, 200))
+
+
+def draw_timeline_panel(score_history, latest_results, width=1000, height=500, max_points=200):
+    canvas = np.zeros((height, width, 3), dtype=np.uint8)
+    canvas[:] = (25, 25, 25)
+
+    left_pad = 80
+    right_pad = 20
+    top_pad = 40
+    bottom_pad = 40
+
+    plot_w = width - left_pad - right_pad
+    plot_h = height - top_pad - bottom_pad
+
+    cv2.rectangle(
+        canvas,
+        (left_pad, top_pad),
+        (left_pad + plot_w, top_pad + plot_h),
+        (80, 80, 80),
+        1
+    )
+
+    y_thr = top_pad + int(plot_h * 0.5)
+    cv2.line(canvas, (left_pad, y_thr), (left_pad + plot_w, y_thr), (0, 0, 180), 1)
+    cv2.putText(canvas, "thr=1.0", (left_pad + 8, y_thr - 8),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 200), 1, cv2.LINE_AA)
+
+    for val in [0.0, 0.5, 1.0, 1.5, 2.0]:
+        yy = top_pad + int(plot_h * (1.0 - min(val, 2.0) / 2.0))
+        cv2.line(canvas, (left_pad - 5, yy), (left_pad, yy), (180, 180, 180), 1)
+        cv2.putText(canvas, f"{val:.1f}", (10, yy + 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1, cv2.LINE_AA)
+
+    cv2.putText(canvas, "ADVIS Live Anomaly Timeline (normalized scores)",
+                (left_pad, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (230, 230, 230), 2, cv2.LINE_AA)
+
+    keys = list(score_history.keys())
+    for idx, area_name in enumerate(keys):
+        color = _safe_color(area_name)
+        vals = list(score_history[area_name])
+
+        if len(vals) >= 2:
+            pts = []
+            recent_vals = vals[-max_points:]
+            for i, v in enumerate(recent_vals):
+                x = left_pad + int(i * (plot_w / max(1, max_points - 1)))
+                v_clip = max(0.0, min(2.0, float(v)))
+                y = top_pad + int(plot_h * (1.0 - v_clip / 2.0))
+                pts.append((x, y))
+            for i in range(1, len(pts)):
+                cv2.line(canvas, pts[i - 1], pts[i], color, 2)
+
+        latest = latest_results.get(area_name, {})
+        label = area_name
+        if "norm_score" in latest:
+            label += f"  {latest['norm_score']:.3f}"
+        if "status" in latest:
+            label += f"  [{latest['status']}]"
+
+        legend_y = top_pad + 20 + 28 * idx
+        cv2.line(canvas, (width - 300, legend_y - 5), (width - 260, legend_y - 5), color, 3)
+        cv2.putText(canvas, label, (width - 250, legend_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+
+    return canvas
+
+
 class LiveRosAnomalyInfer(Node):
     def __init__(self, args):
-        super().__init__("LIVE_INFER")
+        super().__init__("live_ros_anomaly_infer")
 
         self.args = args
         self.verbose_level = args.verbose_level
@@ -231,8 +307,6 @@ class LiveRosAnomalyInfer(Node):
         self.vlog(1, f"[startup] active areas={self.areas}")
 
         self.vlog(1, "[startup] loading models and thresholds...")
-        self.vlog(1, "-"*100)
-
         t0 = time.time()
         self.models, self.thresholds = load_models_and_thresholds(
             self.areas, args, self.device, log_fn=self.vlog
@@ -284,6 +358,18 @@ class LiveRosAnomalyInfer(Node):
         self.last_processed_msg_id = 0
         self.is_processing = False
         self.process_start_time = None
+
+        self.show_timeline = args.show_timeline
+        self.timeline_history_len = args.timeline_history
+        self.timeline_width = args.timeline_width
+        self.timeline_height = args.timeline_height
+
+        self.score_history = {
+            area: deque(maxlen=self.timeline_history_len) for area in self.areas
+        }
+        self.latest_results = {
+            area: {"status": "waiting"} for area in self.areas
+        }
 
         self.wait_start = time.time()
         self.wait_timer = self.create_timer(5.0, self.wait_for_first_frame_log)
@@ -340,8 +426,8 @@ class LiveRosAnomalyInfer(Node):
         input_tensor = input_tensor.unsqueeze(0).to(self.device)
 
         self.vlog(
-            4,
-            f"[preprocess] {area_name}: bbox={bbox}, time={time.time() - t0:.4f}s"
+            3,
+            f"[preprocess] {area_name}: bbox={bbox}, tensor_shape={tuple(input_tensor.shape)}, time={time.time() - t0:.4f}s"
         )
         return input_tensor, bbox
 
@@ -426,12 +512,16 @@ class LiveRosAnomalyInfer(Node):
                 input_tensor, bbox = self.preprocess_area(frame_bgr, area)
                 if input_tensor is None:
                     results[area] = {"status": "mask_failed"}
+                    self.latest_results[area] = {"status": "mask_failed"}
                     self.vlog(2, f"[area-end] {area}: mask_failed in {time.time() - area_t0:.4f}s")
                     continue
 
                 out = self.infer_area(input_tensor, area)
                 out["bbox"] = bbox
                 results[area] = out
+
+                self.score_history[area].append(float(out["norm_score"]))
+                self.latest_results[area] = out
 
                 self.vlog(
                     2,
@@ -461,6 +551,21 @@ class LiveRosAnomalyInfer(Node):
                     else:
                         msg_parts.append(f"{area}: status={r['status']}")
                 self.vlog(1, " | ".join(msg_parts))
+
+            if self.show_timeline:
+                panel = draw_timeline_panel(
+                    self.score_history,
+                    self.latest_results,
+                    width=self.timeline_width,
+                    height=self.timeline_height,
+                    max_points=self.timeline_history_len,
+                )
+                cv2.imshow("ADVIS Timeline", panel)
+                key = cv2.waitKey(1) & 0xFF
+                if key == 27:
+                    self.vlog(1, "[gui] ESC pressed, shutting down")
+                    rclpy.shutdown()
+                    return
 
             self.vlog(3, f"[process] total time={time.time() - process_t0:.4f}s")
 
@@ -516,6 +621,13 @@ def parse_args():
         help="seconds between processing attempts; only latest frame is used"
     )
 
+    p.add_argument("--show_timeline", action="store_true",
+                   help="Show live OpenCV GUI timeline for normalized scores")
+    p.add_argument("--timeline_history", type=int, default=200,
+                   help="Number of recent score points to keep in timeline")
+    p.add_argument("--timeline_width", type=int, default=1000)
+    p.add_argument("--timeline_height", type=int, default=500)
+
     return p.parse_args()
 
 
@@ -528,6 +640,10 @@ def main():
     except KeyboardInterrupt:
         node.get_logger().info("Stopped by user.")
     finally:
+        try:
+            cv2.destroyAllWindows()
+        except Exception:
+            pass
         if rclpy.ok():
             node.destroy_node()
             rclpy.shutdown()
