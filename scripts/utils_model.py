@@ -192,6 +192,19 @@ from datetime import datetime
 import pandas as pd
 import torch
 
+def make_json_safe(obj):
+    if obj is None:
+        return None
+    if isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, dict):
+        return {k: make_json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [make_json_safe(v) for v in obj]
+    if hasattr(obj, "__dict__"):
+        return {k: make_json_safe(v) for k, v in vars(obj).items()}
+    return str(obj)
+
 
 def save_model(
     Enc,
@@ -210,8 +223,16 @@ def save_model(
     dataset_name=None,
     train_dir=None,
     notes=None,
-    verbose=False
+    verbose=False,
+    model_variant = 'old',
 ):
+    if model_variant=='old':
+        optEncDec_name  =   'optimizer_enc_state_dict'
+        optD_name       =   'optimizer_dec_state_dict'
+    else:
+        optEncDec_name  =   'optimizer_encdec_state_dict'
+        optD_name       =   'optimizer_d_state_dict'
+
     os.makedirs(path_models, exist_ok=True)
 
     model_path = os.path.join(path_models, f"model_{suffix}.pt")
@@ -338,7 +359,7 @@ def save_model(
             "pipeline": safe_transform_to_string(augmentation)
         },
 
-        "params": params if params is not None else {},
+        "params": make_json_safe(params) if params is not None else {},
         "notes": notes,
     }
 
@@ -350,8 +371,8 @@ def save_model(
         "encoder_state_dict": Enc.state_dict(),
         "decoder_state_dict": Dec.state_dict(),
         "discriminator_state_dict": D.state_dict(),
-        "optimizer_encdec_state_dict": optEncDec.state_dict(),
-        "optimizer_d_state_dict": optD.state_dict(),
+        optEncDec_name: optEncDec.state_dict(),
+        optD_name: optD.state_dict(),
         "loss_history": loss_history_to_save,
         "config": config,
     }
@@ -374,105 +395,37 @@ def save_model(
             print(f"GPU: {gpu_info['current_gpu_name']}")
             if gpu_info["memory"] is not None:
                 print(f"GPU total memory: {gpu_info['memory']['total_gb']} GB")
+
 #############################################################################################################
-def load_model(Enc, Dec, D, optEncDec, optD, path_models, suffix,verbose_level=1,
-               verbose=False, weights_only=False, device='cuda'):
+
+def load_model(Enc, Dec, D, optEncDec, optD, path_models, suffix, verbose=False,
+                device='cuda',
+                model_variant = 'new'):
+    if model_variant=='old':
+        optEncDec_name  =   'optimizer_enc_state_dict'
+        optD_name       =   'optimizer_dec_state_dict'
+    else:
+        optEncDec_name  =   'optimizer_encdec_state_dict'
+        optD_name       =   'optimizer_d_state_dict'
 
     model_path = os.path.join(path_models, f"model_{suffix}.pt")
+
     if verbose:
-        print(f'path_models --> ', {model_path})
-        print('-' * 100)
+        print(f"TRYING MODEL FROM -> {model_path}")
+
     if not os.path.exists(model_path):
-        if verbose and verbose_level>1:
-            print('-' * 50)
-            print(f"Model Not Found --> {model_path}")
+        if verbose:
+            print(f"Path does not exist: {model_path}")
         return [], None
 
-    checkpoint = torch.load(model_path, map_location=device, weights_only=weights_only)
+    checkpoint = torch.load(model_path, map_location=device)
 
-    if not isinstance(checkpoint, dict):
-        raise RuntimeError(f"Unexpected checkpoint format in {model_path}: {type(checkpoint)}")
+    Enc.load_state_dict(checkpoint['encoder_state_dict'])
+    Dec.load_state_dict(checkpoint['decoder_state_dict'])
+    D.load_state_dict(checkpoint['discriminator_state_dict'])
+    optEncDec.load_state_dict(checkpoint[optEncDec_name])
+    optD.load_state_dict(checkpoint[optD_name])
 
-    if verbose and verbose_level >= 2:
-        print("Checkpoint keys:", list(checkpoint.keys()))
-
-    # ---- model weights ----
-    enc_key = None
-    dec_key = None
-    dis_key = None
-
-    for k in ['encoder_state_dict', 'Enc_state_dict', 'enc_state_dict', 'encoder']:
-        if k in checkpoint:
-            enc_key = k
-            break
-
-    for k in ['decoder_state_dict', 'Dec_state_dict', 'dec_state_dict', 'decoder']:
-        if k in checkpoint:
-            dec_key = k
-            break
-
-    for k in ['discriminator_state_dict', 'D_state_dict', 'dis_state_dict', 'discriminator']:
-        if k in checkpoint:
-            dis_key = k
-            break
-
-    if enc_key is None:
-        raise KeyError(f"No encoder state dict key found in checkpoint: {list(checkpoint.keys())}")
-    if dec_key is None:
-        raise KeyError(f"No decoder state dict key found in checkpoint: {list(checkpoint.keys())}")
-
-    Enc.load_state_dict(checkpoint[enc_key])
-    Dec.load_state_dict(checkpoint[dec_key])
-
-    if dis_key is not None:
-        D.load_state_dict(checkpoint[dis_key])
-    elif verbose:
-        print("Warning: discriminator state dict not found, skipping.")
-
-    # ---- optimizer states (optional) ----
-    opt_enc_key = None
-    opt_dec_key = None
-    opt_dis_key = None
-
-    for k in ['optimizer_enc_state_dict', 'optimizer_ed_state_dict', 'optimizer_state_dict_enc', 'optimizer_state_dict']:
-        if k in checkpoint:
-            opt_enc_key = k
-            break
-
-    for k in ['optimizer_dec_state_dict', 'optimizer_dis_state_dict', 'optimizer_state_dict_dec', 'optimizer_D_state_dict']:
-        if k in checkpoint:
-            opt_dec_key = k
-            break
-
-    for k in ['optimizer_dis_state_dict', 'optimizer_d_state_dict', 'optimizer_state_dict_dis']:
-        if k in checkpoint:
-            opt_dis_key = k
-            break
-
-    try:
-        if opt_enc_key is not None:
-            optEncDec.load_state_dict(checkpoint[opt_enc_key])
-        elif verbose:
-            if verbose_level >= 2:
-                print("Warning: encoder/ED optimizer state not found, skipping.")
-    except Exception as e:
-        if verbose:
-            print(f"Warning: failed to load optEncDec state: {e}")
-
-    try:
-        # keep backward compatibility with your previous code:
-        # if checkpoint stored discriminator optimizer under optimizer_dec_state_dict
-        if opt_dis_key is not None:
-            optD.load_state_dict(checkpoint[opt_dis_key])
-        elif opt_dec_key is not None:
-            optD.load_state_dict(checkpoint[opt_dec_key])
-        elif verbose:
-            print("Warning: discriminator optimizer state not found, skipping.")
-    except Exception as e:
-        if verbose:
-            print(f"Warning: failed to load optD state: {e}")
-
-    # ---- history / config ----
     loss_history_raw = checkpoint.get('loss_history', [])
     if hasattr(loss_history_raw, "to_dict"):
         loss_history = loss_history_raw.to_dict('records')
@@ -483,16 +436,21 @@ def load_model(Enc, Dec, D, optEncDec, optD, path_models, suffix,verbose_level=1
     last_saved_epoch = checkpoint.get("epoch", len(loss_history))
 
     if verbose:
-        print('='*80)
-        print(f"Loaded model from {model_path} [ Trained for Num Epochs: {last_saved_epoch} ]")
+        print(f"Loaded model from {model_path}")
+        print(f"Model loaded at epoch {last_saved_epoch}")
+        # print(f"Model saved at  {config.get('saved_at', {})}")   
 
         if config is not None:
-            
-            if verbose_level >= 2:
-                print(f"  Dataset name: {config.get('dataset', {}).get('dataset_name', None)}")
-            print(f"Loaded Config:  (Train images: {config.get('dataset', {}).get('n_train_images', None)}) \t| (Val images:   {config.get('dataset', {}).get('n_val_images', None)}) \t| Batch size:   {config.get('training', {}).get('batch_size', None)}")
-    print('-'*50)
+            print("Loaded config:")
+
+            print(f"  Dataset name: {config.get('dataset', {}).get('dataset_name', None)}")
+            print(f"  Train images: {config.get('dataset', {}).get('n_train_images', None)}")
+            print(f"  Val images:   {config.get('dataset', {}).get('n_val_images', None)}")
+            print(f"  Batch size:   {config.get('training', {}).get('batch_size', None)}")
+            print(f"  Augment:      {config.get('augmentation', {}).get('pipeline', None)}")
+
     return loss_history, config
+
 
 #############################################################################################################
 ############################################################################

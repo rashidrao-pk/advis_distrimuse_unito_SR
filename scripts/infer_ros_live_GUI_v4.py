@@ -6,6 +6,7 @@ from collections import deque, OrderedDict
 
 import cv2
 import numpy as np
+from matplotlib.colors import LinearSegmentedColormap
 
 import torch
 import torchvision.transforms as transforms
@@ -24,6 +25,17 @@ from utils_model import Encoder, Decoder, Discriminator
 
 
 ALL_SAFETY_AREAS = ["PLeft", "PRight", "RoboArm", "ConvBelt"]
+
+THRESHOLD_CMAP_UNEXPECTED = LinearSegmentedColormap.from_list(
+    "custom_threshold_cmap",
+    [
+        (0.0, "white"),
+        (0.25, "lightblue"),
+        (0.35, "coral"),
+        (0.50, "red"),
+        (1.0, "purple"),
+    ],
+)
 
 AREA_DISPLAY_NAMES = {
     "PLeft": "Pallet Left",
@@ -107,20 +119,48 @@ def scale_contours(contours, scale, x_off, y_off):
     return scaled
 
 
-def colorize_anomaly_map(dist_map, clip_max=None):
+def colorize_anomaly_map(dist_map, vmin=0.0, vmax=2.0):
     if dist_map is None:
         return None
 
     dm = dist_map.astype(np.float32)
 
-    if clip_max is None:
-        clip_max = np.percentile(dm, 99.5)
-        clip_max = max(clip_max, 1e-6)
+    denom = max(float(vmax) - float(vmin), 1e-6)
+    dm = np.clip((dm - float(vmin)) / denom, 0.0, 1.0)
 
-    dm = np.clip(dm / clip_max, 0.0, 1.0)
-    dm_u8 = (dm * 255).astype(np.uint8)
-    heat = cv2.applyColorMap(dm_u8, cv2.COLORMAP_JET)
-    return heat
+    rgb = (THRESHOLD_CMAP_UNEXPECTED(dm)[..., :3] * 255.0).astype(np.uint8)
+    bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    return bgr
+
+
+def unletterbox_patch(patch_bgr, resize_meta):
+    """
+    Remove padding introduced by _resize_128(... keep_aspect=True).
+    """
+    if patch_bgr is None or resize_meta is None:
+        return patch_bgr
+
+    x_off = int(resize_meta.get("x_off", 0))
+    y_off = int(resize_meta.get("y_off", 0))
+    new_w = int(resize_meta.get("new_w", patch_bgr.shape[1]))
+    new_h = int(resize_meta.get("new_h", patch_bgr.shape[0]))
+
+    if new_w <= 0 or new_h <= 0:
+        return patch_bgr
+
+    h, w = patch_bgr.shape[:2]
+    x1 = max(0, x_off)
+    y1 = max(0, y_off)
+    x2 = min(w, x_off + new_w)
+    y2 = min(h, y_off + new_h)
+
+    if x2 <= x1 or y2 <= y1:
+        return patch_bgr
+
+    cropped = patch_bgr[y1:y2, x1:x2]
+    if cropped.size == 0:
+        return patch_bgr
+    return cropped
 
 
 def paste_area_result_in_full_frame(
@@ -128,9 +168,14 @@ def paste_area_result_in_full_frame(
     patch_bgr,
     bbox,
     mask_bin,
+    resize_meta=None,
     keep_background=False,
     background_canvas=None
 ):
+    """
+    Paste patch back into full-frame canvas. If the patch came from a letterboxed
+    128x128 input, first remove the padding using resize_meta so shapes are restored.
+    """
     if patch_bgr is None or bbox is None or mask_bin is None:
         return target_canvas
 
@@ -139,6 +184,12 @@ def paste_area_result_in_full_frame(
     crop_h = y2 - y1 + 1
 
     if crop_w <= 0 or crop_h <= 0:
+        return target_canvas
+
+    if resize_meta is not None:
+        patch_bgr = unletterbox_patch(patch_bgr, resize_meta)
+
+    if patch_bgr is None or patch_bgr.size == 0:
         return target_canvas
 
     patch_resized = cv2.resize(patch_bgr, (crop_w, crop_h), interpolation=cv2.INTER_AREA)
@@ -218,8 +269,6 @@ def draw_text_table(panel, results, frame_id=None):
 
     return panel
 ############################################################################################################
-
-
 def draw_dashboard_panel(frame_bgr, area_inputs, latest_results, frame_id=None, width=1600, height=1000):
     canvas = np.full((height, width, 3), 235, dtype=np.uint8)
 
@@ -260,15 +309,40 @@ def draw_dashboard_panel(frame_bgr, area_inputs, latest_results, frame_id=None, 
     bl_in = inner_box(bl)
     br_in = inner_box(br)
 
+    h, w = frame_bgr.shape[:2]
+
+    # ------------------------------------------------------------------
+    # TOP-LEFT: exact model input mapped back to full frame
+    # ------------------------------------------------------------------
+    # Background = blurred/dimmed original frame
     input_vis = overlay_outside_safety_blur(frame_bgr, area_inputs)
 
-    h, w = frame_bgr.shape[:2]
+    # Exact model input pasted back
+    input_full = input_vis.copy()
+
+    for area_name in ordered_area_list(area_inputs.keys()):
+        info = area_inputs[area_name]
+        bbox = info.get("bbox")
+        mask_bin = info.get("mask_bin")
+        resize_meta = info.get("resize_meta")
+        orig_patch = info.get("orig_patch_bgr")
+
+        input_full = paste_area_result_in_full_frame(
+            input_full,
+            orig_patch,
+            bbox,
+            mask_bin,
+            resize_meta=resize_meta,
+            keep_background=True,
+            background_canvas=input_vis,
+        )
+
     tl_w = tl_in[2] - tl_in[0]
     tl_h = tl_in[3] - tl_in[1]
     scale = min(tl_w / w, tl_h / h)
     new_w = max(1, int(w * scale))
     new_h = max(1, int(h * scale))
-    tl_img = cv2.resize(input_vis, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    tl_img = cv2.resize(input_full, (new_w, new_h), interpolation=cv2.INTER_AREA)
     x_off = tl_in[0] + (tl_w - new_w) // 2
     y_off = tl_in[1] + (tl_h - new_h) // 2
     canvas[y_off:y_off + new_h, x_off:x_off + new_w] = tl_img
@@ -288,6 +362,9 @@ def draw_dashboard_panel(frame_bgr, area_inputs, latest_results, frame_id=None, 
             cv2.putText(canvas, label, (int(pt[0]), max(20, int(pt[1]) - 8)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
 
+    # ------------------------------------------------------------------
+    # Build full-frame anomaly/reconstruction
+    # ------------------------------------------------------------------
     base_black = np.zeros_like(frame_bgr)
     recon_full = base_black.copy()
     anom_full = np.full_like(frame_bgr, 255)
@@ -296,12 +373,20 @@ def draw_dashboard_panel(frame_bgr, area_inputs, latest_results, frame_id=None, 
         info = area_inputs[area_name]
         bbox = info.get("bbox")
         mask_bin = info.get("mask_bin")
+        resize_meta = info.get("resize_meta")
         recon_patch = info.get("recon_patch_bgr")
         anom_patch = info.get("anom_patch_bgr")
 
-        recon_full = paste_area_result_in_full_frame(recon_full, recon_patch, bbox, mask_bin)
-        anom_full = paste_area_result_in_full_frame(anom_full, anom_patch, bbox, mask_bin)
+        recon_full = paste_area_result_in_full_frame(
+            recon_full, recon_patch, bbox, mask_bin, resize_meta=resize_meta
+        )
+        anom_full = paste_area_result_in_full_frame(
+            anom_full, anom_patch, bbox, mask_bin, resize_meta=resize_meta
+        )
 
+    # ------------------------------------------------------------------
+    # TOP-RIGHT: anomaly map
+    # ------------------------------------------------------------------
     tr_w = tr_in[2] - tr_in[0]
     tr_h = tr_in[3] - tr_in[1]
     anom_disp = resize_and_center(anom_full, tr_w, tr_h, bg_color=(255, 255, 255))
@@ -328,6 +413,9 @@ def draw_dashboard_panel(frame_bgr, area_inputs, latest_results, frame_id=None, 
             cv2.putText(canvas, label, (int(pt[0]), int(pt[1]) + 22),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
 
+    # ------------------------------------------------------------------
+    # BOTTOM-LEFT: reconstruction
+    # ------------------------------------------------------------------
     bl_w = bl_in[2] - bl_in[0]
     bl_h = bl_in[3] - bl_in[1]
     recon_disp = resize_and_center(recon_full, bl_w, bl_h, bg_color=(0, 0, 0))
@@ -350,13 +438,16 @@ def draw_dashboard_panel(frame_bgr, area_inputs, latest_results, frame_id=None, 
         if len(scaled) > 0:
             cv2.drawContours(canvas, scaled, -1, color, 2)
 
+    # ------------------------------------------------------------------
+    # BOTTOM-RIGHT: details
+    # ------------------------------------------------------------------
     details_panel = np.full((br_in[3] - br_in[1], br_in[2] - br_in[0], 3), 245, dtype=np.uint8)
     details_panel = draw_text_table(details_panel, latest_results, frame_id=frame_id)
     canvas[br_in[1]:br_in[3], br_in[0]:br_in[2]] = details_panel
 
     return canvas
 
-
+#------------------------------------------------------------------------------------------------------------
 def _ensure_gray(mask):
     if mask is None:
         return None
@@ -396,18 +487,29 @@ def _crop_with_mask(frame, mask_gray):
     return cropped, bbox, masked_full
 
 
-def _resize_128(image, keep_aspect=True, target=(128, 128)):
+def _resize_128(image, keep_aspect=True, target=(128, 128), return_meta=False):
     target_w, target_h = target
 
     if image is None:
-        return None
+        return (None, None) if return_meta else None
 
     if not keep_aspect:
-        return cv2.resize(image, (target_w, target_h), interpolation=cv2.INTER_AREA)
+        out = cv2.resize(image, (target_w, target_h), interpolation=cv2.INTER_AREA)
+        meta = {
+            "new_w": target_w,
+            "new_h": target_h,
+            "x_off": 0,
+            "y_off": 0,
+            "target_w": target_w,
+            "target_h": target_h,
+            "orig_h": image.shape[0],
+            "orig_w": image.shape[1],
+        }
+        return (out, meta) if return_meta else out
 
     h, w = image.shape[:2]
     if h == 0 or w == 0:
-        return None
+        return (None, None) if return_meta else None
 
     scale = min(target_w / w, target_h / h)
     new_w = max(1, int(round(w * scale)))
@@ -419,7 +521,19 @@ def _resize_128(image, keep_aspect=True, target=(128, 128)):
     x_off = (target_w - new_w) // 2
     y_off = (target_h - new_h) // 2
     canvas[y_off:y_off + new_h, x_off:x_off + new_w] = resized
-    return canvas
+
+    meta = {
+        "new_w": new_w,
+        "new_h": new_h,
+        "x_off": x_off,
+        "y_off": y_off,
+        "target_w": target_w,
+        "target_h": target_h,
+        "orig_h": h,
+        "orig_w": w,
+    }
+
+    return (canvas, meta) if return_meta else canvas
 
 
 def tensor_to_hwc_float32(t: torch.Tensor) -> np.ndarray:
@@ -525,7 +639,8 @@ def load_models_and_thresholds(areas, args, device, log_fn=None):
 
         history = utmc.load_model(
             enc, dec, dis, optED, optD,
-            checkpoint_root, suffix, device=device, verbose=False
+            checkpoint_root, suffix, device=device, verbose=False,
+            model_variant=args.model_variant,
         )
 
         if len(history) == 0:
@@ -758,7 +873,7 @@ class LiveRosAnomalyInfer(Node):
             self.vlog(3, f"[preprocess] {area_name}: crop failed")
             return None, None, None
 
-        resized = _resize_128(cropped, keep_aspect=True, target=(128, 128))
+        resized, resize_meta = _resize_128(cropped, keep_aspect=True, target=(128, 128), return_meta=True)
         if resized is None:
             self.vlog(3, f"[preprocess] {area_name}: resize failed")
             return None, None, None
@@ -770,7 +885,8 @@ class LiveRosAnomalyInfer(Node):
 
         self.vlog(
             3,
-            f"[preprocess] {area_name}: bbox={bbox}, tensor_shape={tuple(input_tensor.shape)}, time={time.time() - t0:.4f}s"
+            f"[preprocess] {area_name}: bbox={bbox}, tensor_shape={tuple(input_tensor.shape)}, "
+            f"resize_meta={resize_meta}, time={time.time() - t0:.4f}s"
         )
 
         vis_data = {
@@ -779,6 +895,7 @@ class LiveRosAnomalyInfer(Node):
             "bbox": bbox,
             "contours": contours,
             "mask_bin": mask_bin,
+            "resize_meta": resize_meta,
         }
 
         return input_tensor, bbox, vis_data
@@ -1052,9 +1169,8 @@ def parse_args():
     p.add_argument("--show_model_input", action="store_true")
     p.add_argument("--model_input_width", type=int, default=1600)
     p.add_argument("--model_input_height", type=int, default=1000)
-
+    p.add_argument("--model_variant", default="old")
     return p.parse_args()
-
 
 def main():
     args = parse_args()
