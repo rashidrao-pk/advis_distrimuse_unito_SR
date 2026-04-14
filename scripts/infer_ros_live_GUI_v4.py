@@ -208,7 +208,7 @@ def paste_area_result_in_full_frame(
     return target_canvas
 
 
-def draw_text_table(panel, results, frame_id=None):
+def draw_text_table(panel, results, frame_id=None, corr_frame_id=None, corr_stamp=None):
     h, w = panel.shape[:2]
     panel[:] = (245, 245, 245)
 
@@ -221,7 +221,7 @@ def draw_text_table(panel, results, frame_id=None):
     y += 35
 
     if frame_id is not None:
-        cv2.putText(panel, f"Frame: {frame_id}", (30, y),
+        cv2.putText(panel, f"Frame: {frame_id} CFID: {corr_frame_id} @ {corr_stamp.sec}.{corr_stamp.nanosec}", (30, y),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (20, 20, 20), 2, cv2.LINE_AA)
         y += 20
         cv2.line(panel, (20, y), (w - 20, y), (40, 40, 40), 1)
@@ -269,7 +269,7 @@ def draw_text_table(panel, results, frame_id=None):
 
     return panel
 ############################################################################################################
-def draw_dashboard_panel(frame_bgr, area_inputs, latest_results, frame_id=None, width=1600, height=1000):
+def draw_dashboard_panel(frame_bgr, area_inputs, latest_results, frame_id=None, width=1600, height=1000, corr_frame_id=None, corr_stamp=None):
     canvas = np.full((height, width, 3), 235, dtype=np.uint8)
 
     pad = 16
@@ -442,7 +442,7 @@ def draw_dashboard_panel(frame_bgr, area_inputs, latest_results, frame_id=None, 
     # BOTTOM-RIGHT: details
     # ------------------------------------------------------------------
     details_panel = np.full((br_in[3] - br_in[1], br_in[2] - br_in[0], 3), 245, dtype=np.uint8)
-    details_panel = draw_text_table(details_panel, latest_results, frame_id=frame_id)
+    details_panel = draw_text_table(details_panel, latest_results, frame_id=frame_id, corr_frame_id=corr_frame_id, corr_stamp=corr_stamp)
     canvas[br_in[1]:br_in[3], br_in[0]:br_in[2]] = details_panel
 
     return canvas
@@ -732,7 +732,7 @@ class LiveRosAnomalyInfer(Node):
         self.args = args
         self.verbose_level = args.verbose_level
         self.log_every_n = args.log_every_n
-
+        
         self.vlog(1, "[startup] initializing node")
 
         self.device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu else "cpu")
@@ -803,11 +803,16 @@ class LiveRosAnomalyInfer(Node):
             )
             self.vlog(1, f"[publisher] publishing RulexDetectionResult to {args.rulex_topic}")
 
+            print('='*100)
+            print('='*100)
+
         self.frame_count = 0
         self.processed_count = 0
         self.max_frames = args.max_frames
         self.start_time = time.time()
         self.first_callback_seen = False
+
+        self.first_rulex_publish_done = False
 
         self.latest_msg = None
         self.latest_msg_id = 0
@@ -945,7 +950,7 @@ class LiveRosAnomalyInfer(Node):
             "dist_map": dist_map,
         }
 
-    def publish_rulex_result(self, results, frame_bgr):
+    def publish_rulex_result(self, results, frame_bgr, corr_frame_id, corr_stamp):
         if self.rulex_pub is None:
             return
 
@@ -960,16 +965,12 @@ class LiveRosAnomalyInfer(Node):
             area_msg.area = AREA_NAME_TO_ENUM.get(area_name, RulexAreaScore.AREA_A)
             area_msg.anomaly = bool(r.get("is_anomalous", False))
 
+            # area_msg.score = float(r.get("norm_score", 0.0))
+            # area_msg.frame_id = corr_frame_id
+            # area_msg.stamp = corr_stamp
+
             if area_msg.anomaly:
                 any_anomaly = True
-
-            # Uncomment if your ROS message has these fields:
-            # if hasattr(area_msg, "score"):
-            #     area_msg.score = float(r.get("norm_score", 0.0))
-            # if hasattr(area_msg, "raw_score"):
-            #     area_msg.raw_score = float(r.get("score", 0.0))
-            # if hasattr(area_msg, "threshold"):
-            #     area_msg.threshold = float(r.get("threshold", 0.0))
 
             area_scores.append(area_msg)
 
@@ -977,6 +978,10 @@ class LiveRosAnomalyInfer(Node):
 
         if self.args.attach_image_on_anomaly and any_anomaly:
             msg.image = self.bridge.cv2_to_imgmsg(frame_bgr, encoding="bgr8")
+
+        if not self.first_rulex_publish_done:
+            print(f"[publish] FIRST RulexDetectionResult publish started for frame_id={corr_frame_id} at stamp={corr_stamp.sec}.{corr_stamp.nanosec}")
+            self.first_rulex_publish_done = True
 
         self.rulex_pub.publish(msg)
 
@@ -993,21 +998,32 @@ class LiveRosAnomalyInfer(Node):
         if self.is_processing:
             return
         if self.latest_msg is None:
+            ## TO DO: Sleep for 100 ms
+            print("[process] no frame received yet, waiting...")
+            time.sleep(0.1)
             return
         if self.latest_msg_id == self.last_processed_msg_id:
             return
 
         msg = self.latest_msg
         msg_id = self.latest_msg_id
+        self.latest_msg = None
+        # self.latest_msg_id = NotImplementedError
+        self.latest_msg_id = 0
+
+        corr_frame_id = msg.header.frame_id
+        corr_stamp = msg.header.stamp
+
+        print(f"[process] new frame to process: id={corr_frame_id}, stamp={corr_stamp}")
 
         self.is_processing = True
         process_t0 = time.time()
 
         try:
-            if self.args.frame_stride > 1 and (msg_id % self.args.frame_stride != 0):
-                self.last_processed_msg_id = msg_id
-                self.vlog(4, f"[process] skipped by frame_stride: raw frame={msg_id}")
-                return
+            # if self.args.frame_stride > 1 and (msg_id % self.args.frame_stride != 0):
+            #     self.last_processed_msg_id = msg_id
+            #     self.vlog(4, f"[process] skipped by frame_stride: raw frame={msg_id}")
+            #     return
 
             self.vlog(2, f"[process] using latest raw frame #{msg_id}")
 
@@ -1065,25 +1081,25 @@ class LiveRosAnomalyInfer(Node):
             avg_fps = self.processed_count / max(proc_elapsed, 1e-6)
             inst_fps = 1.0 / max(time.time() - process_t0, 1e-6)
 
-            if self.processed_count % self.log_every_n == 0 or self.processed_count == 1:
-                msg_parts = [
-                    f"raw_frame={msg_id}",
-                    f"processed={self.processed_count}",
-                    f"avg_fps={avg_fps:.2f}",
-                    f"inst_fps={inst_fps:.2f}",
-                ]
-                for area in self.areas:
-                    r = results[area]
-                    if "score" in r:
-                        msg_parts.append(
-                            f"{area}: score={r['score']:.5f}, norm={r['norm_score']:.3f}, status={r['status']}"
-                        )
-                    else:
-                        msg_parts.append(f"{area}: status={r['status']}")
-                self.vlog(1, " | ".join(msg_parts))
+            # if self.processed_count % self.log_every_n == 0 or self.processed_count == 1:
+            msg_parts = [
+                f"raw_frame={msg.header.frame_id}",
+                f"processed={self.processed_count}",
+                f"avg_fps={avg_fps:.2f}",
+                f"inst_fps={inst_fps:.2f}",
+            ]
+            for area in self.areas:
+                r = results[area]
+                if "score" in r:
+                    msg_parts.append(
+                        f"{area}: score={r['score']:.5f}, norm={r['norm_score']:.3f}, status={r['status']}"
+                    )
+                else:
+                    msg_parts.append(f"{area}: status={r['status']}")
+            self.vlog(1, " | ".join(msg_parts))
 
             if self.rulex_pub is not None:
-                self.publish_rulex_result(results, frame_bgr)
+                self.publish_rulex_result(results, frame_bgr, corr_frame_id, corr_stamp)
 
             if self.args.show_model_input:
                 dashboard = draw_dashboard_panel(
@@ -1093,6 +1109,8 @@ class LiveRosAnomalyInfer(Node):
                     frame_id=msg_id,
                     width=self.args.model_input_width,
                     height=self.args.model_input_height,
+                    corr_frame_id=corr_frame_id,
+                    corr_stamp=corr_stamp
                 )
                 cv2.imshow("ADVIS Dashboard", dashboard)
                 key = cv2.waitKey(1) & 0xFF
@@ -1123,6 +1141,7 @@ class LiveRosAnomalyInfer(Node):
                 rclpy.shutdown()
 
         except Exception as e:
+            print(f"[process] error processing frame #{msg_id}: {e}")
             self.get_logger().error(f"[process-error] {e}")
         finally:
             self.is_processing = False
@@ -1133,7 +1152,7 @@ def parse_args():
 
     p.add_argument("--camera_topic", default="/camera/back_view/image_raw")
     p.add_argument("--rulex_topic", default="/rulex/detection_result")
-    p.add_argument("--publish_rulex", action="store_true",
+    p.add_argument("--publish_rulex", action="store_true", default=True,
                    help="Publish RulexDetectionResult on ROS2")
     p.add_argument("--attach_image_on_anomaly", action="store_true",
                    help="Attach current frame to RulexDetectionResult if any area is anomalous")

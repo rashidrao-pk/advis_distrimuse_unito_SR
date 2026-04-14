@@ -14,6 +14,9 @@ channels = [
 
 [activation.env]
 PYTHONPATH = "${PIXI_PROJECT_ROOT}/src:${PYTHONPATH}"
+RMW_IMPLEMENTATION = "rmw_cyclonedds_cpp"
+CYCLONEDDS_URI = "/home/unito/dm/distrimuse-seds/cyclonedds.xml"
+ROS_DOMAIN_ID="1"
 
 [dependencies]
 python = "3.12.*"
@@ -35,3 +38,7 @@ scikit-image = ">=0.26.0,<0.27"
 tqdm = ">=4.67.3,<5"
 scikit-learn = ">=1.8.0,<2"
 pandas = ">=3.0.2,<4"
+
+
+ros-jazzy-rmw-cyclonedds-cpp = "*"
+

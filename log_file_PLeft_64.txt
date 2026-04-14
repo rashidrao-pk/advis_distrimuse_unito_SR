@@ -1,0 +1,53 @@
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+|  dataset   |   camera   |  subgroup  |  epochs   |   latent_dims   |   input_shape   | batch_size |   LR_enc_dec    |     LR_dis      |
+
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+|     v2     |  refined   |   PLeft    |    200     |       64        |    3x128x128    |     16     |      0.001      |     0.0001      |
+
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+================================================================================================================================================================
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+START CODE 
+code started:	2026-04-10 11:14:23.451510
+paths_results:	/home/unito/advis/advis_distrimuse_unito_SR/scripts/results/training/PLeft_64
+paths_models:	/home/unito/advis/advis_distrimuse_unito_SR/scripts/results/models_v2
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+| Epoch: [  163] | LossEncDec: 0.00545    | LossDis: 0.06272    |
+| Epoch: [  164] | LossEncDec: 0.00494    | LossDis: 0.01297    |
+| Epoch: [  165] | LossEncDec: 0.00513    | LossDis: 0.06950    |
+| Epoch: [  166] | LossEncDec: 0.00457    | LossDis: 0.16100    |
+| Epoch: [  167] | LossEncDec: 0.00454    | LossDis: 0.10658    |
+| Epoch: [  168] | LossEncDec: 0.00433    | LossDis: 0.03387    |
+| Epoch: [  169] | LossEncDec: 0.00335    | LossDis: 0.11222    |
+| Epoch: [  170] | LossEncDec: 0.00330    | LossDis: 0.12346    |
+| Epoch: [  171] | LossEncDec: 0.00366    | LossDis: 0.26145    |
+| Epoch: [  172] | LossEncDec: 0.00371    | LossDis: 0.22406    |
+| Epoch: [  173] | LossEncDec: 0.00340    | LossDis: 0.12514    |
+| Epoch: [  174] | LossEncDec: 0.00200    | LossDis: 0.15354    |
+| Epoch: [  175] | LossEncDec: 0.00374    | LossDis: 0.01254    |
+| Epoch: [  176] | LossEncDec: 0.00248    | LossDis: 0.08508    |
+| Epoch: [  177] | LossEncDec: 0.00439    | LossDis: 0.09344    |
+| Epoch: [  178] | LossEncDec: 0.00360    | LossDis: 0.31379    |
+| Epoch: [  179] | LossEncDec: 0.00361    | LossDis: 0.11458    |
+| Epoch: [  180] | LossEncDec: 0.00492    | LossDis: 0.03381    |
+| Epoch: [  181] | LossEncDec: 0.00412    | LossDis: 0.10467    |
+| Epoch: [  182] | LossEncDec: 0.00366    | LossDis: 0.01539    |
+| Epoch: [  183] | LossEncDec: 0.00394    | LossDis: 0.06613    |
+| Epoch: [  184] | LossEncDec: 0.00561    | LossDis: 0.17245    |
+| Epoch: [  185] | LossEncDec: 0.00299    | LossDis: 0.04390    |
+| Epoch: [  186] | LossEncDec: 0.00360    | LossDis: 0.09238    |
+| Epoch: [  187] | LossEncDec: 0.00298    | LossDis: 0.08712    |
+| Epoch: [  188] | LossEncDec: 0.00417    | LossDis: 0.15388    |
+| Epoch: [  189] | LossEncDec: 0.00347    | LossDis: 0.06127    |
+| Epoch: [  190] | LossEncDec: 0.00415    | LossDis: 0.07933    |
+| Epoch: [  191] | LossEncDec: 0.00231    | LossDis: 0.04776    |
+| Epoch: [  192] | LossEncDec: 0.00487    | LossDis: 0.06636    |
+| Epoch: [  193] | LossEncDec: 0.00411    | LossDis: 0.08029    |
+| Epoch: [  194] | LossEncDec: 0.00506    | LossDis: 0.01130    |
+| Epoch: [  195] | LossEncDec: 0.00530    | LossDis: 0.05719    |
+| Epoch: [  196] | LossEncDec: 0.00327    | LossDis: 0.05853    |
+| Epoch: [  197] | LossEncDec: 0.00322    | LossDis: 0.37221    |
+| Epoch: [  198] | LossEncDec: 0.00239    | LossDis: 0.13861    |
+| Epoch: [  199] | LossEncDec: 0.00448    | LossDis: 0.02724    |
+| Epoch: [  200] | LossEncDec: 0.00403    | LossDis: 0.07469    |

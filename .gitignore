@@ -1,0 +1,10 @@
+# pixi environments
+.pixi/*
+!.pixi/config.toml
+scripts/results/models_v2
+scripts/results/models_v3
+scripts/results/monitor
+scripts/results/training
+scripts/dm_checkpoints_demo33
+scripts/__pycache__/*
+timeline_frames/
