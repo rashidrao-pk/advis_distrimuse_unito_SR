@@ -14,7 +14,8 @@ import torchvision.transforms as transforms
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
-from sensor_msgs.msg import Image as RosImage
+from sensor_msgs.msg import Image as RosImage,CompressedImage
+
 from cv_bridge import CvBridge
 
 from distrimuse_ros2_api.msg import RulexAreaScore, RulexDetectionResult
@@ -789,7 +790,7 @@ class LiveRosAnomalyInfer(Node):
         )
 
         self.subscription = self.create_subscription(
-            RosImage,
+            CompressedImage,
             args.camera_topic,
             self.ros_callback_store_latest,
             sensor_qos,
@@ -1033,8 +1034,8 @@ class LiveRosAnomalyInfer(Node):
             self.vlog(2, f"[process] using latest raw frame #{msg_id}")
 
             t_convert = time.time()
-            frame_bgr = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
-
+            # frame_bgr = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+            frame_bgr = cv2.imdecode(np.frombuffer(msg.data, dtype=np.uint8), cv2.IMREAD_COLOR)
             if self.processed_count == 0:
                 self.process_start_time = time.time()
 
