@@ -800,11 +800,18 @@ class LiveRosAnomalyInfer(Node):
 
         self.rulex_pub = None
         if args.publish_rulex:
+            pub_qos = QoSProfile(
+                reliability=ReliabilityPolicy.RELIABLE,
+                # reliability=ReliabilityPolicy.BEST_EFFORT,
+                history=HistoryPolicy.KEEP_LAST,
+                depth=1,
+            )
             self.rulex_pub = self.create_publisher(
                 RulexDetectionResult,
                 args.rulex_topic,
-                10,
+                pub_qos,
             )
+            
             self.vlog(1, f"[publisher] publishing RulexDetectionResult to {args.rulex_topic}")
             print('='*100)
 
@@ -1157,7 +1164,7 @@ def parse_args():
     p = argparse.ArgumentParser("Live ROS anomaly inference")
 
     p.add_argument("--camera_topic", default="/camera/back_view/image_raw")
-    p.add_argument("--rulex_topic", default="/rulex/detection_result")
+    p.add_argument("--rulex_topic", default="/rulex/data")
     p.add_argument("--publish_rulex", action="store_true", default=True,
                    help="Publish RulexDetectionResult on ROS2")
     p.add_argument("--attach_image_on_anomaly", action="store_true",
