@@ -1,0 +1,18 @@
+{
+  "safety_area": "ConvBelt",
+  "mode": "val",
+  "suffix": "ConvBelt_64",
+  "epochs_trained": 2,
+  "threshold": 0.7911133766174316,
+  "threshold_strategy": "max",
+  "offset": 1,
+  "sigma": 1.0,
+  "quantile": 1.0,
+  "score_max": 0.7911133766174316,
+  "score_mean": 0.7901745009422302,
+  "score_std": 0.0003238888617009766,
+  "score_p99": 0.791023176908493,
+  "n_images": 75,
+  "score_csv": "/home/unito/advis/advis_distrimuse_unito_SR/scripts/results/thresholds/ConvBelt/val_scores_ConvBelt_off1_sig1.0_q1.0.csv",
+  "computed_at": "2026-04-07T11:27:12"
+}

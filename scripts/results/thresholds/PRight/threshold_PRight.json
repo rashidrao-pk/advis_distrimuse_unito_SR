@@ -1,0 +1,18 @@
+{
+  "safety_area": "PRight",
+  "mode": "val",
+  "suffix": "PRight_64",
+  "epochs_trained": 2,
+  "threshold": 0.8026757836341858,
+  "threshold_strategy": "max",
+  "offset": 1,
+  "sigma": 1.0,
+  "quantile": 1.0,
+  "score_max": 0.8026757836341858,
+  "score_mean": 0.7962887175877889,
+  "score_std": 0.0026906761733262174,
+  "score_p99": 0.8026721227169037,
+  "n_images": 75,
+  "score_csv": "/home/unito/advis/advis_distrimuse_unito_SR/scripts/results/thresholds/PRight/val_scores_PRight_off1_sig1.0_q1.0.csv",
+  "computed_at": "2026-04-07T11:27:11"
+}
