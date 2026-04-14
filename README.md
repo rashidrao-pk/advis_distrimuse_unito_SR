@@ -86,6 +86,16 @@ Repositories:
 ssh -X unito@distrimuse
 ```
 
+
+
+## RUN SAFROON 
+```bash
+cd dm/distrimuse-seds/
+source setup_ros.sh vlans.conf unito/dm kilted
+./vlan_manager.sh vlans.conf
+
+```
+
 ### 1.2 Install Pixi Environment
 
 ```bash
@@ -316,7 +326,12 @@ The GUI mode supports timeline visualization, detailed model inspection, and mes
 Uses `--show_timeline` to visualize the temporal evolution of detections.
 
 ```bash
-pixi run python scripts/infer_ros_live_GUI_v3.py \
+
+cd ~/advis/advis_distrimuse_unito_SR
+source /home/unito/advis/distrimuse-ros2-api/install/setup.bash
+
+
+pixi run python scripts/infer_ros_live_GUI_v4.py \
   --camera_topic /camera/back_view/image_raw \
   --safety_area ALL \
   --area_names RoboArm ConvBelt PLeft PRight \
@@ -332,7 +347,8 @@ pixi run python scripts/infer_ros_live_GUI_v3.py \
   --verbose_level 1 \
   --log_every_n 10 \
   --process_period 0.02 \
-  --show_timeline
+  --show_timeline \
+  --model_variant new
 ```
 
 ### 7.2 GUI with deep analysis
@@ -345,7 +361,12 @@ Uses both `--show_timeline` and `--show_model_input` to display:
 - description-based outputs
 
 ```bash
-pixi run python scripts/infer_ros_live_GUI_v3.py \
+
+cd ~/advis/advis_distrimuse_unito_SR
+source /home/unito/advis/distrimuse-ros2-api/install/setup.bash
+
+
+pixi run python scripts/infer_ros_live_GUI_v4.py \
   --camera_topic /camera/back_view/image_raw \
   --safety_area ALL \
   --area_names RoboArm ConvBelt PLeft PRight \
@@ -361,6 +382,7 @@ pixi run python scripts/infer_ros_live_GUI_v3.py \
   --verbose_level 1 \
   --log_every_n 10 \
   --process_period 0.02 \
+  --rulex_topic /rulex/detection_result \
   --show_timeline \
   --show_model_input
 ```
@@ -474,7 +496,7 @@ pixi run replay /home/unito/advis/bags/recording_20260313_133316/ --no-display -
 cd ~/advis/advis_distrimuse_unito_SR
 source /home/unito/advis/distrimuse-ros2-api/install/setup.bash
 
-pixi run python scripts/infer_ros_live_GUI_v3.py \
+pixi run python scripts/infer_ros_live_GUI_v4.py \
   --camera_topic /camera/back_view/image_raw \
   --safety_area ALL \
   --area_names RoboArm ConvBelt PLeft PRight \
@@ -490,8 +512,13 @@ pixi run python scripts/infer_ros_live_GUI_v3.py \
   --verbose_level 1 \
   --log_every_n 10 \
   --process_period 0.02 \
+  --model_variant new
+  --publish_rulex \
+  --rulex_topic /rulex/detection_result \
   --show_timeline \
-  --show_model_input
+  --show_model_input \
+
+
 ```
 
 #### Step 3 — Monitor detection results in terminal 3
@@ -573,6 +600,10 @@ advis_distrimuse_unito_SR/
 ```
 
 ---
+
+## Demo Week
+
+
 
 ## Notes
 
