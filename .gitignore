@@ -8,3 +8,5 @@ scripts/results/training
 scripts/dm_checkpoints_demo33
 scripts/__pycache__/*
 timeline_frames/
+log_*
+scripts/results/model*
