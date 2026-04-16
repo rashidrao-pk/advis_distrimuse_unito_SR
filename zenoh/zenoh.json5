@@ -10,11 +10,14 @@
       storages: {
         latest: {
           key_expr: "demo/latest/**",
-          volume: {
-            id: "memory"
-          }
+          volume: { id: "memory" }
+        },
+        advis_vis: {
+          key_expr: "advis/vis/**",
+          volume: { id: "memory" }
         }
       }
     }
   }
 }
+
