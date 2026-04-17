@@ -3,7 +3,7 @@ Description=Inference
 Wants=network-online.target
 After=network-online.target
 StartLimitIntervalSec=0
-Requires=vlan-setup.service
+Requires=vlan_setup.service
 
 [Service]
 ExecStart=/usr/bin/bash /home/unito/advis/advis_distrimuse_unito_SR/scripts/advis_infer.sh
