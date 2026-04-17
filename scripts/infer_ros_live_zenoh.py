@@ -414,7 +414,6 @@ def pack_dashboard_state(*, msg_id, corr_frame_id, corr_stamp, frame_bgr, area_i
         info = area_inputs[area]
         if info.get("bbox") is not None:
             bbox = [int(x) for x in info["bbox"]]
-            # print(f'\n\n\n{info["bbox"]}  {bbox}')
         else:
             bbox = None
         payload["area_inputs"][area] = {
@@ -426,8 +425,6 @@ def pack_dashboard_state(*, msg_id, corr_frame_id, corr_stamp, frame_bgr, area_i
             "anom_patch_jpg": encode_image(info["anom_patch_bgr"], ".jpg", [int(cv2.IMWRITE_JPEG_QUALITY), int(jpeg_quality)]),
         }
 
-    # print(payload["area_inputs"])
-    # print('pat --------', payload)
     return msgpack.packb(payload, use_bin_type=True)
 
 
@@ -526,8 +523,6 @@ class LiveRosAnomalyInfer(Node):
             sensor_qos,
         )
 
-        print('self.subscription --> ', self.subscription)
-
         self.rulex_pub = None
         if args.publish_rulex:
             pub_qos = QoSProfile(
@@ -543,7 +538,6 @@ class LiveRosAnomalyInfer(Node):
             )
 
             self.vlog(1, f"[publisher] publishing RulexDetectionResult to {args.rulex_topic}")
-            print('='*100)
 
         zenoh.init_log_from_env_or(args.zenoh_log_level)
         self.zenoh_session = zenoh.open(make_zenoh_config(args.zenoh_endpoint))
@@ -586,9 +580,7 @@ class LiveRosAnomalyInfer(Node):
         self.process_timer = self.create_timer(args.process_period, self.process_latest_frame)
 
         self.vlog(1, f"[subscriber] subscribed to {args.camera_topic}")
-        print('-'*100)
         self.vlog(1, f"[subscriber] frame_stride={self.args.frame_stride}")
-        print('-'*100)
         self.vlog(1, f"[subscriber] max_frames={self.max_frames}")
         self.vlog(1, f"[subscriber] process_period={self.args.process_period}s")
 
@@ -728,9 +720,7 @@ class LiveRosAnomalyInfer(Node):
             msg.image = self.bridge.cv2_to_imgmsg(frame_bgr, encoding="bgr8")
 
         if not self.first_rulex_publish_done:
-            print('-'*100)
-            print(f"[publish] FIRST RulexDetectionResult publish started for frame_id={corr_frame_id} at stamp={corr_stamp.sec}.{corr_stamp.nanosec}")
-            print('-'*100)
+            self.vlog(1, f"[publish] FIRST RulexDetectionResult publish started for frame_id={corr_frame_id} at stamp={corr_stamp.sec}.{corr_stamp.nanosec}")
             self.first_rulex_publish_done = True
 
         self.rulex_pub.publish(msg)
@@ -749,7 +739,7 @@ class LiveRosAnomalyInfer(Node):
             return
         if self.latest_msg is None:
             ## TO DO: Sleep for 100 ms
-            print("[process] no frame received yet, waiting...")
+            self.vlog(1, "[process] no frame received yet, waiting...")
             time.sleep(0.1)
             return
         if self.latest_msg_id == self.last_processed_msg_id:
@@ -764,7 +754,7 @@ class LiveRosAnomalyInfer(Node):
         corr_frame_id = msg.header.frame_id
         corr_stamp = msg.header.stamp
 
-        print(f"[process] new frame to process: id={corr_frame_id}, stamp={corr_stamp}")
+        self.vlog(1, f"[process] new frame to process: id={corr_frame_id}, stamp={corr_stamp}")
 
         self.is_processing = True
         process_t0 = time.time()
@@ -816,7 +806,6 @@ class LiveRosAnomalyInfer(Node):
                 out["bbox"] = bbox
                 results[area] = out
 
-                # print('OUT -----', out)
                 self.score_history[area].append(float(out["norm_score"]))
                 self.latest_results[area] = out
 
@@ -879,7 +868,7 @@ class LiveRosAnomalyInfer(Node):
                 rclpy.shutdown()
 
         except Exception as e:
-            print(f"[process] error processing frame #{msg_id}: {e}")
+            self.vlog(1, f"[process] error processing frame #{msg_id}: {e}")
             self.get_logger().error(f"[process-error] {e}")
             raise e
         finally:

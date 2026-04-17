@@ -418,7 +418,7 @@ def load_model(Enc, Dec, D, optEncDec, optD, path_models, suffix, verbose=False,
             print(f"Path does not exist: {model_path}")
         return [], None
 
-    checkpoint = torch.load(model_path, map_location=device)
+    checkpoint = torch.load(model_path, map_location=device, weights_only=False)
 
     Enc.load_state_dict(checkpoint['encoder_state_dict'])
     Dec.load_state_dict(checkpoint['decoder_state_dict'])

@@ -1,0 +1,12 @@
+[Unit]
+Description=VLAN setup
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+ExecStart=/usr/bin/bash /home/unito/advis/advis_distrimuse_unito_SR/scripts/vlan_setup.sh
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

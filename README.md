@@ -1018,8 +1018,23 @@ pixi run python scripts/infer_ros_live_zenoh.py \
   --publish_rulex
 
 ```
-### TRAINING v4:
+### 17th April 2026:
 ```bash
+
+ssh unito@distrimuse.idrago.org -p10022
+# WITH DISPLAY
+ssh -X unito@distrimuse.idrago.org -p10022
+
+## CONFIGURE VLAN
+cd dm/distrimuse-seds/
+source setup_ros.sh vlans.conf unito/dm kilted
+./vlan_manager.sh vlans.conf
+
+# CHECK CAMERA
+
+## RUN INFERENCE
+cd ~/advis/advis_distrimuse_unito_SR
+
 
 ```
 
