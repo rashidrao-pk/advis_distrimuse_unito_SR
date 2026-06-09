@@ -5,16 +5,22 @@ import argparse
 from collections import deque, OrderedDict
 
 import cv2
+import msgpack
 import numpy as np
+from matplotlib.colors import LinearSegmentedColormap
 
 import torch
 import torchvision.transforms as transforms
+import zenoh
 
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
-from sensor_msgs.msg import Image as RosImage, CompressedImage
+from sensor_msgs.msg import Image as RosImage,CompressedImage
+
 from cv_bridge import CvBridge
+
+from distrimuse_ros2_api.msg import RulexAreaScore, RulexDetectionResult
 
 import utils as ut
 import utils_model as utmc
@@ -22,11 +28,30 @@ from utils_model import Encoder, Decoder, Discriminator
 
 
 ALL_SAFETY_AREAS = ["PLeft", "PRight", "RoboArm", "ConvBelt"]
+
+THRESHOLD_CMAP_UNEXPECTED = LinearSegmentedColormap.from_list(
+    "custom_threshold_cmap",
+    [
+        (0.0, "white"),
+        (0.25, "lightblue"),
+        (0.35, "coral"),
+        (0.50, "red"),
+        (1.0, "purple"),
+    ],
+)
+
 AREA_DISPLAY_NAMES = {
     "PLeft": "Pallet Left",
     "PRight": "Pallet Right",
     "RoboArm": "Robo Arm",
     "ConvBelt": "Conveyor Belt",
+}
+
+AREA_NAME_TO_ENUM = {
+    "RoboArm": RulexAreaScore.AREA_A,
+    "ConvBelt": RulexAreaScore.AREA_B,
+    "PLeft": RulexAreaScore.AREA_C,
+    "PRight": RulexAreaScore.AREA_D,
 }
 
 
@@ -36,81 +61,48 @@ def ordered_area_list(areas):
 
 
 ############################################################################################################
-def create_union_mask(area_inputs, frame_shape_hw):
-    h, w = frame_shape_hw
-    union_mask = np.zeros((h, w), dtype=np.uint8)
-
-    for area_name in ordered_area_list(area_inputs.keys()):
-        info = area_inputs[area_name]
-        mask_bin = info.get("mask_bin")
-        if mask_bin is None:
-            continue
-        if mask_bin.shape[:2] != (h, w):
-            mask_bin = cv2.resize(mask_bin, (w, h), interpolation=cv2.INTER_NEAREST)
-        union_mask = np.maximum(union_mask, mask_bin)
-
-    return union_mask
-
-
-def overlay_outside_safety_blur(frame_bgr, area_inputs, blur_ksize=31, darken_factor=0.35):
-    if len(area_inputs) == 0:
-        return frame_bgr.copy()
-
-    union_mask = create_union_mask(area_inputs, frame_bgr.shape[:2])
-
-    blurred = cv2.GaussianBlur(frame_bgr, (blur_ksize, blur_ksize), 0)
-    darkened = (blurred.astype(np.float32) * darken_factor).clip(0, 255).astype(np.uint8)
-
-    union_mask_3 = cv2.cvtColor(union_mask, cv2.COLOR_GRAY2BGR)
-    out = np.where(union_mask_3 > 0, frame_bgr, darkened)
-    return out
-
-
-def resize_and_center(image, target_w, target_h, bg_color=(0, 0, 0)):
-    if image is None:
-        return np.full((target_h, target_w, 3), bg_color, dtype=np.uint8)
-
-    h, w = image.shape[:2]
-    if h == 0 or w == 0:
-        return np.full((target_h, target_w, 3), bg_color, dtype=np.uint8)
-
-    scale = min(target_w / w, target_h / h)
-    new_w = max(1, int(round(w * scale)))
-    new_h = max(1, int(round(h * scale)))
-
-    resized = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
-    canvas = np.full((target_h, target_w, 3), bg_color, dtype=np.uint8)
-
-    x_off = (target_w - new_w) // 2
-    y_off = (target_h - new_h) // 2
-    canvas[y_off:y_off + new_h, x_off:x_off + new_w] = resized
-    return canvas
-
-
-def scale_contours(contours, scale, x_off, y_off):
-    scaled = []
-    for cnt in contours:
-        cnt_scaled = cnt.astype(np.float32).copy()
-        cnt_scaled[:, 0, 0] = x_off + cnt_scaled[:, 0, 0] * scale
-        cnt_scaled[:, 0, 1] = y_off + cnt_scaled[:, 0, 1] * scale
-        scaled.append(cnt_scaled.astype(np.int32))
-    return scaled
-
-
-def colorize_anomaly_map(dist_map, clip_max=None):
+def colorize_anomaly_map(dist_map, vmin=0.0, vmax=2.0):
     if dist_map is None:
         return None
 
     dm = dist_map.astype(np.float32)
 
-    if clip_max is None:
-        clip_max = np.percentile(dm, 99.5)
-        clip_max = max(clip_max, 1e-6)
+    denom = max(float(vmax) - float(vmin), 1e-6)
+    dm = np.clip((dm - float(vmin)) / denom, 0.0, 1.0)
 
-    dm = np.clip(dm / clip_max, 0.0, 1.0)
-    dm_u8 = (dm * 255).astype(np.uint8)
-    heat = cv2.applyColorMap(dm_u8, cv2.COLORMAP_JET)
-    return heat
+    rgb = (THRESHOLD_CMAP_UNEXPECTED(dm)[..., :3] * 255.0).astype(np.uint8)
+    bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    return bgr
+
+
+def unletterbox_patch(patch_bgr, resize_meta):
+    """
+    Remove padding introduced by _resize_128(... keep_aspect=True).
+    """
+    if patch_bgr is None or resize_meta is None:
+        return patch_bgr
+
+    x_off = int(resize_meta.get("x_off", 0))
+    y_off = int(resize_meta.get("y_off", 0))
+    new_w = int(resize_meta.get("new_w", patch_bgr.shape[1]))
+    new_h = int(resize_meta.get("new_h", patch_bgr.shape[0]))
+
+    if new_w <= 0 or new_h <= 0:
+        return patch_bgr
+
+    h, w = patch_bgr.shape[:2]
+    x1 = max(0, x_off)
+    y1 = max(0, y_off)
+    x2 = min(w, x_off + new_w)
+    y2 = min(h, y_off + new_h)
+
+    if x2 <= x1 or y2 <= y1:
+        return patch_bgr
+
+    cropped = patch_bgr[y1:y2, x1:x2]
+    if cropped.size == 0:
+        return patch_bgr
+    return cropped
 
 
 def paste_area_result_in_full_frame(
@@ -118,9 +110,14 @@ def paste_area_result_in_full_frame(
     patch_bgr,
     bbox,
     mask_bin,
+    resize_meta=None,
     keep_background=False,
     background_canvas=None
 ):
+    """
+    Paste patch back into full-frame canvas. If the patch came from a letterboxed
+    128x128 input, first remove the padding using resize_meta so shapes are restored.
+    """
     if patch_bgr is None or bbox is None or mask_bin is None:
         return target_canvas
 
@@ -129,6 +126,12 @@ def paste_area_result_in_full_frame(
     crop_h = y2 - y1 + 1
 
     if crop_w <= 0 or crop_h <= 0:
+        return target_canvas
+
+    if resize_meta is not None:
+        patch_bgr = unletterbox_patch(patch_bgr, resize_meta)
+
+    if patch_bgr is None or patch_bgr.size == 0:
         return target_canvas
 
     patch_resized = cv2.resize(patch_bgr, (crop_w, crop_h), interpolation=cv2.INTER_AREA)
@@ -147,208 +150,8 @@ def paste_area_result_in_full_frame(
     return target_canvas
 
 
-def draw_text_table(panel, results, frame_id=None):
-    h, w = panel.shape[:2]
-    panel[:] = (245, 245, 245)
-
-    title_y = 35
-    cv2.putText(panel, "Details", (w // 2 - 50, title_y),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (20, 20, 20), 2, cv2.LINE_AA)
-
-    y = 70
-    cv2.line(panel, (20, y), (w - 20, y), (40, 40, 40), 2)
-    y += 35
-
-    if frame_id is not None:
-        cv2.putText(panel, f"Frame: {frame_id}", (30, y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (20, 20, 20), 2, cv2.LINE_AA)
-        y += 20
-        cv2.line(panel, (20, y), (w - 20, y), (40, 40, 40), 1)
-        y += 35
-
-    headers = ["Safety Area", "Raw Score", "Threshold", "Norm Score", "Status"]
-    col_x = [30, 240, 370, 510, 670]
-
-    for i, hdr in enumerate(headers):
-        cv2.putText(panel, hdr, (col_x[i], y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (30, 30, 30), 2, cv2.LINE_AA)
-
-    y += 20
-    cv2.line(panel, (20, y), (w - 20, y), (40, 40, 40), 1)
-    y += 35
-
-    for area_name in ordered_area_list(results.keys()):
-        r = results[area_name]
-        raw_score = r.get("score", None)
-        thr = r.get("threshold", None)
-        norm = r.get("norm_score", None)
-        status = r.get("status", "unknown")
-        is_anom = bool(r.get("is_anomalous", False))
-
-        color = (0, 0, 180) if is_anom else (0, 140, 0)
-
-        vals = [
-            AREA_DISPLAY_NAMES.get(area_name, area_name),
-            "-" if raw_score is None else f"{raw_score:.3f}",
-            "-" if thr is None else f"{thr:.3f}",
-            "-" if norm is None else f"{norm:.3f}",
-            status,
-        ]
-
-        for i, val in enumerate(vals):
-            cv2.putText(panel, str(val), (col_x[i], y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7,
-                        color if i >= 3 else (30, 30, 30),
-                        2 if i == 4 else 1,
-                        cv2.LINE_AA)
-
-        y += 20
-        cv2.line(panel, (20, y), (w - 20, y), (120, 120, 120), 1)
-        y += 35
-
-    return panel
 ############################################################################################################
-
-
-def draw_dashboard_panel(frame_bgr, area_inputs, latest_results, frame_id=None, width=1600, height=1000):
-    canvas = np.full((height, width, 3), 235, dtype=np.uint8)
-
-    pad = 16
-    panel_w = (width - 3 * pad) // 2
-    panel_h = (height - 3 * pad) // 2
-
-    tl = (pad, pad, pad + panel_w, pad + panel_h)
-    tr = (2 * pad + panel_w, pad, width - pad, pad + panel_h)
-    bl = (pad, 2 * pad + panel_h, pad + panel_w, height - pad)
-    br = (2 * pad + panel_w, 2 * pad + panel_h, width - pad, height - pad)
-
-    def draw_panel_title(title, box):
-        x1, y1, x2, y2 = box
-        cv2.putText(canvas, title, (x1 + 12, y1 + 28),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (20, 20, 20), 2, cv2.LINE_AA)
-        cv2.rectangle(canvas, (x1, y1), (x2, y2), (20, 20, 20), 1)
-
-    draw_panel_title("Input Image with detections", tl)
-    draw_panel_title("Anomaly Map", tr)
-    draw_panel_title("Reconstructed Image", bl)
-    draw_panel_title("Details", br)
-
-    inner_margin = 12
-    title_h = 40
-
-    def inner_box(box):
-        x1, y1, x2, y2 = box
-        return (
-            x1 + inner_margin,
-            y1 + title_h,
-            x2 - inner_margin,
-            y2 - inner_margin,
-        )
-
-    tl_in = inner_box(tl)
-    tr_in = inner_box(tr)
-    bl_in = inner_box(bl)
-    br_in = inner_box(br)
-
-    input_vis = overlay_outside_safety_blur(frame_bgr, area_inputs)
-
-    h, w = frame_bgr.shape[:2]
-    tl_w = tl_in[2] - tl_in[0]
-    tl_h = tl_in[3] - tl_in[1]
-    scale = min(tl_w / w, tl_h / h)
-    new_w = max(1, int(w * scale))
-    new_h = max(1, int(h * scale))
-    tl_img = cv2.resize(input_vis, (new_w, new_h), interpolation=cv2.INTER_AREA)
-    x_off = tl_in[0] + (tl_w - new_w) // 2
-    y_off = tl_in[1] + (tl_h - new_h) // 2
-    canvas[y_off:y_off + new_h, x_off:x_off + new_w] = tl_img
-
-    for area_name in ordered_area_list(area_inputs.keys()):
-        info = area_inputs[area_name]
-        contours = info.get("contours", [])
-        rr = latest_results.get(area_name, {})
-        is_anom = bool(rr.get("is_anomalous", False))
-        color = (0, 0, 255) if is_anom else (255, 255, 255)
-
-        scaled = scale_contours(contours, scale, x_off, y_off)
-        if len(scaled) > 0:
-            cv2.drawContours(canvas, scaled, -1, color, 2)
-            pt = scaled[0][0][0]
-            label = f"{AREA_DISPLAY_NAMES.get(area_name, area_name)}: {rr.get('norm_score', 0):.2f}" if "norm_score" in rr else area_name
-            cv2.putText(canvas, label, (int(pt[0]), max(20, int(pt[1]) - 8)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
-
-    base_black = np.zeros_like(frame_bgr)
-    recon_full = base_black.copy()
-    anom_full = np.full_like(frame_bgr, 255)
-
-    for area_name in ordered_area_list(area_inputs.keys()):
-        info = area_inputs[area_name]
-        bbox = info.get("bbox")
-        mask_bin = info.get("mask_bin")
-        recon_patch = info.get("recon_patch_bgr")
-        anom_patch = info.get("anom_patch_bgr")
-
-        recon_full = paste_area_result_in_full_frame(
-            recon_full, recon_patch, bbox, mask_bin
-        )
-
-        anom_full = paste_area_result_in_full_frame(
-            anom_full, anom_patch, bbox, mask_bin
-        )
-
-    tr_w = tr_in[2] - tr_in[0]
-    tr_h = tr_in[3] - tr_in[1]
-    anom_disp = resize_and_center(anom_full, tr_w, tr_h, bg_color=(255, 255, 255))
-    canvas[tr_in[1]:tr_in[1] + tr_h, tr_in[0]:tr_in[0] + tr_w] = anom_disp
-
-    scale_tr = min(tr_w / w, tr_h / h)
-    new_w_tr = max(1, int(w * scale_tr))
-    new_h_tr = max(1, int(h * scale_tr))
-    x_off_tr = tr_in[0] + (tr_w - new_w_tr) // 2
-    y_off_tr = tr_in[1] + (tr_h - new_h_tr) // 2
-
-    for area_name in ordered_area_list(area_inputs.keys()):
-        info = area_inputs[area_name]
-        contours = info.get("contours", [])
-        rr = latest_results.get(area_name, {})
-        is_anom = bool(rr.get("is_anomalous", False))
-        color = (0, 0, 255) if is_anom else (0, 128, 0)
-
-        scaled = scale_contours(contours, scale_tr, x_off_tr, y_off_tr)
-        if len(scaled) > 0:
-            cv2.drawContours(canvas, scaled, -1, color, 2)
-            pt = scaled[0][0][0]
-            label = f"{rr.get('status', '')}: {rr.get('norm_score', 0):.2f}" if "norm_score" in rr else area_name
-            cv2.putText(canvas, label, (int(pt[0]), int(pt[1]) + 22),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
-
-    bl_w = bl_in[2] - bl_in[0]
-    bl_h = bl_in[3] - bl_in[1]
-    recon_disp = resize_and_center(recon_full, bl_w, bl_h, bg_color=(0, 0, 0))
-    canvas[bl_in[1]:bl_in[1] + bl_h, bl_in[0]:bl_in[0] + bl_w] = recon_disp
-
-    scale_bl = min(bl_w / w, bl_h / h)
-    new_w_bl = max(1, int(w * scale_bl))
-    new_h_bl = max(1, int(h * scale_bl))
-    x_off_bl = bl_in[0] + (bl_w - new_w_bl) // 2
-    y_off_bl = bl_in[1] + (bl_h - new_h_bl) // 2
-
-    for area_name in ordered_area_list(area_inputs.keys()):
-        info = area_inputs[area_name]
-        contours = info.get("contours", [])
-        scaled = scale_contours(contours, scale_bl, x_off_bl, y_off_bl)
-        if len(scaled) > 0:
-            cv2.drawContours(canvas, scaled, -1, (0, 180, 0), 2)
-
-    details_panel = np.full((br_in[3] - br_in[1], br_in[2] - br_in[0], 3), 245, dtype=np.uint8)
-    details_panel = draw_text_table(details_panel, latest_results, frame_id=frame_id)
-    canvas[br_in[1]:br_in[3], br_in[0]:br_in[2]] = details_panel
-
-    return canvas
-
-
-####################################################################################################################
+#------------------------------------------------------------------------------------------------------------
 def _ensure_gray(mask):
     if mask is None:
         return None
@@ -388,18 +191,29 @@ def _crop_with_mask(frame, mask_gray):
     return cropped, bbox, masked_full
 
 
-def _resize_128(image, keep_aspect=True, target=(128, 128)):
+def _resize_128(image, keep_aspect=True, target=(128, 128), return_meta=False):
     target_w, target_h = target
 
     if image is None:
-        return None
+        return (None, None) if return_meta else None
 
     if not keep_aspect:
-        return cv2.resize(image, (target_w, target_h), interpolation=cv2.INTER_AREA)
+        out = cv2.resize(image, (target_w, target_h), interpolation=cv2.INTER_AREA)
+        meta = {
+            "new_w": target_w,
+            "new_h": target_h,
+            "x_off": 0,
+            "y_off": 0,
+            "target_w": target_w,
+            "target_h": target_h,
+            "orig_h": image.shape[0],
+            "orig_w": image.shape[1],
+        }
+        return (out, meta) if return_meta else out
 
     h, w = image.shape[:2]
     if h == 0 or w == 0:
-        return None
+        return (None, None) if return_meta else None
 
     scale = min(target_w / w, target_h / h)
     new_w = max(1, int(round(w * scale)))
@@ -411,7 +225,19 @@ def _resize_128(image, keep_aspect=True, target=(128, 128)):
     x_off = (target_w - new_w) // 2
     y_off = (target_h - new_h) // 2
     canvas[y_off:y_off + new_h, x_off:x_off + new_w] = resized
-    return canvas
+
+    meta = {
+        "new_w": new_w,
+        "new_h": new_h,
+        "x_off": x_off,
+        "y_off": y_off,
+        "target_w": target_w,
+        "target_h": target_h,
+        "orig_h": h,
+        "orig_w": w,
+    }
+
+    return (canvas, meta) if return_meta else canvas
 
 
 def tensor_to_hwc_float32(t: torch.Tensor) -> np.ndarray:
@@ -517,7 +343,8 @@ def load_models_and_thresholds(areas, args, device, log_fn=None):
 
         history = utmc.load_model(
             enc, dec, dis, optED, optD,
-            checkpoint_root, suffix, device=device, verbose=False
+            checkpoint_root, suffix, device=device, verbose=False,
+            model_variant=args.model_variant,
         )
 
         if len(history) == 0:
@@ -537,69 +364,84 @@ def load_models_and_thresholds(areas, args, device, log_fn=None):
     return models, thresholds
 
 
-def draw_timeline_panel(score_history, latest_results, width=1000, height=500, max_points=200):
-    canvas = np.zeros((height, width, 3), dtype=np.uint8)
-    canvas[:] = (25, 25, 25)
+def encode_image(image: np.ndarray, ext: str = ".jpg", params=None) -> bytes:
+    if image is None:
+        raise ValueError("image cannot be None")
+    ok, encoded = cv2.imencode(ext, image, params or [])
+    if not ok:
+        raise ValueError(f"cv2.imencode failed for {ext}")
+    return encoded.tobytes()
 
-    left_pad = 80
-    right_pad = 20
-    top_pad = 40
-    bottom_pad = 40
 
-    plot_w = width - left_pad - right_pad
-    plot_h = height - top_pad - bottom_pad
+def _frame_meta(msg_id: int, corr_frame_id: str, corr_stamp) -> dict:
+    return {
+        "msg_id": int(msg_id),
+        "corr_frame_id": str(corr_frame_id),
+        "stamp": {
+            "sec": int(getattr(corr_stamp, "sec", 0) or 0),
+            "nanosec": int(getattr(corr_stamp, "nanosec", 0) or 0),
+        },
+    }
 
-    cv2.rectangle(canvas, (left_pad, top_pad), (left_pad + plot_w, top_pad + plot_h), (80, 80, 80), 1)
 
-    y_thr = top_pad + int(plot_h * 0.5)
-    cv2.line(canvas, (left_pad, y_thr), (left_pad + plot_w, y_thr), (0, 0, 255), 1)
-    cv2.putText(canvas, "thr=1.0", (left_pad + 8, y_thr - 8),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 255), 1, cv2.LINE_AA)
+def _serializable_results(results):
+    cleaned = OrderedDict()
+    for area in ordered_area_list(results.keys()):
+        src_result = results[area]
+        cleaned[area] = {
+            "score": float(src_result["score"]) if "score" in src_result else None,
+            "threshold": float(src_result["threshold"]) if "threshold" in src_result else None,
+            "norm_score": float(src_result["norm_score"]) if "norm_score" in src_result else None,
+            "is_anomalous": bool(src_result.get("is_anomalous", False)),
+            "status": str(src_result.get("status", "unknown")),
+        }
+    return cleaned
 
-    for val in [0.0, 0.5, 1.0, 1.5, 2.0]:
-        yy = top_pad + int(plot_h * (1.0 - min(val, 2.0) / 2.0))
-        cv2.line(canvas, (left_pad - 5, yy), (left_pad, yy), (180, 180, 180), 1)
-        cv2.putText(canvas, f"{val:.1f}", (10, yy + 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1, cv2.LINE_AA)
 
-    cv2.putText(canvas, "ADVIS Live Anomaly Timeline (normalized scores)",
-                (left_pad, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (230, 230, 230), 2, cv2.LINE_AA)
+def ordered_dict_of_lists(mapping):
+    return OrderedDict((k, list(mapping[k])) for k in ordered_area_list(mapping.keys()))
 
-    keys = ordered_area_list(score_history.keys())
-    for idx, area_name in enumerate(keys):
-        vals = list(score_history[area_name])
 
-        if len(vals) >= 2:
-            pts = []
-            recent_vals = vals[-max_points:]
-            for i, v in enumerate(recent_vals):
-                x = left_pad + int(i * (plot_w / max(1, max_points - 1)))
-                v_clip = max(0.0, min(2.0, float(v)))
-                y = top_pad + int(plot_h * (1.0 - v_clip / 2.0))
-                pts.append((x, y, float(v)))
+def pack_dashboard_state(*, msg_id, corr_frame_id, corr_stamp, frame_bgr, area_inputs, latest_results, jpeg_quality=85):
+    payload = {
+        "frame_meta": _frame_meta(msg_id, corr_frame_id, corr_stamp),
+        "frame_bgr_jpg": encode_image(frame_bgr, ".jpg", [int(cv2.IMWRITE_JPEG_QUALITY), int(jpeg_quality)]),
+        "latest_results": _serializable_results(latest_results),
+        "area_inputs": OrderedDict(),
+    }
 
-            for i in range(1, len(pts)):
-                p0 = pts[i - 1]
-                p1 = pts[i]
-                seg_color = (0, 0, 255) if (p0[2] > 1.0 or p1[2] > 1.0) else (255, 255, 255)
-                cv2.line(canvas, (p0[0], p0[1]), (p1[0], p1[1]), seg_color, 2)
+    for area in ordered_area_list(area_inputs.keys()):
+        info = area_inputs[area]
+        payload["area_inputs"][area] = {
+            "bbox": list(info["bbox"]) if info.get("bbox") is not None else None,
+            "resize_meta": info.get("resize_meta"),
+            "mask_png": encode_image(info["mask_bin"], ".png"),
+            "orig_patch_jpg": encode_image(info["orig_patch_bgr"], ".jpg", [int(cv2.IMWRITE_JPEG_QUALITY), int(jpeg_quality)]),
+            "recon_patch_jpg": encode_image(info["recon_patch_bgr"], ".jpg", [int(cv2.IMWRITE_JPEG_QUALITY), int(jpeg_quality)]),
+            "anom_patch_jpg": encode_image(info["anom_patch_bgr"], ".jpg", [int(cv2.IMWRITE_JPEG_QUALITY), int(jpeg_quality)]),
+        }
 
-        latest = latest_results.get(area_name, {})
-        latest_norm = float(latest.get("norm_score", 0.0)) if "norm_score" in latest else 0.0
-        legend_color = (0, 0, 255) if latest_norm > 1.0 else (255, 255, 255)
+    return msgpack.packb(payload, use_bin_type=True)
 
-        label = AREA_DISPLAY_NAMES.get(area_name, area_name)
-        if "norm_score" in latest:
-            label += f"  {latest['norm_score']:.3f}"
-        if "status" in latest:
-            label += f"  [{latest['status']}]"
 
-        legend_y = top_pad + 20 + 28 * idx
-        cv2.line(canvas, (width - 360, legend_y - 5), (width - 320, legend_y - 5), legend_color, 3)
-        cv2.putText(canvas, label, (width - 310, legend_y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, legend_color, 1, cv2.LINE_AA)
+def pack_timeline_state(*, msg_id, corr_frame_id, corr_stamp, score_history, latest_results):
+    payload = {
+        "frame_meta": _frame_meta(msg_id, corr_frame_id, corr_stamp),
+        "score_history": ordered_dict_of_lists(score_history),
+        "latest_results": _serializable_results(latest_results),
+    }
+    return msgpack.packb(payload, use_bin_type=True)
 
-    return canvas
+
+def make_zenoh_config(endpoint: str) -> zenoh.Config:
+    return zenoh.Config.from_json5(
+        f"""
+    {{
+      mode: "client",
+      connect: {{ endpoints: ["{endpoint}"] }}
+    }}
+    """
+    )
 
 
 class LiveRosAnomalyInfer(Node):
@@ -609,7 +451,7 @@ class LiveRosAnomalyInfer(Node):
         self.args = args
         self.verbose_level = args.verbose_level
         self.log_every_n = args.log_every_n
-
+        
         self.vlog(1, "[startup] initializing node")
 
         self.device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu else "cpu")
@@ -659,6 +501,7 @@ class LiveRosAnomalyInfer(Node):
         )
 
         sensor_qos = QoSProfile(
+            # reliability=ReliabilityPolicy.RELIABLE,
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
             depth=1,
@@ -671,11 +514,45 @@ class LiveRosAnomalyInfer(Node):
             sensor_qos,
         )
 
+        print('self.subscription --> ', self.subscription)
+
+        self.rulex_pub = None
+        if args.publish_rulex:
+            pub_qos = QoSProfile(
+                reliability=ReliabilityPolicy.RELIABLE,
+                # reliability=ReliabilityPolicy.BEST_EFFORT,
+                history=HistoryPolicy.KEEP_LAST,
+                depth=1,
+            )
+            self.rulex_pub = self.create_publisher(
+                RulexDetectionResult,
+                args.rulex_topic,
+                pub_qos,
+            )
+
+            self.vlog(1, f"[publisher] publishing RulexDetectionResult to {args.rulex_topic}")
+            print('='*100)
+
+        zenoh.init_log_from_env_or(args.zenoh_log_level)
+        self.zenoh_session = zenoh.open(make_zenoh_config(args.zenoh_endpoint))
+        self.zenoh_dashboard_pub = self.zenoh_session.declare_publisher(
+            args.zenoh_dashboard_key,
+            encoding=zenoh.Encoding.APPLICATION_OCTET_STREAM,
+        )
+        self.zenoh_timeline_pub = self.zenoh_session.declare_publisher(
+            args.zenoh_timeline_key,
+            encoding=zenoh.Encoding.APPLICATION_OCTET_STREAM,
+        )
+        self.vlog(1, f"[publisher] publishing dashboard state to {args.zenoh_dashboard_key}")
+        self.vlog(1, f"[publisher] publishing timeline state to {args.zenoh_timeline_key}")
+
         self.frame_count = 0
         self.processed_count = 0
         self.max_frames = args.max_frames
         self.start_time = time.time()
         self.first_callback_seen = False
+
+        self.first_rulex_publish_done = False
 
         self.latest_msg = None
         self.latest_msg_id = 0
@@ -683,10 +560,7 @@ class LiveRosAnomalyInfer(Node):
         self.is_processing = False
         self.process_start_time = None
 
-        self.show_timeline = args.show_timeline
         self.timeline_history_len = args.timeline_history
-        self.timeline_width = args.timeline_width
-        self.timeline_height = args.timeline_height
 
         self.score_history = OrderedDict(
             (area, deque(maxlen=self.timeline_history_len)) for area in self.areas
@@ -700,7 +574,9 @@ class LiveRosAnomalyInfer(Node):
         self.process_timer = self.create_timer(args.process_period, self.process_latest_frame)
 
         self.vlog(1, f"[subscriber] subscribed to {args.camera_topic}")
+        print('-'*100)
         self.vlog(1, f"[subscriber] frame_stride={self.args.frame_stride}")
+        print('-'*100)
         self.vlog(1, f"[subscriber] max_frames={self.max_frames}")
         self.vlog(1, f"[subscriber] process_period={self.args.process_period}s")
 
@@ -734,14 +610,14 @@ class LiveRosAnomalyInfer(Node):
 
         mask = self.area_masks[area_name]
 
-        contours, mask_bin = _extract_mask_contours(mask, frame_bgr.shape[:2])
+        _, mask_bin = _extract_mask_contours(mask, frame_bgr.shape[:2])
 
         cropped, bbox, _ = _crop_with_mask(frame_bgr, mask)
         if cropped is None:
             self.vlog(3, f"[preprocess] {area_name}: crop failed")
             return None, None, None
 
-        resized = _resize_128(cropped, keep_aspect=True, target=(128, 128))
+        resized, resize_meta = _resize_128(cropped, keep_aspect=True, target=(128, 128), return_meta=True)
         if resized is None:
             self.vlog(3, f"[preprocess] {area_name}: resize failed")
             return None, None, None
@@ -753,15 +629,14 @@ class LiveRosAnomalyInfer(Node):
 
         self.vlog(
             3,
-            f"[preprocess] {area_name}: bbox={bbox}, tensor_shape={tuple(input_tensor.shape)}, time={time.time() - t0:.4f}s"
+            f"[preprocess] {area_name}: bbox={bbox}, tensor_shape={tuple(input_tensor.shape)}, "
+            f"resize_meta={resize_meta}, time={time.time() - t0:.4f}s"
         )
 
         vis_data = {
-            "crop": cropped.copy(),
-            "resized": resized.copy(),
             "bbox": bbox,
-            "contours": contours,
             "mask_bin": mask_bin,
+            "resize_meta": resize_meta,
         }
 
         return input_tensor, bbox, vis_data
@@ -811,32 +686,88 @@ class LiveRosAnomalyInfer(Node):
             "dist_map": dist_map,
         }
 
+    def publish_rulex_result(self, results, frame_bgr, corr_frame_id, corr_stamp):
+        if self.rulex_pub is None:
+            return
+
+        msg = RulexDetectionResult()
+        area_scores = []
+        any_anomaly = False
+
+        for area_name in self.areas:
+            r = results.get(area_name, {})
+
+            area_msg = RulexAreaScore()
+            area_msg.area = AREA_NAME_TO_ENUM.get(area_name, RulexAreaScore.AREA_A)
+            area_msg.anomaly = bool(r.get("is_anomalous", False))
+
+            # area_msg.score = float(r.get("norm_score", 0.0))
+            # area_msg.frame_id = corr_frame_id
+            # area_msg.stamp = corr_stamp
+
+            if area_msg.anomaly:
+                any_anomaly = True
+
+            area_scores.append(area_msg)
+
+        msg.area_scores = area_scores
+
+        if self.args.attach_image_on_anomaly and any_anomaly:
+            msg.image = self.bridge.cv2_to_imgmsg(frame_bgr, encoding="bgr8")
+
+        if not self.first_rulex_publish_done:
+            print('-'*100)
+            print(f"[publish] FIRST RulexDetectionResult publish started for frame_id={corr_frame_id} at stamp={corr_stamp.sec}.{corr_stamp.nanosec}")
+            print('-'*100)
+            self.first_rulex_publish_done = True
+
+        self.rulex_pub.publish(msg)
+
+        summary = []
+        for area_name in self.areas:
+            rr = results.get(area_name, {})
+            summary.append(
+                f"{area_name}=anom:{bool(rr.get('is_anomalous', False))},norm:{float(rr.get('norm_score', 0.0)):.3f}"
+            )
+
+        self.vlog(2, f"[publish] sent RulexDetectionResult | " + " | ".join(summary))
+
     def process_latest_frame(self):
         if self.is_processing:
             return
         if self.latest_msg is None:
+            ## TO DO: Sleep for 100 ms
+            print("[process] no frame received yet, waiting...")
+            time.sleep(0.1)
             return
         if self.latest_msg_id == self.last_processed_msg_id:
             return
 
         msg = self.latest_msg
         msg_id = self.latest_msg_id
+        self.latest_msg = None
+        # self.latest_msg_id = NotImplementedError
+        self.latest_msg_id = 0
+
+        corr_frame_id = msg.header.frame_id
+        corr_stamp = msg.header.stamp
+
+        print(f"[process] new frame to process: id={corr_frame_id}, stamp={corr_stamp}")
 
         self.is_processing = True
         process_t0 = time.time()
 
         try:
-            if self.args.frame_stride > 1 and (msg_id % self.args.frame_stride != 0):
-                self.last_processed_msg_id = msg_id
-                self.vlog(4, f"[process] skipped by frame_stride: raw frame={msg_id}")
-                return
+            # if self.args.frame_stride > 1 and (msg_id % self.args.frame_stride != 0):
+            #     self.last_processed_msg_id = msg_id
+            #     self.vlog(4, f"[process] skipped by frame_stride: raw frame={msg_id}")
+            #     return
 
             self.vlog(2, f"[process] using latest raw frame #{msg_id}")
 
             t_convert = time.time()
             # frame_bgr = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
             frame_bgr = cv2.imdecode(np.frombuffer(msg.data, dtype=np.uint8), cv2.IMREAD_COLOR)
-
             if self.processed_count == 0:
                 self.process_start_time = time.time()
 
@@ -888,53 +819,45 @@ class LiveRosAnomalyInfer(Node):
             avg_fps = self.processed_count / max(proc_elapsed, 1e-6)
             inst_fps = 1.0 / max(time.time() - process_t0, 1e-6)
 
-            if self.processed_count % self.log_every_n == 0 or self.processed_count == 1:
-                msg_parts = [
-                    f"raw_frame={msg_id}",
-                    f"processed={self.processed_count}",
-                    f"avg_fps={avg_fps:.2f}",
-                    f"inst_fps={inst_fps:.2f}",
-                ]
-                for area in self.areas:
-                    r = results[area]
-                    if "score" in r:
-                        msg_parts.append(
-                            f"{area}: score={r['score']:.5f}, norm={r['norm_score']:.3f}, status={r['status']}"
-                        )
-                    else:
-                        msg_parts.append(f"{area}: status={r['status']}")
-                self.vlog(1, " | ".join(msg_parts))
+            # if self.processed_count % self.log_every_n == 0 or self.processed_count == 1:
+            msg_parts = [
+                f"raw_frame={msg.header.frame_id}",
+                f"processed={self.processed_count}",
+                f"avg_fps={avg_fps:.2f}",
+                f"inst_fps={inst_fps:.2f}",
+            ]
+            for area in self.areas:
+                r = results[area]
+                if "score" in r:
+                    msg_parts.append(
+                        f"{area}: score={r['score']:.5f}, norm={r['norm_score']:.3f}, status={r['status']}"
+                    )
+                else:
+                    msg_parts.append(f"{area}: status={r['status']}")
+            self.vlog(1, " | ".join(msg_parts))
 
-            if self.args.show_model_input:
-                dashboard = draw_dashboard_panel(
-                    frame_bgr,
-                    area_inputs,
-                    self.latest_results,
-                    frame_id=msg_id,
-                    width=self.args.model_input_width,
-                    height=self.args.model_input_height,
-                )
-                cv2.imshow("ADVIS Dashboard", dashboard)
-                key = cv2.waitKey(1) & 0xFF
-                if key == 27:
-                    self.vlog(1, "[gui] ESC pressed, shutting down")
-                    rclpy.shutdown()
-                    return
+            if self.rulex_pub is not None:
+                self.publish_rulex_result(results, frame_bgr, corr_frame_id, corr_stamp)
 
-            if self.show_timeline:
-                panel = draw_timeline_panel(
-                    self.score_history,
-                    self.latest_results,
-                    width=self.timeline_width,
-                    height=self.timeline_height,
-                    max_points=self.timeline_history_len,
-                )
-                cv2.imshow("ADVIS Timeline", panel)
-                key = cv2.waitKey(1) & 0xFF
-                if key == 27:
-                    self.vlog(1, "[gui] ESC pressed, shutting down")
-                    rclpy.shutdown()
-                    return
+            dashboard_payload = pack_dashboard_state(
+                msg_id=msg_id,
+                corr_frame_id=corr_frame_id,
+                corr_stamp=corr_stamp,
+                frame_bgr=frame_bgr,
+                area_inputs=area_inputs,
+                latest_results=self.latest_results,
+                jpeg_quality=self.args.zenoh_jpeg_quality,
+            )
+            self.zenoh_dashboard_pub.put(dashboard_payload)
+
+            timeline_payload = pack_timeline_state(
+                msg_id=msg_id,
+                corr_frame_id=corr_frame_id,
+                corr_stamp=corr_stamp,
+                score_history=self.score_history,
+                latest_results=self.latest_results,
+            )
+            self.zenoh_timeline_pub.put(timeline_payload)
 
             self.vlog(3, f"[process] total time={time.time() - process_t0:.4f}s")
 
@@ -943,6 +866,7 @@ class LiveRosAnomalyInfer(Node):
                 rclpy.shutdown()
 
         except Exception as e:
+            print(f"[process] error processing frame #{msg_id}: {e}")
             self.get_logger().error(f"[process-error] {e}")
         finally:
             self.is_processing = False
@@ -952,6 +876,12 @@ def parse_args():
     p = argparse.ArgumentParser("Live ROS anomaly inference")
 
     p.add_argument("--camera_topic", default="/camera/back_view/image_raw")
+    p.add_argument("--rulex_topic", default="/rulex/data")
+    p.add_argument("--publish_rulex", action="store_true", default=True,
+                   help="Publish RulexDetectionResult on ROS2")
+    p.add_argument("--attach_image_on_anomaly", action="store_true",
+                   help="Attach current frame to RulexDetectionResult if any area is anomalous")
+
     p.add_argument("--safety_area", default="ALL")
     p.add_argument("--area_names", nargs="+", default=["PLeft", "PRight", "RoboArm", "ConvBelt"])
     p.add_argument("--static_mask_paths", nargs="+", required=True)
@@ -975,17 +905,14 @@ def parse_args():
     p.add_argument("--log_every_n", type=int, default=1)
     p.add_argument("--process_period", type=float, default=0.05)
 
-    p.add_argument("--show_timeline", action="store_true")
     p.add_argument("--timeline_history", type=int, default=200)
-    p.add_argument("--timeline_width", type=int, default=1000)
-    p.add_argument("--timeline_height", type=int, default=500)
-
-    p.add_argument("--show_model_input", action="store_true")
-    p.add_argument("--model_input_width", type=int, default=1600)
-    p.add_argument("--model_input_height", type=int, default=1000)
-
+    p.add_argument("--zenoh-endpoint", default="tcp/127.0.0.1:7447")
+    p.add_argument("--zenoh-dashboard-key", default="advis/vis/dashboard/state")
+    p.add_argument("--zenoh-timeline-key", default="advis/vis/timeline/state")
+    p.add_argument("--zenoh-jpeg-quality", type=int, default=85)
+    p.add_argument("--zenoh-log-level", default="error")
+    p.add_argument("--model_variant", default="old")
     return p.parse_args()
-
 
 def main():
     args = parse_args()
@@ -997,7 +924,12 @@ def main():
         node.get_logger().info("Stopped by user.")
     finally:
         try:
-            cv2.destroyAllWindows()
+            if getattr(node, "zenoh_dashboard_pub", None) is not None:
+                node.zenoh_dashboard_pub.undeclare()
+            if getattr(node, "zenoh_timeline_pub", None) is not None:
+                node.zenoh_timeline_pub.undeclare()
+            if getattr(node, "zenoh_session", None) is not None:
+                node.zenoh_session.close()
         except Exception:
             pass
         if rclpy.ok():

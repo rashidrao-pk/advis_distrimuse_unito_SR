@@ -1,0 +1,22 @@
+{
+  mode: "router",
+
+  listen: {
+    endpoints: ["tcp/127.0.0.1:7447"]
+  },
+
+  plugins: {
+    storage_manager: {
+      storages: {
+        latest: {
+          key_expr: "demo/latest/**",
+          volume: { id: "memory" }
+        },
+        advis_vis: {
+          key_expr: "advis/vis/**",
+          volume: { id: "memory" }
+        }
+      }
+    }
+  }
+}
