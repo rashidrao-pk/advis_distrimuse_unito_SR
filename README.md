@@ -1,6 +1,17 @@
 # DistriMuSe UC3 – Real-Time Anomaly Detection for Human–Robot Safety
 
 <p align="center">
+  <img src="https://readme-typing-svg.herokuapp.com?color=00E5C3&lines=Real-Time+Anomaly+Detection+for+Safe+Human-Robot+Interaction;ROS2+%7C+VAE-GAN+%7C+Industrial+Safety+Monitoring;Safety-Area+Inference+%7C+Thresholding+%7C+Alert+Publishing;University+of+Torino+%7C+DistriMuSe+Project&center=true&width=900&height=45">
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Project-DistriMuSe-0A192F?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Use%20Case-UC3-00E5C3?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Framework-ROS2-1f6feb?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Model-VAE--GAN-7A3EFF?style=for-the-badge" />
+</p>
+
+<p align="center">
   <img src="doc/header.png" width="100%">
 </p>
 
