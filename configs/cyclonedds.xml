@@ -1,0 +1,18 @@
+<CycloneDDS>
+  <Domain>
+    <General>
+      <AllowMulticast>false</AllowMulticast>
+      <Interfaces>
+        <NetworkInterface name="enx98fc84ec6ae7" priority="default"/>
+      </Interfaces>
+    </General>
+    <Discovery>
+      <Peers>
+        <!-- Add the IP addresses of all machines in the network.
+             Each machine needs to list the other machines' IPs here. -->
+        <Peer address="192.168.6.11"/>
+        <Peer address="192.168.6.20"/>
+      </Peers>
+    </Discovery>
+  </Domain>
+</CycloneDDS>

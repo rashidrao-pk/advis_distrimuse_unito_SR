@@ -1,0 +1,189 @@
+data:
+  masks:
+  dataset_base: "/Users/rashid/data/DS/SR/v6/Jul27"
+  rosbag_basepath: "/Users/rashid/data/DS/SR/v6/Jul27/Jul27_Scenario_1_0_2026-07-27_10-25-24"
+  rosbag_path: "/Users/rashid/data/DS/SR/v6/Jul27/Jul27_Scenario_1_0_2026-07-27_10-25-24/Jul27_Scenario_1_0_2026-07-27_10-25-24_0.mcap"
+  mask_types:
+    - "PLeft"
+    - "PRight"
+    - "ConveBelt"
+scenario:
+  id: "1_0"
+  description: "Placing Empty Pallet  on Safety Area(B) or Pallet Right Side"
+
+scenario_options:
+  "1_0":
+    {
+      rosbag_path: "Jul27_Scenario_1_0_2026-07-27_10-25-24/Jul27_Scenario_1_0_2026-07-27_10-25-24_0.mcap",
+      description: "Placing Empty Pallet on Safety Area(B) or Pallet Right Side",
+    }
+  "2_0":
+    {
+      rosbag_path: "Jul27_Scenario_2_0_2026-07-27_10-28-25/Jul27_Scenario_2_0_2026-07-27_10-28-25_0.mcap",
+      description: "Placing Empty Pallet  on Safety Area(B) or Pallet Left Side",
+    }
+  "3_0":
+    {
+      rosbag_path: "Jul27_Scenario_3_0_2026-07-27_10-52-19/Jul27_Scenario_3_0_2026-07-27_10-52-19_0.mcap",
+      description: "Palletizing Boxes on Pallet Right Side or Safety Area(B) - Repeat 1",
+    }
+  "3_1":
+    {
+      rosbag_path: "Jul27_Scenario_3_1_2026-07-27_10-58-52/Jul27_Scenario_3_1_2026-07-27_10-58-52_0.mcap",
+      description: "Palletizing Boxes on Pallet Right Side or Safety Area(B) - Repeat 2",
+    }
+  "3_2":
+    {
+      rosbag_path: "Jul27_Scenario_3_2_2026-07-27_11-05-54/Jul27_Scenario_3_2_2026-07-27_11-05-54_0.mcap",
+      description: "Palletizing Boxes on Pallet Right Side or Safety Area(B) - Repeat 3",
+    }
+  "4_0":
+    {
+      rosbag_path: "Jul27_Scenario_4_0_2026-07-27_11-24-03/Jul27_Scenario_4_0_2026-07-27_11-24-03_0.mcap",
+      description: "Palletizing Boxes on Pallet Left Side or Safety Area(A) - Repeat 1",
+    }
+  "4_1":
+    {
+      rosbag_path: "Jul27_Scenario_4_1_2026-07-27_11-34-44/Jul27_Scenario_4_1_2026-07-27_11-34-44_0.mcap",
+      description: "Palletizing Boxes on Pallet Left Side or Safety Area(A) - Repeat 2",
+    }
+  "4_2":
+    {
+      rosbag_path: "Jul27_Scenario_4_2_2026-07-27_11-40-57/Jul27_Scenario_4_2_2026-07-27_11-40-57_0.mcap",
+      description: "Palletizing Boxes on Pallet Left Side or Safety Area(A) - Repeat 3",
+    }
+  "5_0":
+    {
+      rosbag_path: "Jul27_Scenario_5_0_2026-07-27_11-11-21/Jul27_Scenario_5_0_2026-07-27_11-11-21_0.mcap",
+      description: "Replace Filled Pallet on Pallet Right Side or Safety Area(B) - Repeat 1",
+    }
+  "5_1":
+    {
+      rosbag_path: "Jul27_Scenario_5_1_2026-07-27_11-12-20/Jul27_Scenario_5_1_2026-07-27_11-12-20_0.mcap",
+      description: "Replace Filled Pallet on Pallet Right Side or Safety Area(B) - Repeat 2",
+    }
+  "5_2":
+    {
+      rosbag_path: "Jul27_Scenario_5_2_2026-07-27_11-13-18/Jul27_Scenario_5_2_2026-07-27_11-13-18_0.mcap",
+      description: "Replace Filled Pallet on Pallet Right Side or Safety Area(B) - Repeat 3",
+    }
+  "6_0":
+    {
+      rosbag_path: "Jul27_Scenario_6_0_2026-07-27_11-45-23/Jul27_Scenario_6_0_2026-07-27_11-45-23_0.mcap",
+      description: "Replace Filled Pallet on Pallet Left Side or Safety Area(A) - Repeat 1",
+    }
+  "6_1":
+    {
+      rosbag_path: "Jul27_Scenario_6_1_2026-07-27_11-46-29/Jul27_Scenario_6_1_2026-07-27_11-46-29_0.mcap",
+      description: "Replace Filled Pallet on Pallet Left Side or Safety Area(A) - Repeat 2",
+    }
+  "6_2":
+    {
+      rosbag_path: "Jul27_Scenario_6_2_2026-07-27_11-47-30/Jul27_Scenario_6_2_2026-07-27_11-47-30_0.mcap",
+      description: "Replace Filled Pallet on Pallet Left Side or Safety Area(A) - Repeat 3",
+    }
+  "7_0":
+    {
+      rosbag_path: "Jul27_Scenario_7_0_2026-07-27_11-50-53/Jul27_Scenario_7_0_2026-07-27_11-50-53_0.mcap",
+      description: "Operator comes to robot to fix some issue - Repeat 1",
+    }
+  "7_1":
+    {
+      rosbag_path: "Jul27_Scenario_7_1_2026-07-27_11-51-42/Jul27_Scenario_7_1_2026-07-27_11-51-42_0.mcap",
+    }
+  "7_2":
+    {
+      rosbag_path: "Jul27_Scenario_7_2_2026-07-27_11-53-32/Jul27_Scenario_7_2_2026-07-27_11-53-32_0.mcap",
+    }
+  "8_0":
+    {
+      rosbag_path: "Jul27_Scenario_8_0_2026-07-27_11-55-34/Jul27_Scenario_8_0_2026-07-27_11-55-34_0.mcap",
+    }
+  "8_1":
+    {
+      rosbag_path: "Jul27_Scenario_8_1_2026-07-27_11-56-55/Jul27_Scenario_8_1_2026-07-27_11-56-55_0.mcap",
+    }
+  "8_2":
+    {
+      rosbag_path: "Jul27_Scenario_8_2_2026-07-27_11-58-02/Jul27_Scenario_8_2_2026-07-27_11-58-02_0.mcap",
+    }
+  "8_3":
+    {
+      rosbag_path: "Jul27_Scenario_8_3_2026-07-27_12-00-19/Jul27_Scenario_8_3_2026-07-27_12-00-19_0.mcap",
+    }
+  "8_4":
+    {
+      rosbag_path: "Jul27_Scenario_8_4_2026-07-27_12-01-36/Jul27_Scenario_8_4_2026-07-27_12-01-36_0.mcap",
+    }
+  "9_0":
+    {
+      rosbag_path: "Jul27_Scenario_9_0_2026-07-27_13-25-55/Jul27_Scenario_9_0_2026-07-27_13-25-55_0.mcap",
+    }
+  "10_0":
+    {
+      rosbag_path: "Jul27_Scenario_10_0_2026-07-27_13-24-30/Jul27_Scenario_10_0_2026-07-27_13-24-30_0.mcap",
+    }
+  "10_1":
+    {
+      rosbag_path: "Jul27_Scenario_10_1_2026-07-27_13-24-45/Jul27_Scenario_10_1_2026-07-27_13-24-45_0.mcap",
+    }
+  "11_0":
+    {
+      rosbag_path: "Jul27_Scenario_11_0_2026-07-27_13-22-52/Jul27_Scenario_11_0_2026-07-27_13-22-52_0.mcap",
+    }
+  "11_1":
+    {
+      rosbag_path: "Jul27_Scenario_11_1_2026-07-27_13-23-36/Jul27_Scenario_11_1_2026-07-27_13-23-36_0.mcap",
+    }
+  "12_0":
+    {
+      rosbag_path: "Jul27_Scenario_12_0_2026-07-27_12-59-03/Jul27_Scenario_12_0_2026-07-27_12-59-03_0.mcap",
+    }
+  "12_1":
+    {
+      rosbag_path: "Jul27_Scenario_12_1_2026-07-27_13-01-09/Jul27_Scenario_12_1_2026-07-27_13-01-09_0.mcap",
+    }
+  "13_0":
+    {
+      rosbag_path: "Jul27_Scenario_13_0_2026-07-27_13-05-19/Jul27_Scenario_13_0_2026-07-27_13-05-19_0.mcap",
+    }
+  "13_1":
+    {
+      rosbag_path: "Jul27_Scenario_13_1_2026-07-27_13-08-20/Jul27_Scenario_13_1_2026-07-27_13-08-20_0.mcap",
+    }
+  "14_0":
+    {
+      rosbag_path: "Jul27_Scenario_14_0_2026-07-27_13-10-08/Jul27_Scenario_14_0_2026-07-27_13-10-08_0.mcap",
+    }
+  "14_1":
+    {
+      rosbag_path: "Jul27_Scenario_14_1_2026-07-27_13-11-06/Jul27_Scenario_14_1_2026-07-27_13-11-06_0.mcap",
+    }
+  "15_0":
+    {
+      rosbag_path: "Jul27_Scenario_15_0_2026-07-27_13-20-11/Jul27_Scenario_15_0_2026-07-27_13-20-11_0.mcap",
+    }
+  "16_0":
+    {
+      rosbag_path: "Jul27_Scenario_16_0_2026-07-27_11-28-46/Jul27_Scenario_16_0_2026-07-27_11-28-46_0.mcap",
+    }
+  "16_1":
+    {
+      rosbag_path: "Jul27_Scenario_16_1_2026-07-27_13-17-51/Jul27_Scenario_16_1_2026-07-27_13-17-51_0.mcap",
+    }
+  "16_2":
+    {
+      rosbag_path: "Jul27_Scenario_16_2_2026-07-27_13-18-45/Jul27_Scenario_16_2_2026-07-27_13-18-45_0.mcap",
+    }
+
+scenario_categories:
+  1-7: normal
+  8-16: anomalous
+
+playback_options:
+  loop: True
+  camera: "back_view"
+
+results:
+  output_dir: "/Users/rashid/data/DS/SR/v6/Jul27/results"
+  output_filename: "results.json"

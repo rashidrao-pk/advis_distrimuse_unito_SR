@@ -1,0 +1,41 @@
+[workspace]
+authors = ["rashid <muhammad.rashid@unito.it>"]
+name = "advis_mac"
+version = "0.1.0"
+
+platforms = ["osx-arm64"]
+
+channels = [
+  "https://prefix.dev/conda-forge",
+  "robostack-kilted"
+]
+
+[activation.env]
+# Keep ROS 2 discovery and traffic on this computer. The default ROS middleware
+# is used, so no CycloneDDS XML file or VLAN configuration is required.
+ROS_LOCALHOST_ONLY = "1"
+ROS_DOMAIN_ID = "0"
+ROS_LOG_DIR = "/tmp"
+
+[tasks]
+broadcast = "python scripts/local_frame_broadcaster.py"
+check-input = "python scripts/check_input.py"
+check-mps = "python -c \"import torch; print('MPS available:', torch.backends.mps.is_available()); print('MPS built:', torch.backends.mps.is_built())\""
+test = "pytest -v"
+
+[dependencies]
+python = ">=3.11"
+ros-kilted-rclpy = "*"
+ros-kilted-sensor-msgs = "*"
+ros-kilted-cv-bridge = "*"
+ros-kilted-rosbag2-py = "*"
+ros-kilted-rosbag2-storage-mcap = "*"
+ros-kilted-ros-base = "*"
+opencv = "*"
+numpy = "*"
+pytest = "*"
+pyyaml = "*"
+# Use current conda-forge builds. They support MPS and share the same native
+# runtime as ROS/OpenCV, avoiding mixed Conda/PyPI OpenMP libraries.
+pytorch = ">=2.7"
+torchvision = ">=0.22"
