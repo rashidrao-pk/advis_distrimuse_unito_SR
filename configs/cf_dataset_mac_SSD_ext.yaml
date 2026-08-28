@@ -1,12 +1,12 @@
 data:
-  dataset_base: "/Users/rashid/data/DS/SR/v6/Jul27"
-  rosbag_basepath: "/Users/rashid/data/DS/SR/v6/Jul27/Jul27_Scenario_1_0_2026-07-27_10-25-24"
-  rosbag_path: "/Users/rashid/data/DS/SR/v6/Jul27/Jul27_Scenario_1_0_2026-07-27_10-25-24/Jul27_Scenario_1_0_2026-07-27_10-25-24_0.mcap"
+  dataset_base: "/Volumes/AmparoreEXT/DATASET_DistriMuSe_SR/Jul27"
+  rosbag_basepath: "/Volumes/AmparoreEXT/DATASET_DistriMuSe_SR/Jul27/Jul27_Scenario_1_0_2026-07-27_10-25-24"
+  rosbag_path: "/Volumes/AmparoreEXT/DATASET_DistriMuSe_SR/Jul27/Jul27_Scenario_1_0_2026-07-27_10-25-24/Jul27_Scenario_1_0_2026-07-27_10-25-24_0.mcap"
   mask_types:
-    PLeft: /Users/rashid/data/DS/SR/v6/masks/Mask_Generation_v6_PLeft.png
-    PRight: /Users/rashid/data/DS/SR/v6/masks/Mask_Generation_v6_PRight.png
-    ConvBelt: /Users/rashid/data/DS/SR/v6/masks/Mask_Generation_v6_ConvBelt.png
-    RoboArm: /Users/rashid/data/DS/SR/v6/masks/Mask_Generation_v6_RoboArm.png
+    PLeft: /Volumes/AmparoreEXT/DATASET_DistriMuSe_SR/Jul27/masks/Mask_Generation_v6_PLeft.png
+    PRight: /Volumes/AmparoreEXT/DATASET_DistriMuSe_SR/Jul27/masks/Mask_Generation_v6_PRight.png
+    ConvBelt: /Volumes/AmparoreEXT/DATASET_DistriMuSe_SR/Jul27/masks/Mask_Generation_v6_ConvBelt.png
+    RoboArm: /Volumes/AmparoreEXT/DATASET_DistriMuSe_SR/Jul27/masks/Mask_Generation_v6_RoboArm.png
 scenario:
   id: "1_0"
   description: "Placing Empty Pallet  on Safety Area(B) or Pallet Right Side"
@@ -176,27 +176,6 @@ scenario_options:
       rosbag_path: "Jul27_Scenario_16_2_2026-07-27_13-18-45/Jul27_Scenario_16_2_2026-07-27_13-18-45_0.mcap",
     }
 
-masks:
-  PLeft:
-    {
-      mask_path: "/Users/rashid/data/DS/SR/v4/masks/Mask_Generation_v4_PLeft.png",
-      description: "Mask for Pallet Left Side",
-    }
-  PRight:
-    {
-      mask_path: "/Users/rashid/data/DS/SR/v4/masks/Mask_Generation_v4_PRight.png",
-      description: "Mask for Pallet Right Side",
-    }
-  ConveBelt:
-    {
-      mask_path: "masks/ConveBelt_mask.png",
-      description: "Mask for Conveyor Belt Area",
-    }
-  RoboArm:
-    {
-      mask_path: "masks/RoboArm_mask.png",
-      description: "Mask for Robot Arm Area",
-    }
 scenario_categories:
   1-7: normal
   8-16: anomalous
@@ -206,5 +185,5 @@ playback_options:
   camera: "back_view"
 
 results:
-  output_dir: "/Users/rashid/data/DS/SR/v6/Jul27/results"
+  output_dir: "/Volumes/AmparoreEXT/DATASET_DistriMuSe_SR/Jul27/results"
   output_filename: "results.json"
