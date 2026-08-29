@@ -10,3 +10,7 @@ scripts/__pycache__/*
 timeline_frames/
 log_*
 scripts/results/model*
+
+
+
+reports/

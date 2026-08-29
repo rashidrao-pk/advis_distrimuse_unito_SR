@@ -30,6 +30,7 @@ The system uses **VAE/VAE-GAN models** to monitor predefined safety areas in col
 - Rulex-compatible message publishing
 - Zenoh dashboard visualization
 - Distributed deployment support
+  w
 
 ---
 
@@ -53,12 +54,12 @@ ROS2 / Rulex Alert
 
 ## Safety Areas
 
-| Area | Description |
-|--------|-------------|
-| RoboArm | Robot operating zone |
-| ConvBelt | Conveyor belt zone |
-| PLeft | Left pallet area |
-| PRight | Right pallet area |
+| Area     | Description          |
+| -------- | -------------------- |
+| RoboArm  | Robot operating zone |
+| ConvBelt | Conveyor belt zone   |
+| PLeft    | Left pallet area     |
+| PRight   | Right pallet area    |
 
 ---
 
@@ -139,8 +140,8 @@ ros2 topic list
 
 ros2 topic hz /camera/back_view/image_raw
 ```
-x`
----
+
+## x`
 
 ## Verify Rulex Messages
 
@@ -352,3 +353,17 @@ Special thanks to:
 - University of Granada (ValeriaLab)
 - Smart Robotics
 - RuleX Innovation Labs
+
+# 👥 Contributing
+
+We welcome contributions! Check out our [Contributing Guide](CONTRIBUTING.md) to get started.
+
+<p align="center">
+  <a href="https://github.com/rashidrao-pk/advis_distrimuse_unito_SR/graphs/contributors">
+    <img src="https://contrib.rocks/image?repo=rashidrao-pk/advis_distrimuse_unito_SR" alt="Contributors to advis_distrimuse_unito_SR" />
+  </a>
+</p>
+
+<p align="center">
+  <b>Thank you to all our contributors!</b>
+</p>

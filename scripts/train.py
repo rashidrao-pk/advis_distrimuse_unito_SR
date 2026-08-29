@@ -17,6 +17,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import yaml
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -110,6 +112,10 @@ def build_video_4to1_split(
     verbose: bool = True,
 ):
     """Build a deterministic train/val split and save it as JSON."""
+    print(' [-] DEBUGG MODE --')
+    print('LOADING DATA FROM --', root_dir)
+    print(' [-] DEBUGG MODE --')
+
     base_dataset = datasets.ImageFolder(root=root_dir)
     samples      = list(base_dataset.samples)
 
@@ -504,6 +510,35 @@ def train(
 ALL_SAFETY_AREAS = ["PLeft", "PRight","RoboArm", "ConvBelt"]
 
 
+def _resolve_config_path(value, config_path):
+    """Resolve a data path from YAML, relative to the YAML file when needed."""
+    if value is None:
+        return None
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = config_path.parent / path
+    return str(path.resolve())
+
+
+def load_data_config(config_file):
+    """Load and validate the optional ``data`` section of a YAML config."""
+    config_path = Path(config_file).expanduser().resolve()
+    if not config_path.is_file():
+        raise ValueError(f"Config file does not exist: {config_path}")
+
+    with config_path.open("r", encoding="utf-8") as stream:
+        config = yaml.safe_load(stream) or {}
+
+    data = config.get("data")
+    if not isinstance(data, dict):
+        raise ValueError(f"Config must contain a 'data' mapping: {config_path}")
+
+    return {
+        key: _resolve_config_path(data.get(key), config_path)
+        for key in ("dataset_base", "training", "masks")
+    }
+
+
 def parse_args():
     p = argparse.ArgumentParser(description="Train VAE-GAN for CAD anomaly detection")
     p.add_argument("--safety_area",         default="RoboArm",
@@ -512,6 +547,11 @@ def parse_args():
     p.add_argument("--dataset_source",     default="SR",       help="Dataset version tag")
     p.add_argument("--dataset_version",     default="v2",       help="Dataset version tag")
     p.add_argument("--dataset_cam_type",    default="refined", help="Camera / dataset type")
+    p.add_argument("--config", type=Path,
+                   help="YAML file containing data.dataset_base, data.training, and data.masks")
+    p.add_argument("--dataset_base", help="Dataset base directory (overrides data.dataset_base in --config)")
+    p.add_argument("--training_dir", help="Training directory (overrides data.training in --config)")
+    p.add_argument("--masks_dir", help="Masks directory (overrides data.masks in --config)")
     p.add_argument("--model_path",          default="scripts/models", help="Model Save Path")
     p.add_argument("--mask_image_name",     default=3015,   type=int)
     p.add_argument("--epochs",              default=200,   type=int)
@@ -539,7 +579,20 @@ def parse_args():
                         "When disabled only loss curves (results/training) and model "
                         "checkpoints (results/models) are written.")
     p.add_argument("--estimate_time",action="store_true",help="Estimate training time after the first completed epoch.")
-    return p.parse_args()
+    args = p.parse_args()
+
+    config_data = {}
+    if args.config:
+        try:
+            config_data = load_data_config(args.config)
+        except (OSError, ValueError, yaml.YAMLError) as exc:
+            p.error(str(exc))
+
+    # Explicit command-line paths have priority over values from the YAML file.
+    args.dataset_base = args.dataset_base or config_data.get("dataset_base")
+    args.training_dir = args.training_dir or config_data.get("training")
+    args.masks_dir = args.masks_dir or config_data.get("masks")
+    return args
 
 def train_one_safety_area(safety_area: str, args, device):
     """Set up and train a single safety area. Returns when done or interrupted."""
@@ -568,6 +621,22 @@ def train_one_safety_area(safety_area: str, args, device):
         verbose          = True and args.verbose_level > 1,
     )
 
+    # Explicit paths (from CLI or YAML) override the legacy constructed path.
+    # The training directory contains one ImageFolder directory per safety area.
+    if args.dataset_base:
+        paths.path_datasets = args.dataset_base
+    if args.masks_dir:
+        paths.mask_dir = args.masks_dir
+    if args.training_dir:
+        paths.train_dir_processed = args.training_dir
+        paths.train_dir_processed_subgroup = os.path.join(args.training_dir, safety_area)
+
+    if not os.path.isdir(paths.train_dir_processed_subgroup):
+        raise FileNotFoundError(
+            "Training directory for safety area "
+            f"'{safety_area}' does not exist: {paths.train_dir_processed_subgroup}"
+        )
+
     params = ut.get_parameters_by_experiment(params, verbose=True and args.verbose_level > 0)
     _ = ut.get_header(params, paths, verbose=True and args.verbose_level > 1)
 
@@ -575,12 +644,12 @@ def train_one_safety_area(safety_area: str, args, device):
     paths.path_codes_cloud   = paths.path_codes
     paths.path_codes_main    = os.path.join(paths.path_codes, 'scripts')
     paths.path_codes_local   = os.path.join(paths.path_results_local, 'scripts')
-    paths.path_results_cloud = os.path.join(paths.path_codes_cloud, 'scripts/results')
+    paths.path_results_cloud = os.path.join(paths.path_codes_cloud,'results', paths.dataset_version)
     paths.history_fname      = "vae_gan_train_history.csv"
     os.makedirs(paths.path_codes_main, exist_ok=True)
 
     # Fixed output dirs used regardless of save_figures flag
-    paths.path_training_curves = os.path.join(paths.path_codes_main, "results", "training")
+    paths.path_training_curves = os.path.join(paths.path_codes_cloud, "results", "training")
     # paths.path_models      = os.path.join(paths.path_codes_main, args.checkpoints)
     paths.path_models      = os.path.join(os.getcwd(), args.checkpoints)
     os.makedirs(paths.path_training_curves, exist_ok=True)
