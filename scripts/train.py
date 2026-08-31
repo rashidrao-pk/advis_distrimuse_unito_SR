@@ -545,7 +545,7 @@ def parse_args():
                    help="Safety area (subgroup) to train. Pass 'ALL' to train every area sequentially.")
     
     p.add_argument("--dataset_source",     default="SR",       help="Dataset version tag")
-    p.add_argument("--dataset_version",     default="v2",       help="Dataset version tag")
+    p.add_argument("--dataset_version",     default="V6",       help="Dataset version tag")
     p.add_argument("--dataset_cam_type",    default="refined", help="Camera / dataset type")
     p.add_argument("--config", type=Path,
                    help="YAML file containing data.dataset_base, data.training, and data.masks")
@@ -555,18 +555,18 @@ def parse_args():
     p.add_argument("--model_path",          default="scripts/models", help="Model Save Path")
     p.add_argument("--mask_image_name",     default=3015,   type=int)
     p.add_argument("--epochs",              default=200,   type=int)
-    p.add_argument("--batch_size",          default=16,     type=int)
+    p.add_argument("--batch_size",          default=64,     type=int)
     p.add_argument("--latent_dims",         default=64,     type=int)
     p.add_argument("--exp_type",            default="E3", help="Experiment type key for ut.get_parameters_by_experiment")
     p.add_argument("--augmentation_type",   default="custom", choices=["min", "custom"])
-    p.add_argument("--num_workers",         default=0,      type=int)
-    p.add_argument("--pin_memory",          default=False,  type=bool)
+    p.add_argument("--num_workers",         default=4,      type=int)
+    p.add_argument("--pin_memory",          default=True,  type=bool)
     p.add_argument("--val_every",           default=5,      type=int, help="1-in-N frames goes to validation")
     p.add_argument("--val_offset",          default=4,      type=int)
     p.add_argument("--force_rebuild_split", action="store_true", help="Force rebuild the train/val split JSON")
     p.add_argument("--model_override",      action="store_true", help="Rename existing checkpoint before training")
-    p.add_argument("--model_save_interval", default=10,     type=int)
-    p.add_argument("--save_fig_interval", default=5,     type=int)
+    p.add_argument("--model_save_interval", default=5,     type=int)
+    p.add_argument("--save_fig_interval", default=2,     type=int)
     p.add_argument("--verbose_level",       default=0,      type=int, choices=[0, 1, 2])
     p.add_argument("--save_path_type",      default="cloud", choices=["cloud", "local"])
     p.add_argument("--dry_run",             action="store_true", default=False)
@@ -649,7 +649,7 @@ def train_one_safety_area(safety_area: str, args, device):
     os.makedirs(paths.path_codes_main, exist_ok=True)
 
     # Fixed output dirs used regardless of save_figures flag
-    paths.path_training_curves = os.path.join(paths.path_codes_cloud, "results", "training")
+    paths.path_training_curves = os.path.join(paths.path_codes_cloud, "results", paths.dataset_version,"training")
     # paths.path_models      = os.path.join(paths.path_codes_main, args.checkpoints)
     paths.path_models      = os.path.join(os.getcwd(), args.checkpoints)
     os.makedirs(paths.path_training_curves, exist_ok=True)
@@ -703,8 +703,17 @@ def train_one_safety_area(safety_area: str, args, device):
     paths.train_classes     = {idx: cls for cls, idx in train_dataset.class_to_idx.items()}
     paths.class_names_train = train_dataset.classes
     if args.verbose_level >= 0:
+
         print(f"Samples (Train/Validation) : {len(train_dataset)} / {len(val_dataset)}")
         print(f"Data Loaded from : {paths.train_dir_processed_subgroup}")
+        print('-'*80)
+        print('Batch Size : {}'.format(args.batch_size))
+        print('Num Workers : {}'.format(args.num_workers))
+        print('Pin Memory : {}'.format(args.pin_memory))
+        print('-'*80)
+        print(f'Saving Figures: {"True" if args.save_figures else "False"}')
+        print('-'*80)
+
     # ── Fixed monitoring batch ────────────────────────────────────────────
     data_train_fx, _ = next(iter(train_loader))
 
@@ -813,7 +822,8 @@ def main():
             print(f"[safety_area] ALL selected → training {len(areas_to_train)} areas: {areas_to_train}")
     else:
         areas_to_train = [args.safety_area]
-
+    if args.verbose_level > 0:
+        print('-'*80)
     ut.get_time(suff="start")
 
     for idx, area in enumerate(areas_to_train):

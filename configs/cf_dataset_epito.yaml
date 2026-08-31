@@ -1,0 +1,20 @@
+data:
+  dataset_base: /beegfs/home/mrashid/datasets/AD/SR/V6
+  masks: /beegfs/home/mrashid/datasets/AD/SR/V6/masks
+  training: /beegfs/home/mrashid/datasets/AD/SR/V6/training
+  testing: /beegfs/home/mrashid/datasets/AD/SR/V6/testing
+
+training:
+  epochs: 200
+  batch_size: 128
+  safety_area: PLeft
+  augmentation_type: custom
+  save_figures: True
+  num_workers: 4
+  pin_memory: True
+  val_every: 5
+  val_offset: 4
+
+models:
+  checkpoints: scripts/results/models/V6
+  latent_dims: 64
