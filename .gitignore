@@ -11,9 +11,10 @@ timeline_frames/
 log_*
 scripts/results/model*
 
+scripts/results
 
 
 reports/
-
+results/
 
 __MACOSX/

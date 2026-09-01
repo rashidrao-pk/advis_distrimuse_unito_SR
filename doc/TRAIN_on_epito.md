@@ -17,6 +17,7 @@ tmux list-panes -t ADVIS -F '#{pane_pid} #{pane_current_command} #{pane_current_
 
 # srun -p epito --gres=gpu:a100:1 --pty bash
 srun -p epito --gres=gpu:a100:1 -J "ADVIS Training" --pty bash
+tmux new -s AD_SR
 source /beegfs/home/mrashid/pt_312/bin/activate
 export PYTHONPATH=/opt/pytorch-v2.7.1/lib/python3.12/site-packages/
 
@@ -47,6 +48,21 @@ sinfo -N -p mirri,gracehopper,cascadelake,epito \
 
 squeue -p mirri,gracehopper,cascadelake,epito \
   -o "%.12i %.12u %.18P %.18j %.8T %.15N %.12b %.20R"
+```
+
+## Reconnect:
+
+```bash
+ssh epito
+squeue -u mrashid
+# 419800  epito  ShapBPT Tests  RUNNING  epito02
+srun --jobid=419800 --overlap --pty /bin/bash --noprofile --norc
+tmux ls
+tmux attach -t shapbpt
+```
+
+
+```bash
 # -------------------------------------
 python3 scripts/train.py \
   --config configs/cf_dataset_epito.yaml \
