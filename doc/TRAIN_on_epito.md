@@ -11,17 +11,19 @@ ps -ef | grep tmux
 echo $TMUX
 
 #  ATTACH with previous
-tmux attach -t shapbpt
+tmux attach -t ADVIS
 
-tmux list-panes -t shapbpt -F '#{pane_pid} #{pane_current_command} #{pane_current_path}'
+tmux list-panes -t ADVIS -F '#{pane_pid} #{pane_current_command} #{pane_current_path}'
 
-srun -p epito --gres=gpu:a100:1 --pty bash
+# srun -p epito --gres=gpu:a100:1 --pty bash
+srun -p epito --gres=gpu:a100:1 -J "ADVIS Training" --pty bash
 source /beegfs/home/mrashid/pt_312/bin/activate
 export PYTHONPATH=/opt/pytorch-v2.7.1/lib/python3.12/site-packages/
 
 sinfo --format="%P %G %C"
 
-srun -p epito --gres=gpu:a100:1 --pty bash
+# srun -p epito --gres=gpu:a100:1 --pty bash
+srun -p epito --gres=gpu:a100:1 -J "ADVIS Training for New Data" --pty bash
 source /beegfs/home/mrashid/pt_312/bin/activate
 export PYTHONPATH=/opt/pytorch-v2.7.1/lib/python3.12/site-packages/
 cd /beegfs/home/mrashid/repos/advis_distrimuse_unito_SR
