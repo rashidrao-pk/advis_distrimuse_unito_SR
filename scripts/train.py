@@ -801,7 +801,7 @@ def train_one_safety_area(safety_area: str, args, device):
                     notes="VAE-GAN trained on normal images only",
                     verbose=True)
     
-    ut.save_log_file(f'log_file_{suffix}.txt', log_messages, verbose= args.verbose_level > 0)
+    ut.save_log_file(f'{paths.path_result_cloud}log_file_{suffix}.txt', log_messages, verbose= args.verbose_level > 0)
     
     print(f"[safety_area] Done: {safety_area}")
 
