@@ -101,7 +101,8 @@ python scripts/infer_offline.py \
   --scenario 13_1 \
   --topic /camera/back_view/image_raw \
   --safety_areas ALL \
-  --max_frames 200
+  --max_frames 200 \
+  --skip-first 100
 
 #  DOWNLOAD INFERENCE VIDEO ONLY
 scp mrashid@slurm.hpc4ai.unito.it:/beegfs/home/mrashid/repos/advis_distrimuse_unito_SR/results/V6/offline_inference/rosbag_detections.mp4 ~/Downloads/

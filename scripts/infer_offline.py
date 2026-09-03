@@ -57,6 +57,9 @@ def parse_args():
     parser.add_argument("--threshold_dir", type=Path)
     parser.add_argument("--latent_dims", type=int)
     parser.add_argument("--frame_stride", type=int, default=1)
+    parser.add_argument(
+        "--skip-first", "--skip_first", dest="skip_first", type=int, default=0
+    )
     parser.add_argument("--max_frames", type=int)
     parser.add_argument("--cpu", action="store_true")
     parser.add_argument("--model_variant", choices=("old", "new"), default="old")
@@ -71,6 +74,8 @@ def parse_args():
 
     if args.frame_stride < 1:
         parser.error("--frame_stride must be at least 1")
+    if args.skip_first < 0:
+        parser.error("--skip-first must be zero or greater")
     if args.max_frames is not None and args.max_frames < 1:
         parser.error("--max_frames must be at least 1")
     if args.output_fps <= 0 or args.timeline_history < 2 or args.timeline_seconds < 0:
@@ -371,7 +376,8 @@ def image_paths(root):
 
 
 def sampled_total(frame_count, args):
-    total = (int(frame_count) + args.frame_stride - 1) // args.frame_stride
+    remaining = max(0, int(frame_count) - args.skip_first)
+    total = (remaining + args.frame_stride - 1) // args.frame_stride
     return min(total, args.max_frames) if args.max_frames else total
 
 
@@ -407,7 +413,7 @@ def input_progress_total(args):
         counts = []
         for area in args.safety_areas:
             area_root = args.input / area if (args.input / area).is_dir() else args.input
-            counts.append(len(image_paths(area_root)[::args.frame_stride]))
+            counts.append(len(image_paths(area_root)[args.skip_first::args.frame_stride]))
         total = min(counts) if counts else 0
         return min(total, args.max_frames) if args.max_frames else total
     return args.max_frames
@@ -425,7 +431,7 @@ def iter_cropped(args):
         paths = image_paths(area_root)
         if not paths:
             raise FileNotFoundError(f"No images found for {area}: {area_root}")
-        selected_paths = paths[::args.frame_stride]
+        selected_paths = paths[args.skip_first::args.frame_stride]
         if args.max_frames:
             selected_paths = selected_paths[:args.max_frames]
         for path in selected_paths:
@@ -442,7 +448,7 @@ def iter_cropped_groups(args):
     paths_by_area = OrderedDict()
     for area in args.safety_areas:
         area_root = args.input / area if (args.input / area).is_dir() else args.input
-        paths = image_paths(area_root)[::args.frame_stride]
+        paths = image_paths(area_root)[args.skip_first::args.frame_stride]
         if not paths:
             raise FileNotFoundError(f"No images found for {area}: {area_root}")
         paths_by_area[area] = paths
@@ -487,7 +493,7 @@ def iter_frames(args):
     if not paths:
         raise FileNotFoundError(f"No images found: {args.input}")
     for index, path in enumerate(paths):
-        if index % args.frame_stride:
+        if index < args.skip_first or (index - args.skip_first) % args.frame_stride:
             continue
         frame = cv2.imread(str(path), cv2.IMREAD_COLOR)
         if frame is not None:
@@ -504,7 +510,7 @@ def iter_video(args):
             ok, frame = capture.read()
             if not ok:
                 break
-            if index % args.frame_stride == 0:
+            if index >= args.skip_first and (index - args.skip_first) % args.frame_stride == 0:
                 yield f"{args.input}#frame={index}", frame
             index += 1
     finally:
@@ -577,7 +583,7 @@ def iter_mcap_without_ros(args):
         found_topic = False
         for _, channel, message in reader.iter_messages(topics=[args.topic]):
             found_topic = True
-            if index % args.frame_stride == 0:
+            if index >= args.skip_first and (index - args.skip_first) % args.frame_stride == 0:
                 encoded = decode_cdr_compressed_image(message.data)
                 frame = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
                 if frame is None:
@@ -638,7 +644,7 @@ def iter_rosbag(args):
         topic, serialized, timestamp = reader.read_next()
         if topic != args.topic:
             continue
-        if index % args.frame_stride == 0:
+        if index >= args.skip_first and (index - args.skip_first) % args.frame_stride == 0:
             message = deserialize_message(serialized, image_types[message_type])
             if message_type == "sensor_msgs/msg/CompressedImage":
                 frame = cv2.imdecode(
