@@ -38,5 +38,64 @@ tmux attach -t shapbpt
 
 ```bash
 
+# Configured cropped training data
+python scripts/infer_offline.py \
+  --config configs/cf_dataset_epito.yaml \
+  --input_type cropped \
+  --safety_areas ALL \
+  --max_frames 100
+
+
+# Full-frame directory
+python scripts/infer_offline.py \
+  --config configs/cf_dataset_epito.yaml \
+  --input_type frames \
+  --input /path/to/frames \
+  --safety_areas ALL
+
+# MP4
+python scripts/infer_offline.py \
+  --config configs/cf_dataset_epito.yaml \
+  --input_type video \
+  --input /path/to/video.mp4 \
+  --safety_areas PRight RoboArm \
+  --frame_stride 5
+
+
+# MCAP rosbag
+python scripts/infer_offline.py \
+  --config configs/cf_dataset_epito.yaml \
+  --input_type rosbag \
+  --input /beegfs/home/mrashid/datasets/AD/SR/V6/rosbags/Jul27_Scenario_13_0_2026-07-27_13-05-19/Jul27_Scenario_13_0_2026-07-27_13-05-19 \
+  --topic /camera/back_view/image_raw \
+  --safety_areas ALL
 
 ```
+
+```bash
+python scripts/infer_offline.py \
+  --config configs/cf_dataset_epito.yaml \
+  --input_type cropped \
+  --safety_areas ALL \
+  --max_frames 100
+
+# --output_fps 10
+# --timeline_history 500
+# --timeline_seconds 4
+# --output_video /custom/path/detections.mp4
+# --timeline_png /custom/path/timeline.png
+
+
+python scripts/infer_offline.py \
+  --config configs/cf_dataset_epito.yaml \
+  --input_type rosbag \
+  --input /beegfs/home/mrashid/datasets/AD/SR/V6/rosbags/Jul27_Scenario_13_1_2026-07-27_13-08-20 \
+  --topic /camera/back_view/image_raw \
+  --safety_areas ALL \
+  --max_frames 1
+
+
+```
+
+
+

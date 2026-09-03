@@ -1,7 +1,19 @@
 # DistriMuSe UC3: Real-Time Anomaly Detection for Human–Robot Safety
 
 <p align="center">
-  <img src="doc/header.png" width="100%" alt="DistriMuSe UC3 anomaly-detection pipeline">
+  <img src="https://readme-typing-svg.herokuapp.com?color=00E5C3&lines=Real-Time+Anomaly+Detection+for+Safe+Human-Robot+Interaction;ROS2+%7C+VAE-GAN+%7C+Industrial+Safety+Monitoring;Safety-Area+Inference+%7C+Thresholding+%7C+Alert+Publishing;University+of+Torino+%7C+DistriMuSe+Project&center=true&width=900&height=45">
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Project-DistriMuSe-0A192F?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Use%20Case-UC3-00E5C3?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Framework-ROS2-1f6feb?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Model-VAE--GAN-7A3EFF?style=for-the-badge" />
+</p>
+
+
+<p align="center">
+  <img src="doc/header.png" width="100%" alt="DistriMuSe UC3 anomaly-detection pipeline - UniTo, Muhammad Rashid Rao">
 </p>
 
 This repository contains the University of Torino anomaly-detection pipeline for
@@ -44,6 +56,7 @@ The four supported safety areas are:
 | `scripts/train.py` | Train or resume an area-specific VAE-GAN |
 | `scripts/calibrate_threshold.py` | Calculate validation or supervised test thresholds |
 | `scripts/plot_validation_timelines.py` | Plot validation-score timelines and thresholds |
+| `scripts/infer_offline.py` | Run inference on cropped data, frames, MP4, or MCAP rosbag input |
 | `scripts/infer_ros_live_zenoh.py` | Run live ROS 2 inference and publish visualization data |
 | `scripts/process_rosbags_to_dataset.py` | Build datasets from ROS bag recordings |
 | `scripts/scripts_extra/preprocess_saved_frames.py` | Generate safety-area crops from saved frames |
@@ -205,7 +218,33 @@ python scripts/plot_validation_timelines.py \
 The combined plot is saved as
 `results/V6/thresholds/val_scores_timeline.png`.
 
-### 5. Run live inference
+### 5. Run offline inference
+
+Use configured cropped training data (no masks required). Each output frame combines all selected safety areas in the Input, Unexpected Situations, and AI views:
+
+```bash
+python scripts/infer_offline.py \
+  --config configs/cf_dataset_epito.yaml \
+  --input_type cropped \
+  --safety_areas ALL
+```
+
+For full frames, MP4 video, or an MCAP rosbag, select `frames`, `video`, or
+`rosbag` and pass `--input`. Safety-area masks are discovered from the configured
+`data.masks` directory; use repeated `--mask AREA=PATH` arguments to override them.
+
+```bash
+python scripts/infer_offline.py \
+  --config configs/cf_dataset_epito.yaml \
+  --input_type video \
+  --input /path/to/video.mp4 \
+  --safety_areas PRight RoboArm \
+  --frame_stride 5
+```
+
+Rosbag mode also accepts `--topic /camera/back_view/image_raw`. By default, the run writes a score CSV, a four-panel ADVIS dashboard MP4, and a final timeline PNG under `results/V6/offline_inference/`. The final timeline is also held at the end of the MP4; control its duration with `--timeline_seconds`.
+
+### 6. Run live inference
 
 The number and order of `--area_names` entries must match the mask paths:
 
