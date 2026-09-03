@@ -420,6 +420,23 @@ def load_model(Enc, Dec, D, optEncDec, optD, path_models, suffix, verbose=False,
 
     checkpoint = torch.load(model_path, map_location=device, weights_only=False)
 
+    # Checkpoints produced by older and newer training runs use different
+    # optimizer key names. Prefer the requested variant, then auto-detect the
+    # available pair so model loading remains backward-compatible.
+    if optEncDec_name not in checkpoint or optD_name not in checkpoint:
+        old_keys = ("optimizer_enc_state_dict", "optimizer_dec_state_dict")
+        new_keys = ("optimizer_encdec_state_dict", "optimizer_d_state_dict")
+        if all(key in checkpoint for key in old_keys):
+            optEncDec_name, optD_name = old_keys
+        elif all(key in checkpoint for key in new_keys):
+            optEncDec_name, optD_name = new_keys
+        else:
+            available = sorted(key for key in checkpoint if "optimizer" in key)
+            raise KeyError(
+                "Checkpoint does not contain a recognized optimizer-state pair. "
+                f"Available optimizer keys: {available}"
+            )
+
     Enc.load_state_dict(checkpoint['encoder_state_dict'])
     Dec.load_state_dict(checkpoint['decoder_state_dict'])
     D.load_state_dict(checkpoint['discriminator_state_dict'])

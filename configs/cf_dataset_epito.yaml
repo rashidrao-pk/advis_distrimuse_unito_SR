@@ -1,8 +1,8 @@
 data:
   dataset_base: /beegfs/home/mrashid/datasets/AD/SR/V6
   masks: /beegfs/home/mrashid/datasets/AD/SR/V6/masks
-  training: /beegfs/home/mrashid/datasets/AD/SR/V6/training
-  testing: /beegfs/home/mrashid/datasets/AD/SR/V6/testing
+  training: /beegfs/home/mrashid/datasets/AD/SR/V6/train
+  testing: /beegfs/home/mrashid/datasets/AD/SR/V6/test
 
 training:
   epochs: 200
@@ -16,5 +16,5 @@ training:
   val_offset: 4
 
 models:
-  checkpoints: scripts/results/models/V6
+  checkpoints: results/V6/models_V6
   latent_dims: 64

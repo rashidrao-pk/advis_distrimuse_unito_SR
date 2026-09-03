@@ -55,6 +55,7 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 
+import yaml
 import numpy as np
 import pandas as pd
 import torch
@@ -93,6 +94,8 @@ signal.signal(signal.SIGINT, _handle_sigint)
 
 # ALL_SAFETY_AREAS = ["RoboArm", "ConvBelt", "PLeft", "PRight"]
 ALL_SAFETY_AREAS = ["PRight","PLeft", "RoboArm","ConvBelt"]
+
+DEFAULT_CONFIG = Path(__file__).resolve().parent.parent / "configs" / "cf_dataset_epito.yaml"
 
 # ---------------------------------------------------------------------------
 # Shared: anomaly scoring (pure-NumPy, matches Cython version in notebooks)
@@ -197,20 +200,31 @@ def load_model_for_area(area: str, params, paths, args, device):
     Dec = Decoder(z_size=params.latent_dims).to(device)
     Dis = Discriminator().to(device)
     optED, optD = utmc.get_optimizers(Enc, Dec, Dis, verbose=False)
-    suffix, paths = ut.get_create_results_path(
-        area, params,args, paths,
-        save_path_type=args.save_path_type,
-        dir="scripts/results", verbose=False,
-    )
+    # Match train.py: checkpoints are named model_<safety_area>_<latent_dims>.pt.
+    suffix = f"{params.subgroup}_{params.latent_dims}"
+    print('-'*100)
     paths.path_models      = os.path.join(os.getcwd(), args.checkpoints)
-    history = utmc.load_model(Enc, Dec, Dis, optED, optD,
-                               paths.path_models, suffix, device=device, verbose=True and args.verbose_level>0)
-    if not history:
+    print('[model checkpoints] ', paths.path_models)
+    print('-'*100)
+    history, checkpoint_config = utmc.load_model(
+        Enc, Dec, Dis, optED, optD,
+        paths.path_models, suffix, device=device,
+        verbose=True and args.verbose_level > 0,
+    )
+    if not history and checkpoint_config is None:
         if args.verbose_level>0:
             print('-'*100, f'\nmodel path -- {os.path.exists(paths.path_models)} - {paths.path_models}\n', '-'*100)
         raise RuntimeError(f"No checkpoint for '{area} - {args.checkpoints}'. Run train.py first.")
+    n_epochs = (
+        checkpoint_config.get("epochs_trained")
+        if isinstance(checkpoint_config, dict)
+        else None
+    )
+    if n_epochs is None:
+        n_epochs = len(history)
+
     Enc.eval(); Dec.eval()
-    return Enc, Dec, suffix, len(history)
+    return Enc, Dec, suffix, int(n_epochs)
 
 
 def reconstruct(Enc, Dec, data_t: torch.Tensor, device) -> torch.Tensor:
@@ -677,6 +691,7 @@ def _build_summary(area, suffix, n_epochs, args, tau, df_scores,
         "offset":             args.offset,
         "sigma":              args.sigma,
         "quantile":           args.quantile,
+        "score_func":         f'TAAS_{args.offset}-s_{args.sigma}-q_{args.quantile}',  
         "score_max":          float(df_scores.anomaly_score.max()),
         "score_mean":         float(df_scores.anomaly_score.mean()),
         "score_std":          float(df_scores.anomaly_score.std()),
@@ -712,6 +727,22 @@ def _print_summary(s: dict):
 # CLI
 # ---------------------------------------------------------------------------
 
+def load_model_config(config_file: Path) -> dict:
+    """Load model settings used by training from a YAML configuration."""
+    config_path = config_file.expanduser().resolve()
+    if not config_path.is_file():
+        raise ValueError(f"Config file does not exist: {config_path}")
+
+    with config_path.open("r", encoding="utf-8") as stream:
+        config = yaml.safe_load(stream) or {}
+
+    models = config.get("models")
+    if not isinstance(models, dict):
+        raise ValueError(f"Config must contain a 'models' mapping: {config_path}")
+    if not models.get("checkpoints"):
+        raise ValueError(f"Config must define 'models.checkpoints': {config_path}")
+    return models
+
 def parse_args():
     p = argparse.ArgumentParser(
         description="Threshold calibration — val mode or supervised test mode.",
@@ -729,10 +760,26 @@ def parse_args():
                    help="Area to calibrate. 'ALL' processes all areas.")
 
     # ── Model / dataset ───────────────────────────────────────────────────
+    p.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_CONFIG,
+        help=f"Training YAML config (default: {DEFAULT_CONFIG}).",
+    )
     p.add_argument("--dataset_version",  default="v2")
-    p.add_argument("--dataset_type",     default="refined")
+    p.add_argument(
+        "--dataset_type",
+        default=None,
+        help=(
+            "Optional dataset subdirectory below --dataset_version. "
+            "Omit it (or pass 'None') to use the version directory directly."
+        ),
+    )
     p.add_argument("--mask_image_name",  default=3015, type=int)
-    p.add_argument("--latent_dims",      default=64,   type=int)
+    p.add_argument(
+        "--latent_dims", default=None, type=int,
+        help="Latent size; defaults to models.latent_dims from --config.",
+    )
     p.add_argument("--exp_type",         default="E3")
     p.add_argument("--save_path_type",   default="cloud",
                    choices=["cloud", "local"])
@@ -745,10 +792,11 @@ def parse_args():
     p.add_argument("--test_folder", default=r'v2/ camera1_20251210_151444_fallen_operator/test/operator_fall',
                    help="[test mode] Root of labelled test ImageFolder.\n"
                         "May contain per-area sub-dirs or be a flat folder.")
-    p.add_argument("--checkpoints",
-                   default="scripts/checkpoints_33", 
-                   choices=[ "scripts/checkpoints_33",
-                            "scripts/results"],)
+    p.add_argument(
+        "--checkpoints",
+        default=None,
+        help="Checkpoint directory; overrides models.checkpoints from --config.",
+    )
     p.add_argument("--gt_csv",   default="scripts/data/annotations/anom_metadata_operator_fall.csv",
                    help="[test mode] Ground-truth CSV with columns:\n"
                         "  frame_no, component, component_anomaly\n"
@@ -784,7 +832,19 @@ def parse_args():
     p.add_argument("--output_dir", default=None,
                    help="Override output dir (default: scripts/results/training/threshold).")
 
-    return p.parse_args()
+    args = p.parse_args()
+    try:
+        model_config = load_model_config(args.config)
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        p.error(str(exc))
+
+    args.latent_dims = args.latent_dims or model_config.get("latent_dims", 64)
+    checkpoint_value = args.checkpoints or model_config["checkpoints"]
+    checkpoint_path = Path(checkpoint_value).expanduser()
+    if not checkpoint_path.is_absolute():
+        checkpoint_path = Path(__file__).resolve().parent.parent / checkpoint_path
+    args.checkpoints = str(checkpoint_path.resolve())
+    return args
 
 
 # ---------------------------------------------------------------------------
@@ -804,8 +864,12 @@ def main():
     paths = ut.get_paths(paths, verbose=False)
     paths.path_codes_main = os.path.join(paths.path_codes, "scripts")
     paths.path_models      = os.path.join(os.getcwd(), args.checkpoints)
+
+    print('[-] DEBUGG')
+    print(f'[-] DEBUGG - paths.path_codes: {paths.path_codes}')
+    print(args.dataset_version)
     out_dir = args.output_dir or os.path.join(
-        paths.path_codes_main, "results", f"thresholds_{args.dataset_version}"
+        paths.path_codes, "results",args.dataset_version, "thresholds"
     )
     args.test_dir = os.path.join(paths.path_datasets_main, args.test_folder)
     args.gt_csv_path = os.path.join(os.getcwd(), args.gt_csv)

@@ -332,7 +332,7 @@ def get_paths(paths,dataset_type='SR', verbose=False):
     elif os.name=='posix':
         if 'epito' in platform_node:
             paths.path_results        = '/beegfs/home/mrashid/repos/AD_CAD_v3'
-            paths.path_datasets_main  = f'/beegfs/home/mrashid/datasets/{dataset_type}'
+            paths.path_datasets_main  = f'/beegfs/home/mrashid/datasets/AD/{dataset_type}'
             paths.path_results_local  = '/beegfs/home/mrashid/repos/AD_CAD_v3'
         if 'distrimuse' in platform_node:
             paths.path_results        = os.getcwd()
@@ -3009,6 +3009,13 @@ def get_dataset_version(paths,params,
 
     paths.dataset_version      = dataset_version #'V6'
     paths.path_datasets        =  os.path.join(paths.path_datasets_main,paths.dataset_version)
+    # An omitted dataset type means that the version directory itself is the
+    # dataset root. Also accept common CLI/config spellings of a null value.
+    if dataset_type is None or (
+        isinstance(dataset_type, str)
+        and dataset_type.strip().lower() in {'', 'none', 'null'}
+    ):
+        dataset_type = ''
     paths.dataset_type         =  dataset_type #'fronttop'
     paths.train_dirn           = 'train'
     paths.mask_dirn            = 'masks'
@@ -3026,7 +3033,11 @@ def get_dataset_version(paths,params,
     params.aug_type = f'auto-{params.subgroup_mask}'
 
     ##################################################
-    paths.path_dataset_selected = os.path.join(paths.path_datasets,paths.dataset_type)
+    paths.path_dataset_selected = (
+        os.path.join(paths.path_datasets, paths.dataset_type)
+        if paths.dataset_type
+        else paths.path_datasets
+    )
     paths.train_dir             = os.path.join(paths.path_dataset_selected,paths.train_dirn)
     paths.test_dir              = os.path.join(paths.path_dataset_selected,paths.test_sel_dirn)
     paths.mask_dir              = os.path.join(paths.path_dataset_selected,paths.mask_dirn)
