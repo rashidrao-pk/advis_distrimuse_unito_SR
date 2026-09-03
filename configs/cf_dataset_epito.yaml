@@ -1,6 +1,11 @@
 data:
   dataset_base: /beegfs/home/mrashid/datasets/AD/SR/V6
   masks: /beegfs/home/mrashid/datasets/AD/SR/V6/masks
+  mask_types:
+    PLeft: /beegfs/home/mrashid/datasets/AD/SR/V6/masks/Mask_Generation_v6_PLeft.png
+    PRight: /beegfs/home/mrashid/datasets/AD/SR/V6/masks/Mask_Generation_v6_PRight.png
+    RoboArm: /beegfs/home/mrashid/datasets/AD/SR/V6/masks/Mask_Generation_v6_RoboArm.png
+    ConvBelt: /beegfs/home/mrashid/datasets/AD/SR/V6/masks/Mask_Generation_v6_ConvBelt.png
   training: /beegfs/home/mrashid/datasets/AD/SR/V6/train
   testing: /beegfs/home/mrashid/datasets/AD/SR/V6/test
 

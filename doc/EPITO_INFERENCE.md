@@ -95,7 +95,29 @@ python scripts/infer_offline.py \
   --max_frames 1
 
 
+python scripts/infer_offline.py \
+  --config configs/cf_dataset_epito.yaml \
+  --input_type rosbag \
+  --scenario 13_1 \
+  --topic /camera/back_view/image_raw \
+  --safety_areas ALL \
+  --max_frames 200
+
+#  DOWNLOAD INFERENCE VIDEO ONLY
+scp mrashid@slurm.hpc4ai.unito.it:/beegfs/home/mrashid/repos/advis_distrimuse_unito_SR/results/V6/offline_inference/rosbag_detections.mp4 ~/Downloads/
+
+scp mrashid@slurm.hpc4ai.unito.it:/beegfs/home/mrashid/repos/advis_distrimuse_unito_SR/results/V6/offline_inference/rosbag_16_1_detections.mp4 ~/Downloads/
+
 ```
+
+
+```bash
+# DOWNLOAD ALL COMPUTED RESULTS
+cd /beegfs/home/mrashid/repos/advis_distrimuse_unito_SR
+
+zip -r /beegfs/home/mrashid/repos/advis_distrimuse_unito_SR/results_ADVIS_SR.zip results
+
+scp mrashid@slurm.hpc4ai.unito.it:/beegfs/home/mrashid/repos/advis_distrimuse_unito_SR/results_ADVIS_SR.zip ~/Downloads/
 
 
 

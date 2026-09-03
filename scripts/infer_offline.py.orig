@@ -370,49 +370,6 @@ def image_paths(root):
     )
 
 
-def sampled_total(frame_count, args):
-    total = (int(frame_count) + args.frame_stride - 1) // args.frame_stride
-    return min(total, args.max_frames) if args.max_frames else total
-
-
-def rosbag_topic_total(args):
-    bag_dir = args.input if args.input.is_dir() else args.input.parent
-    metadata_path = bag_dir / "metadata.yaml"
-    if not metadata_path.is_file():
-        return args.max_frames
-    with metadata_path.open("r", encoding="utf-8") as stream:
-        metadata = yaml.safe_load(stream) or {}
-    bag_info = metadata.get("rosbag2_bagfile_information") or {}
-    for entry in bag_info.get("topics_with_message_count") or []:
-        topic = (entry.get("topic_metadata") or {}).get("name")
-        if topic == args.topic:
-            return sampled_total(entry.get("message_count", 0), args)
-    return args.max_frames
-
-
-def input_progress_total(args):
-    """Return an accurate tqdm total for bounded and complete input runs."""
-    if args.input_type == "rosbag":
-        return rosbag_topic_total(args)
-    if args.input_type == "frames":
-        return sampled_total(len(image_paths(args.input)), args)
-    if args.input_type == "video":
-        capture = cv2.VideoCapture(str(args.input))
-        try:
-            count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
-        finally:
-            capture.release()
-        return sampled_total(count, args) if count > 0 else args.max_frames
-    if args.input_type == "cropped":
-        counts = []
-        for area in args.safety_areas:
-            area_root = args.input / area if (args.input / area).is_dir() else args.input
-            counts.append(len(image_paths(area_root)[::args.frame_stride]))
-        total = min(counts) if counts else 0
-        return min(total, args.max_frames) if args.max_frames else total
-    return args.max_frames
-
-
 def iter_cropped(args):
     has_area_directories = all((args.input / area).is_dir() for area in args.safety_areas)
     if len(args.safety_areas) > 1 and not has_area_directories:
@@ -955,7 +912,7 @@ def main():
             }
             processed_frames = 0
             progress = tqdm(
-                factories[args.input_type](args), total=input_progress_total(args),
+                factories[args.input_type](args), total=args.max_frames,
                 desc=f"Offline inference [{args.input_type}]", unit="frame",
                 dynamic_ncols=True,
             )

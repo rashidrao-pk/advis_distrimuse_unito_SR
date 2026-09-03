@@ -97,3 +97,14 @@ ssh epito04
 # Then monitor GPU usage continuously:
 watch -n 1 nvidia-smi
 ```
+
+
+```bash
+# DOWNLOAD ALL COMPUTED RESULTS
+cd /beegfs/home/mrashid/repos/advis_distrimuse_unito_SR
+
+zip -r /beegfs/home/mrashid/repos/advis_distrimuse_unito_SR/results_ADVIS_SR.zip results
+
+scp mrashid@slurm.hpc4ai.unito.it:/beegfs/home/mrashid/repos/advis_distrimuse_unito_SR/results_ADVIS_SR.zip ~/Downloads/
+
+```
