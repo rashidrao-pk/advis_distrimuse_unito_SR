@@ -291,7 +291,8 @@ def attach_dataset_image_paths(scenario_path, camera, events):
 
 
 def write_interactive_plot(
-    path, score_rows, summaries, events, args, scenario_path, camera
+    path, score_rows, summaries, events, args, scenario_path, camera,
+    scenario_description,
 ):
     areas = [item["area"] for item in summaries]
     grouped = {area: [row for row in score_rows if row["area"] == area] for area in areas}
@@ -349,9 +350,18 @@ def write_interactive_plot(
         figure.update_xaxes(title_text="Frame pair", row=row_number, col=1)
         figure.update_yaxes(title_text="Motion", row=row_number, col=1)
     figure.update_layout(
-        title="Interactive safety-area motion analysis",
+        title={
+            "text": (
+                f"Scenario {escape(scenario_path.name)}: "
+                f"{escape(scenario_description)}<br>"
+                f"<sup>Interactive safety-area motion analysis · "
+                f"Camera: {escape(camera)}</sup>"
+            ),
+            "x": 0.5,
+        },
         height=max(500, 360 * len(areas)), hovermode="x unified",
         template="plotly_white", legend={"orientation": "h"},
+        margin={"t": 110},
     )
     figure.write_html(
         str(path), include_plotlyjs=True, full_html=True, div_id="motion-plot"
@@ -408,13 +418,14 @@ def write_interactive_plot(
 
 
 def write_markdown(
-    path, scenario_path, camera, summaries, args, plot_filename,
+    path, scenario_path, camera, scenario_description, summaries, args, plot_filename,
     interactive_filename, events,
 ):
     lines = [
         f"# Safety-area motion report: {scenario_path.name}",
         "",
         f"- Scenario path: `{scenario_path}`",
+        f"- Scenario description: {scenario_description}",
         f"- Camera: `{camera}`",
         f"- Motion implementation: `scripts/src/utils.py::motion_score`",
         f"- Pixel-change threshold: `{args.pixel_threshold}`",
@@ -509,9 +520,23 @@ def parse_args():
     return parser.parse_args()
 
 
-def analyze_scenario(args, scenario_path, output_dir):
+def get_scenario_description(config, scenario_id):
+    scenario_options = config.get("scenario_options", {}) or {}
+    scenario_config = scenario_options.get(str(scenario_id), {}) or {}
+    description = scenario_config.get("description")
+
+    if not description:
+        selected_scenario = config.get("scenario", {}) or {}
+        if str(selected_scenario.get("id", "")) == str(scenario_id):
+            description = selected_scenario.get("description")
+
+    return str(description or "Description not available in config.")
+
+
+def analyze_scenario(args, scenario_path, output_dir, config):
     scenario_path = scenario_path.expanduser().resolve()
     scenario_id = scenario_path.name
+    scenario_description = get_scenario_description(config, scenario_id)
 
     area_dirs = find_area_directories(scenario_path, args.camera)
     if args.areas:
@@ -566,12 +591,13 @@ def analyze_scenario(args, scenario_path, output_dir):
     interactive_path = output_dir / f"{scenario_id}_motion_interactive.html"
     write_interactive_plot(
         interactive_path, all_scores, summaries, events, args,
-        scenario_path, args.camera,
+        scenario_path, args.camera, scenario_description,
     )
     write_markdown(
         output_dir / f"{scenario_id}_report.md",
         scenario_path,
         args.camera,
+        scenario_description,
         summaries,
         args,
         plot_path.name,
@@ -581,6 +607,7 @@ def analyze_scenario(args, scenario_path, output_dir):
     print(f"Report written to: {output_dir.resolve()}")
     return {
         "scenario_id": scenario_id,
+        "description": scenario_description,
         "output_dir": output_dir.resolve(),
         "interactive_path": interactive_path.resolve(),
         "report_path": (output_dir / f"{scenario_id}_report.md").resolve(),
@@ -619,6 +646,7 @@ def write_combined_html(path, results, camera):
         sections.append(f"""
 <section id="{anchor}">
   <h2>Scenario {escape(scenario_id)}</h2>
+  <p class="scenario-description">{escape(result['description'])}</p>
   <p>Detected peak events: {result['event_count']} · <a href="{report_relative}">Markdown report</a></p>
   <table><thead><tr><th>Area</th><th>Frames</th><th>Active</th><th>P95 motion</th><th>Decision</th></tr></thead><tbody>{rows}</tbody></table>
   <iframe src="{interactive_relative}" loading="lazy" style="height:{iframe_height}px"></iframe>
@@ -626,7 +654,7 @@ def write_combined_html(path, results, camera):
     document = f"""<!doctype html>
 <html><head><meta charset="utf-8"><title>All scenario motion reports</title>
 <style>
-body{{font-family:system-ui,sans-serif;margin:0;background:#f4f6f8;color:#1d2733}} nav{{position:sticky;top:0;background:#17212b;padding:12px;z-index:2}} nav a{{color:white;margin:0 10px;text-decoration:none}} main{{max-width:1700px;margin:auto;padding:22px}} section{{background:white;margin:20px 0;padding:18px;border-radius:10px;box-shadow:0 2px 9px #ccd}} table{{border-collapse:collapse;margin-bottom:14px}} th,td{{border:1px solid #ccd;padding:7px 11px;text-align:left}} iframe{{width:100%;border:1px solid #ccd;border-radius:6px}}
+body{{font-family:system-ui,sans-serif;margin:0;background:#f4f6f8;color:#1d2733}} nav{{position:sticky;top:0;background:#17212b;padding:12px;z-index:2}} nav a{{color:white;margin:0 10px;text-decoration:none}} main{{max-width:1700px;margin:auto;padding:22px}} section{{background:white;margin:20px 0;padding:18px;border-radius:10px;box-shadow:0 2px 9px #ccd}} .scenario-description{{color:#334155;font-size:1.05rem}} table{{border-collapse:collapse;margin-bottom:14px}} th,td{{border:1px solid #ccd;padding:7px 11px;text-align:left}} iframe{{width:100%;border:1px solid #ccd;border-radius:6px}}
 </style></head><body><nav>{' '.join(navigation)}</nav><main>
 <h1>Safety-area motion analysis — all scenarios</h1><p>Camera: {escape(camera)} · Scenarios: {len(results)}</p>
 {''.join(sections)}
@@ -636,20 +664,20 @@ body{{font-family:system-ui,sans-serif;margin:0;background:#f4f6f8;color:#1d2733
 
 def main():
     args = parse_args()
+    with args.config.expanduser().open("r", encoding="utf-8") as stream:
+        config = yaml.safe_load(stream) or {}
     default_output_root = Path("reports") / "safety_area_motion"
     if args.scenario_path is not None:
         scenario_path = args.scenario_path.expanduser().resolve()
         output_dir = args.output_dir or (
             default_output_root / f"{scenario_path.name}_{args.camera}"
         )
-        analyze_scenario(args, scenario_path, output_dir)
+        analyze_scenario(args, scenario_path, output_dir, config)
         return
 
     if args.scenarios_root:
         scenarios_root = args.scenarios_root.expanduser().resolve()
     else:
-        with args.config.expanduser().open("r", encoding="utf-8") as stream:
-            config = yaml.safe_load(stream) or {}
         dataset_base = config.get("data", {}).get("dataset_base")
         if not dataset_base:
             raise ValueError("Config does not define data.dataset_base")
@@ -676,6 +704,7 @@ def main():
             args,
             scenario_path,
             output_root / f"{scenario_path.name}_{args.camera}",
+            config,
         ))
     combined_path = output_root / f"all_scenarios_{args.camera}.html"
     write_combined_html(combined_path, results, args.camera)

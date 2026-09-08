@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert configured MCAP camera streams into raw frames or safety-area crops."""
+"""Convert MCAP camera streams into frames, videos, or safety-area crops."""
 
 import argparse
 import math
@@ -88,6 +88,8 @@ def process_scenario(config, scenario_id, args, output_base):
     }
     masks_by_topic = {}
     output_dirs = {}
+    video_paths = {}
+    video_writers = {}
     for topic, camera_name in camera_names.items():
         camera_root = output_base / scenario_id / camera_name
         if args.process_to == "frames":
@@ -95,6 +97,12 @@ def process_scenario(config, scenario_id, args, output_base):
             raw_dir.mkdir(parents=True, exist_ok=True)
             output_dirs[topic] = {"raw": raw_dir}
             print(f"[{scenario_id}] {topic} -> {raw_dir}")
+        elif args.process_to == "video":
+            video_dir = camera_root / "video"
+            video_dir.mkdir(parents=True, exist_ok=True)
+            output_dirs[topic] = {"video": video_dir}
+            video_paths[topic] = video_dir / f"s-{scenario_id}_c-{camera_name}.mp4"
+            print(f"[{scenario_id}] {topic} -> {video_paths[topic]}")
         else:
             masks = resolve_masks(config, args, camera_name)
             if not masks:
@@ -149,6 +157,22 @@ def process_scenario(config, scenario_id, args, output_base):
                     )
                     if not cv2.imwrite(str(output_path), frame):
                         raise RuntimeError(f"Failed to write {output_path}")
+                elif args.process_to == "video":
+                    if topic not in video_writers:
+                        height, width = frame.shape[:2]
+                        output_fps = args.video_fps / args.save_every_n
+                        writer = cv2.VideoWriter(
+                            str(video_paths[topic]),
+                            cv2.VideoWriter_fourcc(*"mp4v"),
+                            output_fps,
+                            (width, height),
+                        )
+                        if not writer.isOpened():
+                            raise RuntimeError(
+                                f"Could not create video {video_paths[topic]}"
+                            )
+                        video_writers[topic] = writer
+                    video_writers[topic].write(frame)
                 else:
                     for area_name, mask in masks_by_topic[topic].items():
                         crop = crop_safety_area(
@@ -176,6 +200,8 @@ def process_scenario(config, scenario_id, args, output_base):
             finally:
                 progress.update()
     finally:
+        for writer in video_writers.values():
+            writer.release()
         progress.close()
 
     for topic in available_topics:
@@ -188,7 +214,7 @@ def process_scenario(config, scenario_id, args, output_base):
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Save rosbag camera streams as raw frames or safety-area crops."
+        description="Save rosbag camera streams as frames, MP4 videos, or safety-area crops."
     )
     parser.add_argument("--config", default="configs/cf_dataset_mac.yaml")
     selection = parser.add_mutually_exclusive_group()
@@ -198,8 +224,8 @@ def parse_args():
     parser.add_argument(
         "--process-to",
         required=True,
-        choices=["frames", "safety-areas"],
-        help="Save full frames or mask-cropped safety-area model inputs.",
+        choices=["frames", "video", "safety-areas"],
+        help="Save full frames, a simple MP4, or mask-cropped safety-area inputs.",
     )
     parser.add_argument(
         "--safety-areas",
@@ -210,6 +236,15 @@ def parse_args():
     parser.add_argument("--save-every-n", type=int, default=1)
     parser.add_argument("--max-frames", type=int, help="First N sampled frames per camera.")
     parser.add_argument("--image-format", choices=["png", "jpg"], default="png")
+    parser.add_argument(
+        "--video-fps",
+        type=float,
+        default=25.0,
+        help=(
+            "Source camera FPS for video mode (default: 25). Output FPS is "
+            "adjusted by --save-every-n to preserve playback duration."
+        ),
+    )
     parser.add_argument("--target-size", type=int, default=128)
     parser.add_argument(
         "--stretch",
@@ -224,7 +259,9 @@ def parse_args():
         parser.error("--max-frames must be at least 1")
     if args.target_size < 1:
         parser.error("--target-size must be at least 1")
-    if args.process_to == "frames" and args.safety_areas:
+    if args.video_fps <= 0:
+        parser.error("--video-fps must be greater than zero")
+    if args.process_to != "safety-areas" and args.safety_areas:
         parser.error("--safety-areas is only valid with --process-to safety-areas")
     return args
 

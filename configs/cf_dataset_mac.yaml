@@ -130,12 +130,12 @@ scenario_options:
   "10_0":
     {
       rosbag_path: "Jul27_Scenario_10_0_2026-07-27_13-24-30/Jul27_Scenario_10_0_2026-07-27_13-24-30_0.mcap",
-      description: "Unexpected object on floor - Left Safety Area - Repeat 1",
+      description: "Unexpected object on floor - Strange Blue object on Left Safety Area - Repeat 1",
     }
   "10_1":
     {
       rosbag_path: "Jul27_Scenario_10_1_2026-07-27_13-24-45/Jul27_Scenario_10_1_2026-07-27_13-24-45_0.mcap",
-      description: "Unexpected object on floor - Right Safety Area - Repeat 2",
+      description: "Unexpected object on floor - Broken tyre on Left Safety Area - Repeat 2",
     }
   "11_0":
     {
@@ -180,7 +180,7 @@ scenario_options:
   "15_0":
     {
       rosbag_path: "Jul27_Scenario_15_0_2026-07-27_13-20-11/Jul27_Scenario_15_0_2026-07-27_13-20-11_0.mcap",
-      description: "Box fallen on the floor while Palletizing on Pallet Right Side - Repeat 1",
+      description: "Box fallen on the floor while Palletizing on Pallet Left Side - Repeat 1",
     }
   "16_0":
     {

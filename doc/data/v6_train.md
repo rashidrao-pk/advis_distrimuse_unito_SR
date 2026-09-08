@@ -69,7 +69,7 @@ pixi run python scripts/process_rosbags_from_config.py \
   --camera back_view \
   --generate-masked-video \
   --no-save-frames \
-  --save-every-n 10 \
+  --save-every-n 5 \
   --safety-areas PLeft PRight ConvBelt RoboArm \
   --progress \
 
@@ -97,7 +97,45 @@ pixi run python scripts/process_rosbags_to_dataset.py \
   --progress \
   --max-frames 500 \
   --save-every-n 50
+
+# Process data to VIDEO full
+
+pixi run python scripts/process_rosbags_to_dataset.py \
+  --config configs/cf_dataset_mac.yaml \
+  --scenario 1_0 \
+  --camera back_view \
+  --process-to video \
+  --progress
+
+
+base_path="/Users/rashid/data/DS/SR/v6/Jul27/extracted_frames"
+
+for sid_path in "$base_path"/*; do
+  if [[ -d "$sid_path" ]]; then
+
+    s_id=$(basename "$sid_path")
+
+    echo "======================================"
+    echo "Processing scenario: $s_id"
+    echo "Path: $sid_path"
+    echo "======================================"
+
+    pixi run python scripts/process_rosbags_to_dataset.py \
+      --config configs/cf_dataset_mac.yaml \
+      --scenario $s_id \
+      --camera back_view \
+      --process-to video \
+      --progress \
+      --max-frames 50 \
+
+  else
+    echo "Skipping: $sid_path (not a directory)"
+  fi
+done
+
 ```
+
+---
 
 ```bash
 # Process UnExpected Videos to frames
@@ -143,88 +181,22 @@ pixi run python scripts/process_rosbags_to_dataset.py \
   --stretch
 ```
 
-```bash
-pixi run python scripts/process_rosbags_to_dataset.py \
-  --config configs/cf_dataset_mac.yaml \
-  --scenario 2_0 \
-  --camera back_view \
-  --process-to safety-areas \
-  --safety-areas PLeft \
-  --progress \
-  --target-size 128 \
-  --image-format png \
-  --stretch
-```
+For Smoke test, use fewwer frames:
+
+- --max-frames 500 \
+- --save-every-n 50
 
 ```bash
+# Preprocess Unexpected Data
 pixi run python scripts/process_rosbags_to_dataset.py \
   --config configs/cf_dataset_mac.yaml \
-  --scenario 2_0 \
+  --scenario 8_0 \
   --camera back_view \
   --process-to safety-areas \
-  --safety-areas PLeft \
   --progress \
   --target-size 128 \
   --image-format png \
-  --stretch
-```
-
-```bash
-pixi run python scripts/process_rosbags_to_dataset.py \
-  --config configs/cf_dataset_mac.yaml \
-  --scenario 3_0 \
-  --camera back_view \
-  --process-to safety-areas \
-  --safety-areas PRight ConvBelt RoboArm \
-  --progress \
-  --target-size 128 \
-  --image-format png \
-  --stretch
-
-pixi run python scripts/process_rosbags_to_dataset.py \
-  --config configs/cf_dataset_mac.yaml \
-  --scenario 4_0 \
-  --camera back_view \
-  --process-to safety-areas \
-  --safety-areas PLeft ConvBelt RoboArm \
-  --progress \
-  --target-size 128 \
-  --image-format png \
-  --stretch
-
-pixi run python scripts/process_rosbags_to_dataset.py \
-  --config configs/cf_dataset_mac.yaml \
-  --scenario 5_0 \
-  --camera back_view \
-  --process-to safety-areas \
-  --safety-areas PRight RoboArm \
-  --progress \
-  --target-size 128 \
-  --image-format png \
-  --stretch
-
-pixi run python scripts/process_rosbags_to_dataset.py \
-  --config configs/cf_dataset_mac.yaml \
-  --scenario 6_0 \
-  --camera back_view \
-  --process-to safety-areas \
-  --safety-areas PLeft PRight RoboArm \
-  --progress \
-  --target-size 128 \
-  --image-format png \
-  --stretch
-
-
-pixi run python scripts/process_rosbags_to_dataset.py \
-  --config configs/cf_dataset_mac.yaml \
-  --scenario 7_0 \
-  --camera back_view \
-  --process-to safety-areas \
-  --safety-areas PLeft PRight RoboArm ConvBelt\
-  --progress \
-  --target-size 128 \
-  --image-format png \
-  --stretch
+  --stretch \
 
 ```
 
