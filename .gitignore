@@ -21,3 +21,5 @@ __MACOSX/
 
 # any zip files
 *.zip
+
+.DS_Store.DS_Store
