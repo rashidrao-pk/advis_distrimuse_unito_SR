@@ -1,50 +1,42 @@
 [workspace]
 authors = ["rashid <muhammad.rashid@unito.it>"]
-name = "advis"
+name = "advis_mac"
 version = "0.1.0"
-platforms = ["linux-64"]
 
-# Keep conda-forge first for generic deps.
+platforms = ["osx-arm64"]
+
 channels = [
-  "nvidia",
   "https://prefix.dev/conda-forge",
-  "robostack-kilted",
-  "pytorch"
+  "robostack-kilted"
 ]
 
 [activation.env]
-PYTHONPATH = "${PIXI_PROJECT_ROOT}/src:${PYTHONPATH}"
-RMW_IMPLEMENTATION = "rmw_cyclonedds_cpp"
-CYCLONEDDS_URI = "/home/unito/dm/distrimuse-seds/cyclonedds.xml"
-ROS_DOMAIN_ID="1"
+# Keep ROS 2 discovery and traffic on this computer. The default ROS middleware
+# is used, so no CycloneDDS XML file or VLAN configuration is required.
+ROS_LOCALHOST_ONLY = "1"
+ROS_DOMAIN_ID = "0"
+ROS_LOG_DIR = "/tmp"
 
+[tasks]
+broadcast = "python scripts/local_frame_broadcaster.py"
+check-input = "python scripts/check_input.py"
+check-mps = "python -c \"import torch; print('MPS available:', torch.backends.mps.is_available()); print('MPS built:', torch.backends.mps.is_built())\""
+test = "pytest -v"
 
 [dependencies]
-python = "3.12.*"
-numpy = { version = "*", channel = "https://prefix.dev/conda-forge" }
-
-mkl = { version = "*", channel = "https://prefix.dev/conda-forge" }
-
-pytorch = { version = "*", channel = "pytorch" }
-torchvision = { version = "*", channel = "pytorch" }
-pytorch-cuda = { version = "12.1.*", channel = "pytorch" }
-
-
-scipy = ">=1.17.1,<2"
-matplotlib = ">=3.10.8,<4"
-plotly = ">=6.6.0,<7"
-scikit-image = ">=0.26.0,<0.27"
-tqdm = ">=4.67.3,<5"
-scikit-learn = ">=1.8.0,<2"
-pandas = ">=3.0.2,<4"
-
-
+python = ">=3.11"
 ros-kilted-rclpy = "*"
-ros-kilted-sensor-msgs = ">=5.5.1,<6"
+ros-kilted-sensor-msgs = "*"
 ros-kilted-cv-bridge = "*"
 ros-kilted-rosbag2-py = "*"
 ros-kilted-rosbag2-storage-mcap = "*"
 ros-kilted-ros-base = "*"
-
-ros-kilted-rmw-cyclonedds-cpp = "*"
-opencv = ">=4.12.0,<5"
+opencv = "*"
+numpy = "*"
+pytest = "*"
+pyyaml = "*"
+plotly = "*"
+# Use current conda-forge builds. They support MPS and share the same native
+# runtime as ROS/OpenCV, avoiding mixed Conda/PyPI OpenMP libraries.
+pytorch = ">=2.7"
+torchvision = ">=0.22"

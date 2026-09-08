@@ -455,13 +455,11 @@ def parse_args():
     parser.add_argument("--image-format", choices=["png", "jpg"], default="png")
     parser.add_argument(
         "--no-save-frames",
-        action="store_true",
-        help="Do not save individual images (useful with --generate-masked-video).",
+        action="store_true",help="Do not save individual images (useful with --generate-masked-video).",
     )
     parser.add_argument(
         "--generate-masked-video",
-        action="store_true",
-        help="Generate a masked MP4 for each selected scenario/camera.",
+        action="store_true",help="Generate a masked MP4 for each selected scenario/camera.",
     )
     parser.add_argument(
         "--safety-areas",

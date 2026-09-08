@@ -1,6 +1,6 @@
 [workspace]
 authors = ["rashid <muhammad.rashid@unito.it>"]
-name = "advis"
+name = "advis_mac"
 version = "0.1.0"
 platforms = ["linux-64"]
 

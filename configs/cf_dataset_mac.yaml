@@ -85,95 +85,112 @@ scenario_options:
   "7_0":
     {
       rosbag_path: "Jul27_Scenario_7_0_2026-07-27_11-50-53/Jul27_Scenario_7_0_2026-07-27_11-50-53_0.mcap",
-      description: "Operator comes to robot to fix some issue - Repeat 1",
+      description: "Operator comes to robot to fix some issue while not Palletizing - Repeat 1",
     }
   "7_1":
     {
       rosbag_path: "Jul27_Scenario_7_1_2026-07-27_11-51-42/Jul27_Scenario_7_1_2026-07-27_11-51-42_0.mcap",
+      description: "Operator comes to robot to fix some issue while Palletizing - Repeat 2",
     }
   "7_2":
     {
       rosbag_path: "Jul27_Scenario_7_2_2026-07-27_11-53-32/Jul27_Scenario_7_2_2026-07-27_11-53-32_0.mcap",
+      description: "Operator crosses the safety areas while not Palletizing - Repeat 3",
     }
   "8_0":
     {
       rosbag_path: "Jul27_Scenario_8_0_2026-07-27_11-55-34/Jul27_Scenario_8_0_2026-07-27_11-55-34_0.mcap",
+      description: "Unexpected person enters the safety area while Palletizing - Repeat 1",
     }
   "8_1":
     {
       rosbag_path: "Jul27_Scenario_8_1_2026-07-27_11-56-55/Jul27_Scenario_8_1_2026-07-27_11-56-55_0.mcap",
+      description: "Unexpected person enters the safety area while Palletizing - Repeat 2",
     }
   "8_2":
     {
       rosbag_path: "Jul27_Scenario_8_2_2026-07-27_11-58-02/Jul27_Scenario_8_2_2026-07-27_11-58-02_0.mcap",
+      description: "Unexpected person enters the safety area while Palletizing - Repeat 3",
     }
   "8_3":
     {
       rosbag_path: "Jul27_Scenario_8_3_2026-07-27_12-00-19/Jul27_Scenario_8_3_2026-07-27_12-00-19_0.mcap",
+      description: "Unexpected person enters the safety area while Palletizing - Repeat 4",
     }
   "8_4":
     {
       rosbag_path: "Jul27_Scenario_8_4_2026-07-27_12-01-36/Jul27_Scenario_8_4_2026-07-27_12-01-36_0.mcap",
+      description: "Unexpected person enters the safety area while Palletizing - Repeat 5",
     }
   "9_0":
     {
       rosbag_path: "Jul27_Scenario_9_0_2026-07-27_13-25-55/Jul27_Scenario_9_0_2026-07-27_13-25-55_0.mcap",
+      description: "Operator comes to robot arm while Palletizing - Repeat 1",
     }
   "10_0":
     {
       rosbag_path: "Jul27_Scenario_10_0_2026-07-27_13-24-30/Jul27_Scenario_10_0_2026-07-27_13-24-30_0.mcap",
+      description: "Unexpected object on floor - Left Safety Area - Repeat 1",
     }
   "10_1":
     {
       rosbag_path: "Jul27_Scenario_10_1_2026-07-27_13-24-45/Jul27_Scenario_10_1_2026-07-27_13-24-45_0.mcap",
+      description: "Unexpected object on floor - Right Safety Area - Repeat 2",
     }
   "11_0":
     {
       rosbag_path: "Jul27_Scenario_11_0_2026-07-27_13-22-52/Jul27_Scenario_11_0_2026-07-27_13-22-52_0.mcap",
+      description: "Unexpected object on Pallet - Left Safety Area - Repeat 1",
     }
   "11_1":
     {
       rosbag_path: "Jul27_Scenario_11_1_2026-07-27_13-23-36/Jul27_Scenario_11_1_2026-07-27_13-23-36_0.mcap",
+      description: "Unexpected object on Pallet - Left Safety Area - Repeat 2",
     }
   "12_0":
     {
       rosbag_path: "Jul27_Scenario_12_0_2026-07-27_12-59-03/Jul27_Scenario_12_0_2026-07-27_12-59-03_0.mcap",
+      description: "Unexpected object on Conveyor Belt - Repeat 1",
     }
   "12_1":
     {
       rosbag_path: "Jul27_Scenario_12_1_2026-07-27_13-01-09/Jul27_Scenario_12_1_2026-07-27_13-01-09_0.mcap",
+      description: "Unexpected object on Conveyor Belt - Repeat 2",
     }
   "13_0":
     {
       rosbag_path: "Jul27_Scenario_13_0_2026-07-27_13-05-19/Jul27_Scenario_13_0_2026-07-27_13-05-19_0.mcap",
+      description: "Operator falls on the floor while Palletizing on Pallet Right Side - Repeat 1",
     }
   "13_1":
     {
       rosbag_path: "Jul27_Scenario_13_1_2026-07-27_13-08-20/Jul27_Scenario_13_1_2026-07-27_13-08-20_0.mcap",
+      description: "Operator falls on the floor while Palletizing on Pallet Left Side - Repeat 1",
     }
   "14_0":
     {
       rosbag_path: "Jul27_Scenario_14_0_2026-07-27_13-10-08/Jul27_Scenario_14_0_2026-07-27_13-10-08_0.mcap",
+      description: "Unexpected object on Pallet Left Side - Repeat 1",
     }
   "14_1":
     {
       rosbag_path: "Jul27_Scenario_14_1_2026-07-27_13-11-06/Jul27_Scenario_14_1_2026-07-27_13-11-06_0.mcap",
+      description: "Box Wrong Orientation on Conveyor Belt - Repeat 1",
     }
   "15_0":
     {
       rosbag_path: "Jul27_Scenario_15_0_2026-07-27_13-20-11/Jul27_Scenario_15_0_2026-07-27_13-20-11_0.mcap",
+      description: "Box fallen on the floor while Palletizing on Pallet Right Side - Repeat 1",
     }
   "16_0":
     {
       rosbag_path: "Jul27_Scenario_16_0_2026-07-27_11-28-46/Jul27_Scenario_16_0_2026-07-27_11-28-46_0.mcap",
+      description: "Box fallen on the pallet, operator comes to the fix - Repeat 0",
     }
   "16_1":
     {
       rosbag_path: "Jul27_Scenario_16_1_2026-07-27_13-17-51/Jul27_Scenario_16_1_2026-07-27_13-17-51_0.mcap",
-    }
-  "16_2":
-    {
-      rosbag_path: "Jul27_Scenario_16_2_2026-07-27_13-18-45/Jul27_Scenario_16_2_2026-07-27_13-18-45_0.mcap",
+      description: "Unexpected Pallet and 2 boxes fallen on Pallet",
     }
 
 masks:

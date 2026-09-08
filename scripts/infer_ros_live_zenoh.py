@@ -490,7 +490,14 @@ class LiveRosAnomalyInfer(Node):
         
         self.vlog(1, "[startup] initializing node")
 
-        self.device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu else "cpu")
+        if args.cpu:
+            self.device = torch.device("cpu")
+        elif torch.backends.mps.is_available():
+            self.device = torch.device("mps")
+        elif torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        else:
+            self.device = torch.device("cpu")
         self.bridge = CvBridge()
 
         self.vlog(1, f"[startup] torch.cuda.is_available()={torch.cuda.is_available()}")
@@ -985,4 +992,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

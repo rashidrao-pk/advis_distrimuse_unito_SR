@@ -61,8 +61,21 @@ pixi run python scripts/process_rosbags_from_config.py \
   --save-every-n 10 \
   --safety-areas PLeft PRight ConvBelt RoboArm \
   --progress \
-  --max-frames 500 \
+
+# Process UnExpected Videos
+pixi run python scripts/process_rosbags_from_config.py \
+  --config configs/cf_dataset_mac.yaml \
+  --scenario 8_0 \
+  --camera back_view \
+  --generate-masked-video \
+  --no-save-frames \
+  --save-every-n 10 \
+  --safety-areas PLeft PRight ConvBelt RoboArm \
+  --progress \
+
 ```
+
+---
 
 ## Preprocess Dataset:
 
@@ -70,6 +83,7 @@ pixi run python scripts/process_rosbags_from_config.py \
   - --max-frames 500
   - --save-every-n 5
   - --target-size 128
+  - --process-to [frames, safety-areas ]
   - --image-format jpg
   - --stretch
   - --all
@@ -79,13 +93,39 @@ pixi run python scripts/process_rosbags_to_dataset.py \
   --config configs/cf_dataset_mac.yaml \
   --scenario 1_0 \
   --camera back_view \
+  --process-to video \
+  --progress \
+  --max-frames 500 \
+  --save-every-n 50
+```
+
+```bash
+# Process UnExpected Videos to frames
+pixi run python scripts/process_rosbags_to_dataset.py \
+  --config configs/cf_dataset_mac.yaml \
+  --scenario 9_0 \
+  --camera back_view \
+  --process-to frames \
+  --progress \
+  --target-size 128 \
+  --image-format png \
+  --stretch \
+  --max-frames 500 \
+  --save-every-n 50
+
+#  Rosbags to Safety Areas using Masks
+pixi run python scripts/process_rosbags_to_dataset.py \
+  --config configs/cf_dataset_mac.yaml \
+  --scenario 9_0 \
+  --camera back_view \
   --process-to safety-areas \
   --safety-areas PLeft PRight \
   --progress \
   --target-size 128 \
   --image-format png \
   --stretch \
-  --max-frames 500
+  --max-frames 500 \
+  --save-every-n 50
 ```
 
 ### RUN for all Data - Final
