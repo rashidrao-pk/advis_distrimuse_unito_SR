@@ -751,7 +751,7 @@ def _resolve_config_path(value, config_path):
 
 
 def load_data_config(config_file):
-    """Load and validate the optional ``data`` section of a YAML config."""
+    """Load dataset paths, deriving the train folder from dataset_base."""
     config_path = Path(config_file).expanduser().resolve()
     if not config_path.is_file():
         raise ValueError(f"Config file does not exist: {config_path}")
@@ -763,9 +763,19 @@ def load_data_config(config_file):
     if not isinstance(data, dict):
         raise ValueError(f"Config must contain a 'data' mapping: {config_path}")
 
+    dataset_base = _resolve_config_path(data.get("dataset_base"), config_path)
+    training_value = data.get("training") or data.get("train")
+    if training_value is not None:
+        training = _resolve_config_path(training_value, config_path)
+    elif dataset_base is not None:
+        training = str((Path(dataset_base) / "train").resolve())
+    else:
+        training = None
+
     return {
-        key: _resolve_config_path(data.get(key), config_path)
-        for key in ("dataset_base", "training", "masks")
+        "dataset_base": dataset_base,
+        "training": training,
+        "masks": _resolve_config_path(data.get("masks"), config_path),
     }
 
 
@@ -777,8 +787,11 @@ def parse_args():
     p.add_argument("--dataset_source",     default="SR",       help="Dataset version tag")
     p.add_argument("--dataset_version",     default="V6",       help="Dataset version tag")
     p.add_argument("--dataset_cam_type",    default="refined", help="Camera / dataset type")
-    p.add_argument("--config", type=Path,
-                   help="YAML file containing data.dataset_base, data.training, and data.masks")
+    p.add_argument(
+        "--config", type=Path, default=Path("configs/cf_dataset_mac.yaml"),
+        help=("YAML dataset config. Training uses data.training/data.train when set, "
+              "otherwise <data.dataset_base>/train."),
+    )
     p.add_argument("--dataset_base", help="Dataset base directory (overrides data.dataset_base in --config)")
     p.add_argument("--training_dir", help="Training directory (overrides data.training in --config)")
     p.add_argument("--masks_dir", help="Masks directory (overrides data.masks in --config)")
