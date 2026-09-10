@@ -967,7 +967,7 @@ def train_one_safety_area(safety_area: str, args, device):
     os.makedirs(paths.path_codes_main, exist_ok=True)
 
     # Fixed output dirs used regardless of save_figures flag
-    paths.path_training_curves = os.path.join(paths.path_codes_cloud, "results", paths.dataset_version,"train_training")
+    paths.path_training_curves = os.path.join(paths.path_codes_cloud, "results", paths.dataset_version,"train/training")
     # paths.path_models      = os.path.join(paths.path_codes_main, args.checkpoints)
     paths.path_models      = os.path.join(os.getcwd(), args.checkpoints)
     os.makedirs(paths.path_training_curves, exist_ok=True)
@@ -984,7 +984,7 @@ def train_one_safety_area(safety_area: str, args, device):
         params.subgroup, params, args,paths,
         save_path_type = args.save_path_type,
         dir            = args.model_path,
-        models_dir      = f'train_models_{args.dataset_version}',
+        models_dir      = f'train/models_{args.dataset_version}',
         verbose        = True  and args.verbose_level > 1,
     )
     paths.suffix = suffix

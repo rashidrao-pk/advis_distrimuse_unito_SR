@@ -666,7 +666,7 @@ def train_one_safety_area(safety_area: str, args, device):
         params.subgroup, params, args,paths,
         save_path_type = args.save_path_type,
         dir            = args.model_path,
-        models_dir      = f'train_models_{args.dataset_version}',
+        models_dir      = f'train/models_{args.dataset_version}',
         verbose        = True  and args.verbose_level > 1,
     )
     paths.suffix = suffix
