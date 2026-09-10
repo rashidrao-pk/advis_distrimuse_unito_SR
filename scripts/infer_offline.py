@@ -160,7 +160,7 @@ def load_settings(args):
 
     checkpoint_value = args.checkpoints or model_config.get("checkpoints")
     if not checkpoint_value:
-        checkpoint_value = f"results/{args.dataset_version}/train/models_{args.dataset_version}"
+        checkpoint_value = f"results/{args.dataset_version}/train/models"
     args.checkpoints = resolve_path(checkpoint_value, repository_root)
     args.threshold_dir = (
         args.threshold_dir.expanduser().resolve()
