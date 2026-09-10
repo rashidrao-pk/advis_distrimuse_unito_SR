@@ -405,27 +405,47 @@ def save_validation_history(loss_history, params, paths):
     if not rows:
         return
     csv_path = output_dir / f"validation_metrics_{params.subgroup}.csv"
-    fields = ["epoch"] + sorted({key for row in rows for key in row if key.startswith("val_") or key == "normal_threshold"})
+    fields = [
+        "epoch", "training_reconstruction_error",
+        "validation_reconstruction_error", "generalization_gap",
+    ] + sorted({key for row in rows for key in row if key.startswith("val_") or key == "normal_threshold"})
     with csv_path.open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=fields)
         writer.writeheader()
         for epoch, row in enumerate(rows, start=1):
-            writer.writerow({"epoch": epoch, **{field: row.get(field, math.nan) for field in fields[1:]}})
+            train_error = row.get("recon_loss", math.nan)
+            val_error = row.get("val_recon_mean", math.nan)
+            writer.writerow({
+                "epoch": epoch,
+                "training_reconstruction_error": train_error,
+                "validation_reconstruction_error": val_error,
+                "generalization_gap": val_error - train_error,
+                **{field: row.get(field, math.nan) for field in fields[4:]},
+            })
 
     epochs = np.arange(1, len(rows) + 1)
-    fig, axes = plt.subplots(2, 2, figsize=(14, 9), constrained_layout=True)
+    train_errors = np.asarray([row.get("recon_loss", math.nan) for row in rows])
+    val_errors = np.asarray([row["val_recon_mean"] for row in rows])
+    generalization_gap = val_errors - train_errors
+    fig, axes = plt.subplots(2, 3, figsize=(20, 10), constrained_layout=True)
 
-    axes[0, 0].plot(epochs, [row["val_recon_mean"] for row in rows], label="Mean")
-    axes[0, 0].plot(epochs, [row["val_recon_p95"] for row in rows], label="P95")
-    axes[0, 0].plot(epochs, [row["val_recon_p99"] for row in rows], label="P99")
-    axes[0, 0].set_title("Normal validation reconstruction scores")
+    axes[0, 0].plot(epochs, train_errors, label="Training reconstruction error")
+    axes[0, 0].plot(epochs, val_errors, label="Validation reconstruction error")
+    axes[0, 0].set_title("Training vs validation reconstruction")
     axes[0, 0].set_ylabel("Reconstruction error")
     axes[0, 0].legend()
 
-    axes[0, 1].plot(epochs, [row["val_recon_std"] for row in rows], label="Std. deviation")
-    axes[0, 1].plot(epochs, [row["val_recon_cv"] for row in rows], label="Coefficient of variation")
-    axes[0, 1].set_title("Normal validation-score variability")
+    axes[0, 1].plot(epochs, val_errors, label="Mean")
+    axes[0, 1].plot(epochs, [row["val_recon_p95"] for row in rows], label="P95")
+    axes[0, 1].plot(epochs, [row["val_recon_p99"] for row in rows], label="P99")
+    axes[0, 1].set_title("Normal validation reconstruction scores")
+    axes[0, 1].set_ylabel("Reconstruction error")
     axes[0, 1].legend()
+
+    axes[0, 2].plot(epochs, [row["val_recon_std"] for row in rows], label="Std. deviation")
+    axes[0, 2].plot(epochs, [row["val_recon_cv"] for row in rows], label="Coefficient of variation")
+    axes[0, 2].set_title("Normal validation-score variability")
+    axes[0, 2].legend()
 
     threshold_axis = axes[1, 0]
     fpr_axis = threshold_axis.twinx()
@@ -457,6 +477,17 @@ def save_validation_history(loss_history, params, paths):
             0.5, 0.5, "No anomalous validation set\n(one-class mode)",
             ha="center", va="center", transform=axes[1, 1].transAxes,
         )
+
+    axes[1, 2].axhline(0.0, color="black", linewidth=1, linestyle="--")
+    axes[1, 2].plot(epochs, generalization_gap, color="tab:purple",
+                    label="Validation − training")
+    axes[1, 2].fill_between(
+        epochs, 0.0, generalization_gap,
+        where=np.isfinite(generalization_gap), color="tab:purple", alpha=0.15,
+    )
+    axes[1, 2].set_title("Reconstruction generalization gap")
+    axes[1, 2].set_ylabel("Validation error − training error")
+    axes[1, 2].legend()
 
     for axis in axes.flat:
         axis.set_xlabel("Epoch")
