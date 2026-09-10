@@ -55,6 +55,11 @@ def parse_args():
     )
     parser.add_argument("--checkpoints", type=Path)
     parser.add_argument("--threshold_dir", type=Path)
+    parser.add_argument(
+        "--threshold_strategy", choices=("max", "percentile", "mean_std"),
+        default="max",
+        help="Calibration strategy to load (default: max).",
+    )
     parser.add_argument("--latent_dims", type=int)
     parser.add_argument("--frame_stride", type=int, default=1)
     parser.add_argument(
@@ -170,7 +175,7 @@ def load_settings(args):
         args.output_csv.expanduser().resolve()
         if args.output_csv
         else repository_root / "results" / args.dataset_version / "offline_inference" /
-        f"{args.input_type}_scores.csv"
+        f"{args.input_type}_{args.scenario}_scores.csv"
     )
     output_root = args.output_csv.parent
     scenario_id = (
@@ -178,7 +183,7 @@ def load_settings(args):
         if args.input_type == "rosbag" else None
     )
     default_video_name = (
-        f"rosbag_{scenario_id}_detections.mp4" if scenario_id
+        f"rosbag_{scenario_id}_{args.threshold_strategy}_detections.mp4" if scenario_id
         else f"{args.input_type}_detections.mp4"
     )
     args.output_video = (
@@ -187,11 +192,11 @@ def load_settings(args):
     )
     args.timeline_video = (
         args.timeline_video.expanduser().resolve()
-        if args.timeline_video else output_root / f"{args.input_type}_timeline.mp4"
+        if args.timeline_video else output_root / f"{args.input_type}_{scenario_id}_{args.threshold_strategy}_timeline.mp4"
     )
     args.timeline_png = (
         args.timeline_png.expanduser().resolve()
-        if args.timeline_png else output_root / f"{args.input_type}_timeline.png"
+        if args.timeline_png else output_root / f"{args.input_type}_{scenario_id}_{args.threshold_strategy}_timeline.png"
     )
     return args
 
@@ -236,17 +241,37 @@ def parse_masks(values, areas, masks_dir=None):
     return masks
 
 
-def load_threshold(threshold_dir, area):
-    path = threshold_dir / area / f"threshold_{area}.json"
+def load_threshold(threshold_dir, area, strategy):
+    area_dir = threshold_dir / area
+    path = area_dir / f"threshold_{area}_{strategy}.json"
     if not path.is_file():
-        raise FileNotFoundError(f"Threshold config not found: {path}")
+        legacy_path = area_dir / f"threshold_{area}.json"
+        if legacy_path.is_file():
+            path = legacy_path
+        else:
+            available = ", ".join(
+                item.name for item in sorted(area_dir.glob("threshold_*.json"))
+            )
+            raise FileNotFoundError(
+                f"Threshold config not found: {path}. "
+                f"Available: {available or 'none'}"
+            )
     with path.open("r", encoding="utf-8") as stream:
         config = json.load(stream)
+    configured_strategy = config.get("threshold_strategy")
+    if configured_strategy and configured_strategy != strategy:
+        raise ValueError(
+            f"Requested threshold strategy {strategy!r}, but {path} contains "
+            f"{configured_strategy!r}"
+        )
     return {
         "threshold": float(config["threshold"]),
         "offset": int(config["offset"]),
         "sigma": float(config["sigma"]),
         "quantile": float(config["quantile"]),
+        "strategy": configured_strategy or strategy,
+        "score_func": config.get("score_func", "unknown"),
+        "path": path,
     }
 
 
@@ -271,12 +296,21 @@ def load_models(args, device):
             )
         encoder.eval()
         decoder.eval()
+        threshold_config = load_threshold(
+            args.threshold_dir, area, args.threshold_strategy
+        )
         models[area] = {
             "encoder": encoder,
             "decoder": decoder,
-            "threshold": load_threshold(args.threshold_dir, area),
+            "threshold": threshold_config,
         }
         print(f"[loaded] {area}: model_{suffix}.pt")
+        print(
+            f"[threshold] {area}: {threshold_config['threshold']:.6f} | "
+            f"strategy={threshold_config['strategy']} | "
+            f"score={threshold_config['score_func']} | "
+            f"{threshold_config['path'].name}"
+        )
     return models
 
 

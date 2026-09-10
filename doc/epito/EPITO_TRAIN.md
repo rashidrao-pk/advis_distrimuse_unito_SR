@@ -13,22 +13,7 @@ echo $TMUX
 #  ATTACH with previous
 tmux attach -t ADVIS
 
-tmux list-panes -t ADVIS -F '#{pane_pid} #{pane_current_command} #{pane_current_path}'
-
-# srun -p epito --gres=gpu:a100:1 --pty bash
-srun -p epito --gres=gpu:a100:1 -J "ADVIS Training" --pty bash
-tmux new -s AD_SR
-source /beegfs/home/mrashid/pt_312/bin/activate
-export PYTHONPATH=/opt/pytorch-v2.7.1/lib/python3.12/site-packages/
-
-sinfo --format="%P %G %C"
-
-# srun -p epito --gres=gpu:a100:1 --pty bash
-srun -p epito --gres=gpu:a100:1 -J "ADVIS Training for New Data" --pty bash
-source /beegfs/home/mrashid/pt_312/bin/activate
-export PYTHONPATH=/opt/pytorch-v2.7.1/lib/python3.12/site-packages/
-cd /beegfs/home/mrashid/repos/advis_distrimuse_unito_SR
-
+######################################
 squeue -u mrashid
 
 squeue -u mrashid -o "%.18i %.12P %.20j %.8T %.10M %.10l %.6D %R"
@@ -48,6 +33,24 @@ sinfo -N -p mirri,gracehopper,cascadelake,epito \
 
 squeue -p mirri,gracehopper,cascadelake,epito \
   -o "%.12i %.12u %.18P %.18j %.8T %.15N %.12b %.20R"
+
+tmux list-panes -t ADVIS -F '#{pane_pid} #{pane_current_command} #{pane_current_path}'
+######################################
+# srun -p epito --gres=gpu:a100:1 --pty bash
+srun -p epito --gres=gpu:a100:1 -J "ADVIS Training" --pty bash
+tmux new -s AD_SR
+source /beegfs/home/mrashid/pt_312/bin/activate
+export PYTHONPATH=/opt/pytorch-v2.7.1/lib/python3.12/site-packages/
+
+sinfo --format="%P %G %C"
+
+# srun -p epito --gres=gpu:a100:1 --pty bash
+srun -p epito --gres=gpu:a100:1 -J "ADVIS Training for New Data" --pty bash
+source /beegfs/home/mrashid/pt_312/bin/activate
+export PYTHONPATH=/opt/pytorch-v2.7.1/lib/python3.12/site-packages/
+cd /beegfs/home/mrashid/repos/advis_distrimuse_unito_SR
+
+
 ```
 
 ## Reconnect:
@@ -81,6 +84,7 @@ python3 scripts/train.py \
   --save_figures \
   --estimate_time \
   --batch_size 128 \
+  --dry_run
 
 
 
@@ -107,4 +111,18 @@ zip -r /beegfs/home/mrashid/repos/advis_distrimuse_unito_SR/results_ADVIS_SR.zip
 
 scp mrashid@slurm.hpc4ai.unito.it:/beegfs/home/mrashid/repos/advis_distrimuse_unito_SR/results_ADVIS_SR.zip ~/Downloads/
 
+```
+
+
+## Train 1 Safety Area:
+
+```bash
+
+
+python3 scripts/train.py \
+  --config configs/cf_dataset_epito.yaml \
+  --safety_area PLeft \
+  --save_figures \
+  --estimate_time \
+  --batch_size 128 
 ```

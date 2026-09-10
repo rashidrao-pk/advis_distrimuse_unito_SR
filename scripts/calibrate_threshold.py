@@ -294,7 +294,7 @@ def run_val_mode(area: str, args, device, out_dir: str) -> dict:
     df = pd.DataFrame(records)
     score_csv = os.path.join(
         out_dir, area,
-        f"val_scores_{area}_off{args.offset}_sig{args.sigma}_q{args.quantile}.csv"
+        f"val_scores_{area}_{args.threshold_strategy}_off{args.offset}_sig{args.sigma}_q{args.quantile}.csv"
     )
     os.makedirs(os.path.dirname(score_csv), exist_ok=True)
     df.to_csv(score_csv, index=False)
@@ -306,7 +306,7 @@ def run_val_mode(area: str, args, device, out_dir: str) -> dict:
     )
 
     summary = _build_summary(area, suffix, n_epochs, args, tau, df, score_csv, "val")
-    _save_threshold_json(out_dir, area, summary)
+    _save_threshold_json(out_dir, area, summary, args)
     _print_summary(summary)
     return summary
 
@@ -643,7 +643,7 @@ def run_test_mode(area: str, args, device, out_dir: str) -> dict:
                               best_binormal_auc=float(df_best.binormal_AUC),
                               best_recall=float(df_best.Recall),
                               best_f1=float(df_best.F1))
-    _save_threshold_json(out_dir, area, summary)
+    _save_threshold_json(out_dir, area, summary, args)
     return summary
 
 
@@ -704,10 +704,10 @@ def _build_summary(area, suffix, n_epochs, args, tau, df_scores,
     return s
 
 
-def _save_threshold_json(out_dir: str, area: str, summary: dict):
+def _save_threshold_json(out_dir: str, area: str, summary: dict, args):
     area_dir = os.path.join(out_dir, area)
     os.makedirs(area_dir, exist_ok=True)
-    json_path = os.path.join(area_dir, f"threshold_{area}.json")
+    json_path = os.path.join(area_dir, f"threshold_{area}_{args.threshold_strategy}.json")
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
     print(f"[save] Threshold JSON → {json_path}")
@@ -830,7 +830,7 @@ def parse_args():
 
     # ── Output ────────────────────────────────────────────────────────────
     p.add_argument("--output_dir", default=None,
-                   help="Override output dir (default: scripts/results/training/threshold).")
+                   help="Override output dir (default: results/training/threshold).")
 
     args = p.parse_args()
     try:

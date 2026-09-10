@@ -89,10 +89,10 @@ python scripts/infer_offline.py \
 python scripts/infer_offline.py \
   --config configs/cf_dataset_epito.yaml \
   --input_type rosbag \
-  --input /beegfs/home/mrashid/datasets/AD/SR/V6/rosbags/Jul27_Scenario_13_1_2026-07-27_13-08-20 \
-  --topic /camera/back_view/image_raw \
+  --scenario 13_1 \
+  --threshold_strategy percentile \
   --safety_areas ALL \
-  --max_frames 1
+
 
 
 python scripts/infer_offline.py \
