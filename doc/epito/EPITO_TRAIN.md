@@ -11,7 +11,7 @@ ps -ef | grep tmux
 echo $TMUX
 
 #  ATTACH with previous
-tmux attach -t ADVIS
+tmux attach -t AD_SR
 
 ######################################
 squeue -u mrashid

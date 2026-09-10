@@ -1860,10 +1860,10 @@ def get_create_results_path(subgroup,params,args,paths,dir='scripts', save_path_
         print('using suffix as -->', suffix)
     paths.history_fname = f'vae_gan_train_history_{subgroup}.csv'
     paths.path_models = os.path.join(base_dir,f'{models_dir}')
-    paths.path_results = os.path.join(base_dir,f'training/{suffix}')
+    paths.path_results = os.path.join(base_dir,f'train_training/{suffix}')
     # paths.results_test = os.path.join(base_dir, f'test/{suffix}')
     if args.save_figures:
-        paths.path_results_fix = os.path.join(base_dir,f'monitor/{suffix}')
+        paths.path_results_fix = os.path.join(base_dir,f'train_monitor/{suffix}')
 
     ############################################################################
     

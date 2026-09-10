@@ -23,3 +23,5 @@ __MACOSX/
 *.zip
 
 .DS_Store.DS_Store
+
+scripts/*.txt
