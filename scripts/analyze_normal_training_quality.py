@@ -177,7 +177,7 @@ def semantic_analysis(paths, args, device):
     centered = matrix - matrix.mean(axis=0, keepdims=True)
     covariance = centered.T @ centered / max(1, len(centered) - 1)
     _, eigenvectors = np.linalg.eigh(covariance)
-    components = centered @ eigenvectors[:, -2:]
+    components = centered @ eigenvectors[:, -3:][:, ::-1]
     cluster_count = max(2, min(args.clusters, len(matrix)))
     cv2.setRNGSeed(42)
     _, clusters, _ = cv2.kmeans(
@@ -282,6 +282,81 @@ def write_html(path, rows, summary, semantic_rows):
                                xaxis_title="Intensity bin", yaxis_title="Normalized frequency",
                                template="plotly_white")
     color_html = color_figure.to_html(include_plotlyjs=False, full_html=False)
+
+    metric_names = ["brightness", "contrast", "mean_saturation", "edge_density",
+                    "object_occupancy_proxy", "foreground_mask_occupancy", "blur_score",
+                    "dark_pixel_fraction", "saturated_pixel_fraction"]
+    metric_matrix = np.asarray([[row[name] for name in metric_names] for row in rows])
+    correlation = np.nan_to_num(np.corrcoef(metric_matrix, rowvar=False))
+    correlation_figure = go.Figure(go.Heatmap(
+        z=correlation, x=metric_names, y=metric_names, zmin=-1, zmax=1,
+        colorscale="RdBu", reversescale=True, colorbar={"title": "Correlation"},
+        hovertemplate="%{y} vs %{x}<br>correlation=%{z:.3f}<extra></extra>",
+    ))
+    correlation_figure.update_layout(
+        title="Appearance-feature correlation", height=700, template="plotly_white"
+    )
+    correlation_html = correlation_figure.to_html(include_plotlyjs=False, full_html=False)
+
+    semantic_html = "<p>Embeddings were disabled for this run.</p>"
+    if semantic_rows:
+        semantic_figure = make_subplots(
+            rows=2, cols=2,
+            specs=[[{"type": "xy"}, {"type": "scene"}],
+                   [{"type": "xy"}, {"type": "xy"}]],
+            subplot_titles=("2D PCA by cluster", "3D PCA explorer",
+                            "Nearest-neighbor distance", "Scenario × cluster coverage"),
+        )
+        clusters = sorted({row["semantic_cluster"] for row in semantic_rows})
+        palette = ["#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A",
+                   "#19D3F3", "#FF6692", "#B6E880", "#FECB52", "#7F7F7F"]
+        for cluster in clusters:
+            cluster_rows = [row for row in semantic_rows if row["semantic_cluster"] == cluster]
+            cluster_color = palette[cluster % len(palette)]
+            custom = [[row["filename"], row["scenario_id"], row["uri"],
+                       row["semantic_nearest_distance"], row["quality_flags"] or "none"]
+                      for row in cluster_rows]
+            hover = ("%{customdata[0]}<br>Scenario %{customdata[1]}"
+                     "<br>Nearest distance %{customdata[3]:.4f}"
+                     "<br>Quality flags: %{customdata[4]}<extra></extra>")
+            semantic_figure.add_trace(go.Scatter(
+                x=[row["pca_x"] for row in cluster_rows],
+                y=[row["pca_y"] for row in cluster_rows], mode="markers",
+                marker={"size": 7, "opacity": .75, "color": cluster_color}, name=f"Cluster {cluster}",
+                customdata=custom, hovertemplate=hover,
+            ), row=1, col=1)
+            semantic_figure.add_trace(go.Scatter3d(
+                x=[row["pca_x"] for row in cluster_rows],
+                y=[row["pca_y"] for row in cluster_rows],
+                z=[row["pca_z"] for row in cluster_rows], mode="markers",
+                marker={"size": 4, "opacity": .75, "color": cluster_color}, name=f"Cluster {cluster}",
+                legendgroup=f"cluster-{cluster}", showlegend=False,
+                customdata=custom, hovertemplate=hover,
+            ), row=1, col=2)
+        semantic_figure.add_trace(go.Histogram(
+            x=[row["semantic_nearest_distance"] for row in semantic_rows],
+            nbinsx=50, name="Nearest distance", marker_color="#7c3aed",
+            hovertemplate="Distance %{x:.4f}<br>Count %{y}<extra></extra>",
+        ), row=2, col=1)
+        scenario_names = sorted({row["scenario_id"] for row in semantic_rows})
+        coverage = [[sum(row["scenario_id"] == scenario and row["semantic_cluster"] == cluster
+                         for row in semantic_rows) for cluster in clusters]
+                    for scenario in scenario_names]
+        semantic_figure.add_trace(go.Heatmap(
+            z=coverage, x=[f"Cluster {cluster}" for cluster in clusters], y=scenario_names,
+            colorscale="Blues", colorbar={"title": "Frames"},
+            hovertemplate="Scenario %{y}<br>%{x}<br>Frames %{z}<extra></extra>",
+        ), row=2, col=2)
+        semantic_figure.update_xaxes(title_text="PC1", row=1, col=1)
+        semantic_figure.update_yaxes(title_text="PC2", row=1, col=1)
+        semantic_figure.update_xaxes(title_text="Cosine distance", row=2, col=1)
+        semantic_figure.update_layout(
+            height=1050, title="Interactive semantic-variability explorer",
+            template="plotly_white", hovermode="closest",
+        )
+        semantic_html = semantic_figure.to_html(
+            include_plotlyjs=False, full_html=False, div_id="semantic-explorer"
+        )
     flagged = sorted(rows, key=lambda row: row["appearance_outlier_score"], reverse=True)[:100]
     flagged_cards = "".join(
         f'<article><img src="{escape(row["uri"])}"><div><b>{escape(row["filename"])}</b><br>'
@@ -299,7 +374,7 @@ def write_html(path, rows, summary, semantic_rows):
         for row in sorted(semantic_rows, key=lambda item: item["semantic_nearest_distance"], reverse=True)[:30]
     )
     document = f"""<!doctype html><html><head><meta charset="utf-8"><title>Normal data quality</title>
-<style>body{{font-family:system-ui;background:#f4f6f8;color:#17212b;margin:0}}main{{max-width:1700px;margin:auto;padding:22px}}details{{background:white;padding:0 18px 18px;margin:16px 0;border-radius:10px}}summary{{cursor:pointer;font-size:1.25rem;font-weight:700;padding:18px 0;user-select:none}}details[open]>summary{{border-bottom:1px solid #e2e8f0;margin-bottom:14px}}ul.summary-list{{columns:2}}.guide{{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:12px}}.guide div{{border:1px solid #d7dde5;border-radius:8px;padding:12px}}.guide h3{{margin-top:0}}.cards{{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:12px;max-height:900px;overflow:auto}}article{{border:1px solid #d7dde5;border-radius:8px;padding:8px;display:flex;gap:10px}}article img{{width:128px;height:128px;object-fit:contain;background:#111}}</style></head><body><main>
+<style>body{{font-family:system-ui;background:#f4f6f8;color:#17212b;margin:0}}main{{max-width:1700px;margin:auto;padding:22px}}details{{background:white;padding:0 18px 18px;margin:16px 0;border-radius:10px}}summary{{cursor:pointer;font-size:1.25rem;font-weight:700;padding:18px 0;user-select:none}}details[open]>summary{{border-bottom:1px solid #e2e8f0;margin-bottom:14px}}ul.summary-list{{columns:2}}.guide{{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:12px}}.guide div{{border:1px solid #d7dde5;border-radius:8px;padding:12px}}.guide h3{{margin-top:0}}.cards{{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:12px;max-height:900px;overflow:auto}}article{{border:1px solid #d7dde5;border-radius:8px;padding:8px;display:flex;gap:10px}}article img{{width:128px;height:128px;object-fit:contain;background:#111}}#embedding-preview{{display:none;position:fixed;z-index:10000;width:260px;background:#111827;color:white;padding:10px;border-radius:9px;box-shadow:0 5px 24px #0008;pointer-events:none}}#embedding-preview img{{display:block;width:240px;height:240px;object-fit:contain;background:#000;margin-top:6px}}#embedding-preview div{{font-size:.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}</style></head><body><main>
 <h1>Normal training-data quality audit — {escape(summary['safety_area'])}</h1>
 <p><b>Important:</b> this one-class audit finds visual/statistical outliers for human review. It cannot prove that an image is semantically normal.</p>
 <details open><summary>Summary</summary><ul class="summary-list">{summary_items}</ul></details>
@@ -314,9 +389,37 @@ def write_html(path, rows, summary, semantic_rows):
 <div><h3>Quality flags</h3><p>An appearance score of 4 or more means at least one metric is roughly four robust deviations from the dataset median. Treat it as a review queue, not an anomaly decision.</p></div>
 </div></details>
 <details open><summary>Appearance and semantic variability plots</summary>{plot_html}</details>
+<details open><summary>Interactive 2D/3D embedding explorer</summary><p>Rotate the 3D plot, zoom or select points, and hover over PCA points to preview the original dataset frame. Cluster colors describe visual groups, not anomaly labels.</p>{semantic_html}</details>
+<details><summary>Interactive appearance-feature correlation</summary><p>Values near +1 move together, values near -1 move oppositely, and values near zero have little linear relationship. Strong correlations can reveal redundant measurements or preprocessing effects.</p>{correlation_html}</details>
 <details><summary>Mean color histogram</summary>{color_html}</details>
 <details><summary>Most isolated semantic samples and nearest neighbors</summary><div class="cards">{nearest_cards or 'Embeddings disabled.'}</div></details>
 <details><summary>Top frames requiring review</summary><p>Images are loaded from the dataset and are not embedded.</p><div class="cards">{flagged_cards}</div></details>
+<div id="embedding-preview"><div id="embedding-preview-label"></div><img id="embedding-preview-image" alt="Embedding point frame"></div>
+<script>
+(function(){{
+ const preview=document.getElementById('embedding-preview');
+ const image=document.getElementById('embedding-preview-image');
+ const label=document.getElementById('embedding-preview-label');
+ function place(event){{
+   const gap=18,w=280,h=300;
+   let left=event.clientX+gap,top=event.clientY+gap;
+   if(left+w>window.innerWidth)left=event.clientX-w-gap;
+   if(top+h>window.innerHeight)top=event.clientY-h-gap;
+   preview.style.left=Math.max(8,left)+'px';preview.style.top=Math.max(8,top)+'px';
+ }}
+ document.addEventListener('mousemove',event=>{{if(preview.style.display==='block')place(event);}});
+ document.querySelectorAll('.plotly-graph-div').forEach(plot=>{{
+   if(!plot.on)return;
+   plot.on('plotly_hover',event=>{{
+     const point=event.points.find(item=>item.customdata&&item.customdata.length>=3&&String(item.customdata[2]).startsWith('file:'));
+     if(!point)return;
+     label.textContent=point.customdata[0]+' · scenario '+point.customdata[1];
+     image.src=point.customdata[2];preview.style.display='block';
+   }});
+   plot.on('plotly_unhover',()=>{{preview.style.display='none';}});
+ }});
+}})();
+</script>
 </main></body></html>"""
     path.write_text(document, encoding="utf-8")
 
@@ -348,6 +451,7 @@ def main():
         for local_index, row_index in enumerate(selected):
             row = rows[row_index]
             row.update({"pca_x": float(pca[local_index, 0]), "pca_y": float(pca[local_index, 1]),
+                        "pca_z": float(pca[local_index, 2]),
                         "semantic_cluster": int(clusters[local_index]),
                         "semantic_nearest_distance": float(distances[local_index]),
                         "semantic_nearest_path": rows[selected[int(neighbors[local_index])]]["path"],

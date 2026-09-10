@@ -1,6 +1,10 @@
 ## Analyze Normal Data -- TRAINING
 
 ```bash
+python3 -c "import cv2, numpy, torch, torchvision, plotly, yaml; print('Dependencies OK')"
+```
+
+```bash
 pixi run python scripts/analyze_normal_training_quality.py \
   --config configs/cf_dataset_mac.yaml \
   --safety-area ConvBelt \
@@ -12,6 +16,15 @@ pixi run python scripts/analyze_normal_training_quality.py \
   --config configs/cf_dataset_mac.yaml \
   --safety-area ConvBelt \
   --embedding-samples 0 \
+  --progress
+```
+
+## Wihtout Pixi
+
+```bash
+python3 scripts/analyze_normal_training_quality.py \
+  --config configs/cf_dataset_mac.yaml \
+  --safety-area ConvBelt \
   --progress
 ```
 
