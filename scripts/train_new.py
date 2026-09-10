@@ -22,13 +22,14 @@ from pathlib import Path
 import yaml
 
 import numpy as np
+import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.autograd import Variable
 from torch.utils.data import Dataset, DataLoader
 from torchvision import datasets, transforms
-from PIL import Image, ImageDraw
+from PIL import Image
 from tqdm import tqdm
 from sklearn.metrics import (
     accuracy_score,
@@ -411,61 +412,61 @@ def save_validation_history(loss_history, params, paths):
         for epoch, row in enumerate(rows, start=1):
             writer.writerow({"epoch": epoch, **{field: row.get(field, math.nan) for field in fields[1:]}})
 
-    canvas = Image.new("RGB", (1400, 850), "white")
-    draw = ImageDraw.Draw(canvas)
-    draw.text((35, 20), f"Validation diagnostics - {params.subgroup}", fill="#17212b")
+    epochs = np.arange(1, len(rows) + 1)
+    fig, axes = plt.subplots(2, 2, figsize=(14, 9), constrained_layout=True)
 
-    def panel(box, title, series, fixed_range=None):
-        left, top, right, bottom = box
-        draw.rectangle(box, outline="#9aa5b1", width=1)
-        draw.text((left + 12, top + 10), title, fill="#17212b")
-        plot_box = (left + 55, top + 42, right - 18, bottom - 35)
-        draw.rectangle(plot_box, outline="#cbd1d8", width=1)
-        finite_values = [value for _, values, _ in series for value in values if math.isfinite(value)]
-        if not finite_values:
-            draw.text((left + 80, top + 120), "No labeled-anomaly data (one-class mode)", fill="#59697a")
-            return
-        low, high = fixed_range or (min(finite_values), max(finite_values))
-        if high <= low:
-            high = low + 1e-9
-        x0, y0, x1, y1 = plot_box
-        for label, values, color in series:
-            points = []
-            for index, value in enumerate(values):
-                if not math.isfinite(value):
-                    continue
-                x = x0 if len(values) == 1 else x0 + index * (x1 - x0) / (len(values) - 1)
-                y = y1 - (value - low) * (y1 - y0) / (high - low)
-                points.append((x, y))
-            if len(points) > 1:
-                draw.line(points, fill=color, width=3)
-            elif points:
-                x, y = points[0]; draw.ellipse((x - 3, y - 3, x + 3, y + 3), fill=color)
-            legend_y = top + 10 + 16 * series.index((label, values, color))
-            draw.text((right - 175, legend_y), label, fill=color)
-        draw.text((left + 5, y0), f"{high:.4g}", fill="#59697a")
-        draw.text((left + 5, y1 - 12), f"{low:.4g}", fill="#59697a")
-        draw.text((right - 65, bottom - 25), "Epoch", fill="#59697a")
+    axes[0, 0].plot(epochs, [row["val_recon_mean"] for row in rows], label="Mean")
+    axes[0, 0].plot(epochs, [row["val_recon_p95"] for row in rows], label="P95")
+    axes[0, 0].plot(epochs, [row["val_recon_p99"] for row in rows], label="P99")
+    axes[0, 0].set_title("Normal validation reconstruction scores")
+    axes[0, 0].set_ylabel("Reconstruction error")
+    axes[0, 0].legend()
 
-    panel((30, 65, 690, 420), "Normal reconstruction scores", [
-        ("mean", [r["val_recon_mean"] for r in rows], "#1769aa"),
-        ("p95", [r["val_recon_p95"] for r in rows], "#d97706"),
-        ("p99", [r["val_recon_p99"] for r in rows], "#c62828"),
-    ])
-    panel((710, 65, 1370, 420), "Normal score variability", [
-        ("std", [r["val_recon_std"] for r in rows], "#1769aa"),
-        ("CV", [r["val_recon_cv"] for r in rows], "#7c3aed"),
-    ])
-    panel((30, 445, 690, 800), "One-class operating point", [
-        ("threshold", [r["normal_threshold"] for r in rows], "#d97706"),
-        ("normal FPR", [r["val_normal_fpr"] for r in rows], "#c62828"),
-    ])
-    panel((710, 445, 1370, 800), "Optional labeled-anomaly metrics", [
-        ("AUROC", [r.get("val_auroc", math.nan) for r in rows], "#1769aa"),
-        ("AUPRC", [r.get("val_auprc", math.nan) for r in rows], "#14804a"),
-        ("F1", [r.get("val_f1", math.nan) for r in rows], "#c62828"),
-    ], fixed_range=(0.0, 1.0))
-    canvas.save(output_dir / f"validation_metrics_{params.subgroup}.png")
+    axes[0, 1].plot(epochs, [row["val_recon_std"] for row in rows], label="Std. deviation")
+    axes[0, 1].plot(epochs, [row["val_recon_cv"] for row in rows], label="Coefficient of variation")
+    axes[0, 1].set_title("Normal validation-score variability")
+    axes[0, 1].legend()
+
+    threshold_axis = axes[1, 0]
+    fpr_axis = threshold_axis.twinx()
+    threshold_axis.plot(epochs, [row["normal_threshold"] for row in rows],
+                            color="tab:orange", label="Normal threshold")
+    fpr_axis.plot(epochs, [row["val_normal_fpr"] for row in rows],
+                     color="tab:red", label="Normal FPR")
+    threshold_axis.set_title("One-class operating point")
+    threshold_axis.set_ylabel("Threshold", color="tab:orange")
+    fpr_axis.set_ylabel("False-positive rate", color="tab:red")
+    fpr_axis.set_ylim(0, 1)
+    lines = threshold_axis.lines + fpr_axis.lines
+    threshold_axis.legend(lines, [line.get_label() for line in lines])
+
+    supervised_plotted = False
+    for key, label in (("val_auroc", "AUROC"), ("val_auprc", "AUPRC"),
+                       ("val_precision", "Precision"), ("val_recall", "Recall"),
+                       ("val_f1", "F1")):
+        values = np.asarray([row.get(key, math.nan) for row in rows], dtype=float)
+        if np.isfinite(values).any():
+            axes[1, 1].plot(epochs, values, label=label)
+            supervised_plotted = True
+    axes[1, 1].set_title("Optional labeled-anomaly metrics")
+    axes[1, 1].set_ylim(0, 1.02)
+    if supervised_plotted:
+        axes[1, 1].legend()
+    else:
+        axes[1, 1].text(
+            0.5, 0.5, "No anomalous validation set\n(one-class mode)",
+            ha="center", va="center", transform=axes[1, 1].transAxes,
+        )
+
+    for axis in axes.flat:
+        axis.set_xlabel("Epoch")
+        axis.grid(alpha=0.25)
+    fig.suptitle(f"Validation diagnostics — {params.subgroup}", fontsize=15)
+    fig.savefig(
+        output_dir / f"validation_metrics_{params.subgroup}.png",
+        dpi=160, bbox_inches="tight",
+    )
+    plt.close(fig)
 
 # ---------------------------------------------------------------------------
 # Training loop
@@ -851,9 +852,8 @@ def parse_args():
     p.add_argument("--save_path_type",      default="cloud", choices=["cloud", "local"])
     p.add_argument("--dry_run",             action="store_true", default=False)
     p.add_argument("--checkpoints",
-                   default="scripts/results/models", 
-                   choices=["scripts/results/models", 
-                            "scripts/dm_checkpoints/checkpoints_33"])
+                   default="scripts/results/models",
+                   help="Checkpoint output directory (relative paths use the current working directory).")
     p.add_argument("--save_figures",        action="store_true", default=False,
                    help="Save reconstruction & tracking figures during training. "
                         "When disabled only loss curves (results/training) and model "
