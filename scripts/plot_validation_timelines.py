@@ -41,8 +41,8 @@ def parse_args():
         help="Calibration strategy whose threshold JSON and score CSV are plotted.",
     )
     parser.add_argument("--offset", type=int, default=1)
-    parser.add_argument("--sigma", type=float, default=0.5)
-    parser.add_argument("--quantile", type=float, default=1.0)
+    parser.add_argument("--sigma", type=float, default=1.0)
+    parser.add_argument("--quantile", type=float, default=0.99)
     parser.add_argument(
         "--rolling_window",
         type=int,
