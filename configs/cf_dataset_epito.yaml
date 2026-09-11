@@ -21,5 +21,5 @@ training:
   val_offset: 4
 
 models:
-  checkpoints: results/V6/models_V6
+  checkpoints: results/V6/train/models
   latent_dims: 64
