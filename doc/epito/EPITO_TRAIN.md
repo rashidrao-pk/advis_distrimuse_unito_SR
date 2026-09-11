@@ -13,6 +13,9 @@ echo $TMUX
 #  ATTACH with previous
 tmux attach -t AD_SR
 
+# Detach
+# Ctrl+B, then D
+
 ######################################
 squeue -u mrashid
 
@@ -41,6 +44,7 @@ srun -p epito --gres=gpu:a100:1 -J "ADVIS Training" --pty bash
 tmux new -s AD_SR
 source /beegfs/home/mrashid/pt_312/bin/activate
 export PYTHONPATH=/opt/pytorch-v2.7.1/lib/python3.12/site-packages/
+cd /beegfs/home/mrashid/repos/advis_distrimuse_unito_SR
 
 sinfo --format="%P %G %C"
 

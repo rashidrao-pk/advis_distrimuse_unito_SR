@@ -18,3 +18,19 @@ python3 scripts/train_new.py \
 ```
 
 
+```bash
+python3 scripts/train_new.py \
+  --config configs/cf_dataset_epito.yaml \
+  --safety_area PLeft \
+  --batch_size 128 \
+  --save_figures
+```
+
+
+```bash
+python3 scripts/train_new.py \
+  --config configs/cf_dataset_epito.yaml \
+  --safety_area PRight \
+  --batch_size 128 \
+  --save_figures
+```
