@@ -804,8 +804,8 @@ def parse_args():
 
     # ── Anomaly score params (both modes) ─────────────────────────────────
     p.add_argument("--offset",   default=1,   type=int)
-    p.add_argument("--sigma",    default=0.5, type=float)
-    p.add_argument("--quantile", default=1.0, type=float)
+    p.add_argument("--sigma",    default=1.0, type=float)
+    p.add_argument("--quantile", default=0.99, type=float)
 
     # ── Val-mode threshold strategies ─────────────────────────────────────
     p.add_argument("--threshold_strategy",   default="max",
