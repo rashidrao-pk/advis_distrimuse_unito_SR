@@ -1,4 +1,16 @@
 ```bash
+python -m pytest tests/ -v
+```
+
+```bash
+python -m pytest \
+  tests/test_input_data.py \
+  tests/test_preprocessing.py \
+  tests/test_anomaly_scores.py \
+  -v
+```
+
+```bash
 python scripts/check_model_checkpoints.py \
  --config configs/cf_dataset_epito.yaml
 ```

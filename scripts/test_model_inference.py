@@ -109,6 +109,16 @@ def tensor_to_image(tensor: torch.Tensor) -> np.ndarray:
     )
 
 
+def make_inference_transform(image_size: tuple[int, int]):
+    """Deterministic preprocessing matching normal validation preprocessing."""
+    height, width = image_size
+    return transforms.Compose([
+        transforms.Resize((height, width)),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+    ])
+
+
 def save_preview(path: Path, rows: list[dict], images: list[np.ndarray],
                  reconstructions: list[np.ndarray]) -> None:
     tile_size, label_height = 256, 30
@@ -144,11 +154,7 @@ def run_area(area: str, input_root: Path, checkpoint_root: Path, latent_dim: int
         "image_size", [128, 128]
     )
     height, width = (int(image_size[0]), int(image_size[1]))
-    transform = transforms.Compose([
-        transforms.Resize((height, width)),
-        transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-    ])
+    transform = make_inference_transform((height, width))
 
     records, originals, reconstructed_images = [], [], []
     output_shape = None
