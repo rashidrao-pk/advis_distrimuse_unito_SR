@@ -18,6 +18,7 @@ from torch.utils.data import DataLoader, Subset
 from torchvision import datasets
 from tqdm import tqdm
 import yaml
+from skimage.metrics import structural_similarity
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
@@ -49,6 +50,8 @@ def parse_args():
     parser.add_argument("--offsets", default="0,1,2,3")
     parser.add_argument("--sigmas", default="0,0.5,1.0,1.5")
     parser.add_argument("--quantiles", default="0.95,0.99,0.999,1.0")
+    parser.add_argument("--dssim_sigmas", default="1.0,1.5",
+                        help="Gaussian SSIM sigmas to compare.")
     parser.add_argument("--threshold_percentiles", default="95,99,99.5,99.9")
     parser.add_argument("--threshold_n_sigmas", default="2,3,4")
     parser.add_argument("--target_normal_fpr", type=float, default=0.01)
@@ -109,11 +112,19 @@ def load_validation(area_dir, split_path, args):
 
 def make_method_specs(args):
     specs = [
-        {"method": "MSE", "family": "baseline", "offset": math.nan,
+        {"method": "L1_mean", "family": "L1", "offset": math.nan,
          "sigma": math.nan, "quantile": math.nan},
-        {"method": "MAE", "family": "baseline", "offset": math.nan,
+        {"method": "L2_norm", "family": "L2", "offset": math.nan,
+         "sigma": math.nan, "quantile": math.nan},
+        {"method": "MSE_mean", "family": "MSE", "offset": math.nan,
+         "sigma": math.nan, "quantile": math.nan},
+        {"method": "RAVI_max_abs", "family": "RAVI", "offset": math.nan,
          "sigma": math.nan, "quantile": math.nan},
     ]
+    for sigma in comma_values(args.dssim_sigmas, float):
+        if sigma <= 0: raise ValueError("d-SSIM sigmas must be positive")
+        specs.append({"method": f"dSSIM_sig{sigma:g}", "family": "dSSIM",
+                      "offset": math.nan, "sigma": sigma, "quantile": math.nan})
     for offset in comma_values(args.offsets, int):
         if offset < 0: raise ValueError("Offsets must be non-negative")
         for sigma in comma_values(args.sigmas, float):
@@ -131,6 +142,7 @@ def make_method_specs(args):
 def compute_scores(loader, Enc, Dec, specs, device):
     collected = {spec["method"]: [] for spec in specs}
     taas_specs = [spec for spec in specs if spec["family"] == "TAAS"]
+    dssim_specs = [spec for spec in specs if spec["family"] == "dSSIM"]
     with torch.no_grad():
         for images, _ in tqdm(loader, desc="Reconstructing and scoring", leave=False):
             reconstructed = calibration.reconstruct(Enc, Dec, images, device)
@@ -138,8 +150,17 @@ def compute_scores(loader, Enc, Dec, specs, device):
                 original = calibration.tensor_to_hwc(images[batch_index])
                 reconstruction = calibration.tensor_to_hwc(reconstructed[batch_index])
                 residual = np.abs(original - reconstruction)
-                collected["MSE"].append(float(np.mean(residual ** 2)))
-                collected["MAE"].append(float(np.mean(residual)))
+                collected["L1_mean"].append(float(np.mean(residual)))
+                collected["L2_norm"].append(float(np.linalg.norm(residual.ravel(), ord=2)))
+                collected["MSE_mean"].append(float(np.mean(residual ** 2)))
+                collected["RAVI_max_abs"].append(float(np.max(residual)))
+                for spec in dssim_specs:
+                    similarity = structural_similarity(
+                        original, reconstruction, data_range=1.0,
+                        channel_axis=-1, gaussian_weights=True,
+                        sigma=spec["sigma"], use_sample_covariance=False,
+                    )
+                    collected[spec["method"]].append(float(1.0 - similarity))
                 distance_cache = {}
                 smooth_cache = {}
                 for spec in taas_specs:
@@ -277,7 +298,8 @@ def write_html(path, rows, area, target_fpr):
 <style>body{{font-family:system-ui;background:#f4f6f8;margin:0}}main{{max-width:1800px;margin:auto;padding:22px}}section{{background:white;padding:18px;border-radius:10px;margin:15px 0}}.warning{{border-left:5px solid #d97706}}.table{{max-height:650px;overflow:auto}}table{{border-collapse:collapse;width:100%}}th,td{{padding:7px;border:1px solid #d7dde5;text-align:left}}th{{position:sticky;top:0;background:#e8eef5}}</style></head><body><main>
 <h1>Normal-validation threshold ablation — {escape(area)}</h1>
 <section class="warning"><b>Interpretation limit:</b> normal-only validation can compare threshold stability and false alarms, but cannot determine which score best detects anomalies. Confirm the shortlisted configurations on labeled anomalous frames.</section>
-<section><h2>How the tolerance parameters work</h2><ul><li><b>offset:</b> minimum color distance within a ±offset spatial neighborhood. Larger values tolerate reconstruction shifts but can hide small anomalies.</li><li><b>sigma:</b> Gaussian smoothing of the distance map. Larger values suppress isolated noise but blur small defects.</li><li><b>quantile:</b> selected upper residual percentile. 1.0 uses the worst pixel; lower values ignore a small fraction of extreme pixels.</li></ul></section>
+<section><h2>Supported anomaly scores</h2><ul><li><b>L1_mean:</b> mean absolute reconstruction error.</li><li><b>L2_norm:</b> Euclidean norm of the complete image residual.</li><li><b>MSE_mean:</b> mean squared reconstruction error.</li><li><b>RAVI_max_abs:</b> maximum absolute residual computed separately for each image.</li><li><b>dSSIM:</b> structural dissimilarity, 1 − SSIM, evaluated with Gaussian windows.</li><li><b>TAAS:</b> spatially tolerant residual using offset, Gaussian smoothing and upper-quantile aggregation.</li></ul></section>
+<section><h2>How the TAAS tolerance parameters work</h2><ul><li><b>offset:</b> minimum color distance within a ±offset spatial neighborhood. Larger values tolerate reconstruction shifts but can hide small anomalies.</li><li><b>sigma:</b> Gaussian smoothing of the distance map. Larger values suppress isolated noise but blur small defects.</li><li><b>quantile:</b> selected upper residual percentile. 1.0 uses the worst pixel; lower values ignore a small fraction of extreme pixels.</li></ul></section>
 <section>{plot}</section><section class="table"><h2>Top 100 by normal calibration stability</h2><table><thead><tr><th>Score</th><th>Threshold strategy</th><th>Parameter</th><th>Threshold</th><th>Evaluation normal FPR</th><th>FPR gap</th><th>Score CV</th></tr></thead><tbody>{table_rows}</tbody></table></section>
 </main></body></html>""", encoding="utf-8")
 
