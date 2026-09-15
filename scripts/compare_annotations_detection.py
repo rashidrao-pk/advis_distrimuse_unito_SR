@@ -120,6 +120,7 @@ def make_figure(data: pd.DataFrame) -> go.Figure:
             group.get("filename", pd.Series([""] * len(group))),
             group["processed_image_path_uri"], group["raw_image_path_uri"],
             group.get("note", pd.Series([""] * len(group))).fillna(""),
+            group["detected_anomalous"],
         ))
         figure.add_trace(go.Scatter(
             x=group["frame_id"], y=group["normalized_score"], mode="lines",
@@ -149,7 +150,7 @@ def make_figure(data: pd.DataFrame) -> go.Figure:
         false_positive = group[(group["label"] == "Normal") & group["detected_anomalous"]]
         false_negative = group[(group["label"] == "Anomalous") & ~group["detected_anomalous"]]
         for subset, name, color, symbol in (
-            (false_positive, "False positive", "#f97316", "x"),
+            (false_positive, "False positive", "#2563eb", "x"),
             (false_negative, "False negative", "#dc2626", "circle-open"),
         ):
             figure.add_trace(go.Scatter(
@@ -221,28 +222,39 @@ section{{background:white;border-radius:12px;padding:18px;margin:14px 0;box-shad
 .legend span{{display:inline-block;padding:6px 12px;border-radius:12px;margin-right:8px}}table{{border-collapse:collapse;width:100%}}
 th,td{{padding:7px 9px;border-bottom:1px solid #dbe2ea;text-align:left}}th{{position:sticky;top:0;background:#eaf0f6}}
 .scroll{{max-height:520px;overflow:auto}}code{{word-break:break-all}}
-#frame-preview{{position:fixed;right:18px;top:18px;width:min(620px,44vw);z-index:20;background:#111827;color:white;padding:12px;border-radius:12px;box-shadow:0 8px 30px #0007;display:none}}
+#frame-preview{{position:fixed;right:18px;top:18px;width:min(620px,44vw);z-index:20;background:#111827;color:white;padding:12px;border:8px solid #64748b;border-radius:14px;box-shadow:0 8px 30px #0007;display:none}}
 #frame-preview .images{{display:grid;grid-template-columns:1fr 1fr;gap:8px}}#frame-preview img{{width:100%;max-height:360px;object-fit:contain;background:#05070a}}
-#frame-preview .hint{{color:#cbd5e1;font-size:12px}}@media(max-width:900px){{#frame-preview{{width:calc(100vw - 60px);top:auto;bottom:15px}}}}
+#frame-preview .hint{{color:#cbd5e1;font-size:12px}}#preview-status{{display:inline-block;font-weight:800;font-size:16px;padding:5px 10px;margin:8px 0;border-radius:8px;color:white}}
+@media(max-width:900px){{#frame-preview{{width:calc(100vw - 60px);top:auto;bottom:15px}}}}
 </style></head><body><main>
 <h1>Annotation versus model detection</h1><p>{html.escape(str(scenario_description))}</p>
 <section><b>Alignment:</b> per-safety-area row order, verified equal counts. Binary metrics exclude <i>Verify</i> frames.<br>
 <b>Annotation:</b> <code>{html.escape(str(annotation_csv))}</code><br><b>Scores:</b> <code>{html.escape(str(scores_csv))}</code></section>
-<section class="legend"><span style="background:#dcfce7">Normal annotation</span><span style="background:#fee2e2">Anomalous annotation</span><span style="background:#fef3c7">Verify</span><span>Dashed line = detection threshold (1.0×)</span><p>Hover a score to preview its frames. Click to lock the preview; click another point to replace it; use Close to unlock.</p></section>
+<section class="legend"><span style="background:#dcfce7">TN: safe, correct</span><span style="background:#ffedd5">TP: anomaly, correct</span><span style="background:#dbeafe">FP: normal, flagged</span><span style="background:#fee2e2">FN: anomaly, missed</span><span style="background:#e2e8f0">Verify: excluded</span><span>Dashed line = detection threshold (1.0×)</span><p>Hover a score to preview its frames. Click to lock the preview; click another point to replace it; use Close to unlock.</p></section>
 <section>{plot}</section>
 <section><h2>Metrics by safety area</h2><table><thead><tr><th>Area</th><th>Evaluated</th><th>Verify excluded</th><th>TP</th><th>TN</th><th>FP</th><th>FN</th><th>Precision</th><th>Recall</th><th>Specificity</th><th>F1</th><th>Accuracy</th></tr></thead><tbody>{metric_rows}</tbody></table></section>
 <section><h2>Highest 100 scores</h2><div class="scroll"><table><thead><tr><th>Area</th><th>Frame</th><th>Annotation</th><th>Normalized score</th><th>Raw score</th><th>Processed image</th><th>Raw image</th></tr></thead><tbody>{high_score_rows}</tbody></table></div></section>
 <section><h2>Disagreements ({len(disagreement)})</h2><div class="scroll"><table><thead><tr><th>Area</th><th>Frame</th><th>Annotation</th><th>Error</th><th>Normalized score</th><th>Filename</th><th>Note</th></tr></thead><tbody>{disagreement_rows}</tbody></table></div></section>
-<aside id="frame-preview"><div><b id="preview-title"></b> <button id="preview-close" style="float:right">Close</button></div><div id="preview-meta"></div><div class="images"><div><small>Processed safety area</small><img id="preview-processed"></div><div><small>Raw frame</small><img id="preview-raw"></div></div><div class="hint">Images are loaded from dataset paths and are not embedded in this report.</div></aside>
+<aside id="frame-preview"><div><b id="preview-title"></b> <button id="preview-close" style="float:right">Close</button></div><div id="preview-status"></div><div id="preview-meta"></div><div class="images"><div><small>Processed safety area</small><img id="preview-processed"></div><div><small>Raw frame</small><img id="preview-raw"></div></div><div class="hint">Images are loaded from dataset paths and are not embedded in this report.</div></aside>
 <script type="application/json" id="comparison-metrics">{html.escape(json.dumps(metrics))}</script>
 <script>
 const plot=document.getElementById('comparison-plot'), preview=document.getElementById('frame-preview');
 const title=document.getElementById('preview-title'), meta=document.getElementById('preview-meta');
+const statusBadge=document.getElementById('preview-status');
 const processed=document.getElementById('preview-processed'), raw=document.getElementById('preview-raw');
 let locked=false;
+function classification(label,detected){{
+  if(label==='Verify'||label==='Unlabeled')return {{code:'VERIFY',text:'Needs verification — excluded from metrics',color:'#64748b'}};
+  if(label==='Anomalous'&&detected)return {{code:'TP',text:'Anomaly correctly detected',color:'#f97316'}};
+  if(label==='Anomalous'&&!detected)return {{code:'FN',text:'Anomaly missed by model',color:'#dc2626'}};
+  if(label==='Normal'&&detected)return {{code:'FP',text:'Normal frame incorrectly flagged',color:'#2563eb'}};
+  return {{code:'TN',text:'Safe frame correctly classified',color:'#16a34a'}};
+}}
 function showFrame(point){{
   const d=point.customdata;if(!d)return;
+  const result=classification(d[0],d[7]===true||String(d[7]).toLowerCase()==='true');
   title.textContent=`Frame ${{point.x}} — ${{d[0]}}`;
+  statusBadge.textContent=`${{result.code}} — ${{result.text}}`;statusBadge.style.background=result.color;preview.style.borderColor=result.color;
   meta.textContent=`Score ${{Number(point.y).toFixed(3)}}× | raw ${{Number(d[1]).toFixed(5)}} | threshold ${{Number(d[2]).toFixed(5)}}`;
   processed.src=d[4]||'';raw.src=d[5]||'';processed.style.display=d[4]?'block':'none';raw.style.display=d[5]?'block':'none';preview.style.display='block';
 }}
