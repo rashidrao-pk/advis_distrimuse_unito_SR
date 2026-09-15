@@ -7,6 +7,8 @@ data:
     PRight: /Users/rashid/data/DS/SR/v6/masks/Mask_Generation_v6_PRight.png
     ConvBelt: /Users/rashid/data/DS/SR/v6/masks/Mask_Generation_v6_ConvBelt.png
     RoboArm: /Users/rashid/data/DS/SR/v6/masks/Mask_Generation_v6_RoboArm.png
+  training: /Users/rashid/data/DS/SR/v6/Jul27/train
+  testing: /Users/rashid/data/DS/SR/v6/Jul27/test
 scenario:
   id: "1_0"
   description: "Placing Empty Pallet  on Safety Area(B) or Pallet Right Side"

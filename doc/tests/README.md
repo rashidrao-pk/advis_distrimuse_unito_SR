@@ -41,6 +41,7 @@ python scripts/test_model_inference.py \
 python scripts/test_model_inference.py \
   --config configs/cf_dataset_mac.yaml \
   --safety_area PLeft \
+  --data_source training \
   --device mps \
   --max_images 32
 ```
