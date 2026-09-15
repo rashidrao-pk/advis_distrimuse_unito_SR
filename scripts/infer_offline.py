@@ -175,7 +175,7 @@ def load_settings(args):
         args.output_csv.expanduser().resolve()
         if args.output_csv
         else repository_root / "results" / args.dataset_version / "offline_inference" /
-        f"{args.input_type}_{args.scenario}_scores.csv"
+        f"{args.input_type}_{args.scenario}_{args.threshold_strategy}_scores.csv"
     )
     output_root = args.output_csv.parent
     scenario_id = (

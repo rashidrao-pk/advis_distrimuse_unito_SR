@@ -111,8 +111,7 @@ scp mrashid@slurm.hpc4ai.unito.it:/beegfs/home/mrashid/repos/advis_distrimuse_un
 
 ```
 
-
-```bash
+````bash
 # DOWNLOAD ALL COMPUTED RESULTS
 cd /beegfs/home/mrashid/repos/advis_distrimuse_unito_SR
 
@@ -121,4 +120,20 @@ zip -r /beegfs/home/mrashid/repos/advis_distrimuse_unito_SR/results_ADVIS_SR.zip
 scp mrashid@slurm.hpc4ai.unito.it:/beegfs/home/mrashid/repos/advis_distrimuse_unito_SR/results_ADVIS_SR.zip ~/Downloads/
 
 
+> Check Anomalous Events
 
+```bash
+
+annotation="reports/safety_area_annotations/saved_annotation/scenario_9_0_back_view_annotations.csv"
+
+awk -F',' '
+  NR > 1 && tolower($8) ~ /anomalous/ {count++}
+  END {print "Anomalous rows:", count + 0}
+' "$annotation"
+````
+
+```bash
+python scripts/compare_annotations_detection.py \
+  --annotations reports/safety_area_annotations/saved_annotation/scenario_9_0_back_view_annotations.csv \
+  --scores results/V6/offline_inference/rosbag_9_0_scores.csv
+```
