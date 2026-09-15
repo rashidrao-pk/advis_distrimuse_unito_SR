@@ -225,3 +225,7 @@ playback_options:
 results:
   output_dir: "/Users/rashid/data/DS/SR/v6/Jul27/results"
   output_filename: "results.json"
+
+models:
+  checkpoints: results/V6/train/models
+  latent_dims: 64
