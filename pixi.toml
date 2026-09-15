@@ -36,6 +36,7 @@ numpy = "*"
 pytest = "*"
 pyyaml = "*"
 plotly = "*"
+pytest = "*"
 # Use current conda-forge builds. They support MPS and share the same native
 # runtime as ROS/OpenCV, avoiding mixed Conda/PyPI OpenMP libraries.
 pytorch = ">=2.7"
