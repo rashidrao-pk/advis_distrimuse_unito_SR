@@ -52,3 +52,41 @@ for sid_path in "$base_path"/*; do
   fi
 done
 ```
+
+```bash
+base_path="/Users/rashid/data/DS/SR/v6/Jul27/extracted_frames"
+
+for sid in \
+  8_0 8_1 8_2 8_3 8_4 \
+  9_0 \
+  10_0 10_1 \
+  11_0 11_1 \
+  12_0 12_1 \
+  13_0 13_1 \
+  14_0 14_1 \
+  15_0 \
+  16_0 16_1
+do
+  sid_path="$base_path/$sid"
+
+  # Skip if the scenario directory does not exist
+  if [[ ! -d "$sid_path" ]]; then
+    echo "Skipping $sid: directory not found"
+    continue
+  fi
+
+  echo "========================================="
+  echo "Processing scenario: $sid"
+  echo "Path: $sid_path"
+  echo "========================================="
+
+  # 1. Annotate safety areas
+  pixi run python scripts/annotate_safety_area.py \
+    "$sid_path" \
+    --camera back_view \
+    --areas PLeft PRight RoboArm ConvBelt
+
+  echo "Finished: $sid"
+  echo "========================================="
+done
+```
