@@ -72,6 +72,16 @@ def parse_args():
     parser.add_argument("--output_video", type=Path)
     parser.add_argument("--timeline_video", type=Path)
     parser.add_argument("--timeline_png", type=Path)
+    output_mode = parser.add_mutually_exclusive_group()
+    output_mode.add_argument(
+        "--save-video", dest="save_video", action="store_true",
+        help="Save detection MP4, timeline MP4, and final timeline PNG in addition to CSV.",
+    )
+    output_mode.add_argument(
+        "--scores-only", dest="save_video", action="store_false",
+        help="Save only the scores CSV and skip all video/timeline rendering.",
+    )
+    parser.set_defaults(save_video=None)
     parser.add_argument("--output_fps", type=float, default=10.0)
     parser.add_argument("--timeline_history", type=int, default=500)
     parser.add_argument("--timeline_seconds", type=float, default=4.0)
@@ -93,6 +103,14 @@ def parse_args():
     unknown = sorted(set(args.safety_areas).difference(ALL_AREAS))
     if unknown:
         parser.error(f"Unknown safety area(s): {', '.join(unknown)}")
+    explicit_video_path = any((args.output_video, args.timeline_video, args.timeline_png))
+    if args.save_video is False and explicit_video_path:
+        parser.error(
+            "--scores-only cannot be combined with --output_video, "
+            "--timeline_video, or --timeline_png"
+        )
+    if args.save_video is None:
+        args.save_video = True
     return args
 
 
@@ -175,7 +193,7 @@ def load_settings(args):
         args.output_csv.expanduser().resolve()
         if args.output_csv
         else repository_root / "results" / args.dataset_version / "offline_inference" /
-        f"{args.input_type}_{args.scenario}_{args.threshold_strategy}_scores.csv"
+        f"{args.input_type}_{args.scenario}_{args.threshold_strategy}/csv/_scores.csv"
     )
     output_root = args.output_csv.parent
     scenario_id = (
@@ -183,8 +201,8 @@ def load_settings(args):
         if args.input_type == "rosbag" else None
     )
     default_video_name = (
-        f"rosbag_{scenario_id}_{args.threshold_strategy}_detections.mp4" if scenario_id
-        else f"{args.input_type}_detections.mp4"
+        f"rosbag_{scenario_id}_{args.threshold_strategy}/videos/_detections.mp4" if scenario_id
+        else f"{args.input_type}/videos/_detections.mp4"
     )
     args.output_video = (
         args.output_video.expanduser().resolve()
@@ -944,6 +962,7 @@ def main():
     print(f"[device] {device}")
     print(f"[input] {args.input_type}: {args.input}")
     print(f"[checkpoints] {args.checkpoints}")
+    print(f"[output mode] {'CSV + videos' if args.save_video else 'scores CSV only'}")
     models = load_models(args, device)
     normalize = transforms.Normalize((0.5,) * 3, (0.5,) * 3)
     masks = None
@@ -955,8 +974,10 @@ def main():
     )
     latest = OrderedDict()
     rows = []
-    video = VideoOutput(args.output_video, args.output_fps)
-    timeline_video = VideoOutput(args.timeline_video, args.output_fps)
+    video = VideoOutput(args.output_video, args.output_fps) if args.save_video else None
+    timeline_video = (
+        VideoOutput(args.timeline_video, args.output_fps) if args.save_video else None
+    )
     try:
         if args.input_type == "cropped":
             progress = tqdm(
@@ -982,13 +1003,14 @@ def main():
                     for area, result in frame_results.items()
                 )
                 progress.set_postfix_str(status_text)
-                dashboard = make_advis_dashboard(
-                    crops, None, frame_results, sample_id, cropped_area="ALL"
-                )
-                video.write(dashboard)
-                timeline_video.write(
-                    render_dashboard(None, histories, latest, sample_id, final=True)
-                )
+                if args.save_video:
+                    dashboard = make_advis_dashboard(
+                        crops, None, frame_results, sample_id, cropped_area="ALL"
+                    )
+                    video.write(dashboard)
+                    timeline_video.write(
+                        render_dashboard(None, histories, latest, sample_id, final=True)
+                    )
         else:
             factories = {
                 "frames": iter_frames,
@@ -1017,26 +1039,30 @@ def main():
                     for area, result in frame_results.items()
                 )
                 progress.set_postfix_str(status_text)
-                dashboard = make_advis_dashboard(
-                    frame, masks, frame_results, sample_id
-                )
-                video.write(dashboard)
-                timeline_video.write(
-                    render_dashboard(None, histories, latest, sample_id, final=True)
-                )
+                if args.save_video:
+                    dashboard = make_advis_dashboard(
+                        frame, masks, frame_results, sample_id
+                    )
+                    video.write(dashboard)
+                    timeline_video.write(
+                        render_dashboard(None, histories, latest, sample_id, final=True)
+                    )
                 processed_frames += 1
                 if args.max_frames and processed_frames >= args.max_frames:
                     break
 
-        final_timeline = render_dashboard(
-            None, histories, latest, "Final detection timeline", final=True
-        )
-        args.timeline_png.parent.mkdir(parents=True, exist_ok=True)
-        if not cv2.imwrite(str(args.timeline_png), final_timeline):
-            raise RuntimeError(f"Cannot save timeline image: {args.timeline_png}")
+        if args.save_video:
+            final_timeline = render_dashboard(
+                None, histories, latest, "Final detection timeline", final=True
+            )
+            args.timeline_png.parent.mkdir(parents=True, exist_ok=True)
+            if not cv2.imwrite(str(args.timeline_png), final_timeline):
+                raise RuntimeError(f"Cannot save timeline image: {args.timeline_png}")
     finally:
-        video.close()
-        timeline_video.close()
+        if video is not None:
+            video.close()
+        if timeline_video is not None:
+            timeline_video.close()
 
     args.output_csv.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = (
@@ -1048,9 +1074,10 @@ def main():
         writer.writeheader()
         writer.writerows(rows)
     print(f"[save] {len(rows):,} area results -> {args.output_csv}")
-    print(f"[save] detection video -> {args.output_video}")
-    print(f"[save] timeline video -> {args.timeline_video}")
-    print(f"[save] final timeline -> {args.timeline_png}")
+    if args.save_video:
+        print(f"[save] detection video -> {args.output_video}")
+        print(f"[save] timeline video -> {args.timeline_video}")
+        print(f"[save] final timeline -> {args.timeline_png}")
 
 
 if __name__ == "__main__":
