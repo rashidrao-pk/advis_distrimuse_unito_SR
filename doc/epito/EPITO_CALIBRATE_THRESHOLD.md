@@ -38,6 +38,7 @@ tmux attach -t shapbpt
 ```
 
 ## Threshold with Max Value in Validation Data
+
 ```bash
 # -------------------------------------
 cd /beegfs/home/mrashid/repos/advis_distrimuse_unito_SR
@@ -61,8 +62,8 @@ python scripts/plot_validation_timelines.py \
 
 ---
 
-
 ## Threshold with Max Value in Validation Data
+
 ```bash
 # -------------------------------------
 cd /beegfs/home/mrashid/repos/advis_distrimuse_unito_SR
@@ -96,8 +97,6 @@ python scripts/plot_validation_timelines.py \
 
 ```
 
-
-
 ## Ablation Analysis:
 
 ```bash
@@ -119,7 +118,6 @@ python scripts/ablate_validation_thresholds.py \
   --threshold_n_sigmas 2,3 \
   --target_normal_fpr 0.01
 ```
-
 
 ```bash
 python scripts/ablate_validation_thresholds.py \

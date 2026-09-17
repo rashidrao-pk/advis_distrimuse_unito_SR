@@ -191,8 +191,30 @@ def format_metric(value):
     return "—" if value is None else f"{value:.3f}"
 
 
+def load_threshold_metadata(data: pd.DataFrame, threshold_dir: Path) -> list[dict]:
+    """Load the calibration JSON corresponding to every plotted strategy/area."""
+    records = []
+    for (strategy, area), group in data.groupby(
+        ["score_strategy", "safety_area"], sort=False
+    ):
+        path = threshold_dir / area / f"threshold_{area}_{strategy}.json"
+        record = {
+            "strategy": strategy, "area": area, "path": path,
+            "available": path.is_file(),
+            "csv_threshold": float(group["threshold"].iloc[0]),
+        }
+        if path.is_file():
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            record.update(payload)
+            record["threshold_matches_csv"] = bool(np.isclose(
+                float(payload["threshold"]), record["csv_threshold"]
+            ))
+        records.append(record)
+    return records
+
+
 def write_report(output: Path, data: pd.DataFrame, annotation_csv: Path,
-                 scores_csvs: list[Path]) -> None:
+                 scores_csvs: list[Path], threshold_dir: Path) -> None:
     metrics = {
         f"{strategy}:{area}": binary_metrics(group)
         for (strategy, area), group in data.groupby(
@@ -209,6 +231,19 @@ def write_report(output: Path, data: pd.DataFrame, annotation_csv: Path,
             format_metric(values["specificity"]), format_metric(values["f1"]),
             format_metric(values["accuracy"]),
         )) + "</tr>" for key, values in metrics.items()
+    )
+    threshold_records = load_threshold_metadata(data, threshold_dir)
+    threshold_rows = "".join(
+        "<tr>" + "".join(f"<td>{html.escape(str(value))}</td>" for value in (
+            record["strategy"], record["area"],
+            record.get("score_func", "metadata unavailable"),
+            record.get("offset", "—"), record.get("sigma", "—"),
+            record.get("quantile", "—"), record.get("threshold", record["csv_threshold"]),
+            record.get("threshold_strategy", "—"), record.get("n_images", "—"),
+            record.get("epochs_trained", "—"), record.get("computed_at", "—"),
+            "yes" if record.get("threshold_matches_csv") else "NO" if record["available"] else "unknown",
+            record["path"],
+        )) + "</tr>" for record in threshold_records
     )
     disagreement = data[
         data["label"].isin(("Normal", "Anomalous"))
@@ -259,6 +294,9 @@ th,td{{padding:7px 9px;border-bottom:1px solid #dbe2ea;text-align:left}}th{{posi
 <section><b>Alignment:</b> per-safety-area row order, verified equal counts. Binary metrics exclude <i>Verify</i> frames.<br>
 <b>Annotation:</b> <code>{html.escape(str(annotation_csv))}</code><br>{score_sources}</section>
 <section class="legend"><span style="background:#dcfce7">TN: safe, correct</span><span style="background:#ffedd5">TP: anomaly, correct</span><span style="background:#dbeafe">FP: normal, flagged</span><span style="background:#fee2e2">FN: anomaly, missed</span><span style="background:#e2e8f0">Verify: excluded</span><span>Dashed line = detection threshold (1.0×)</span><p>Hover a score to preview its frames. Click to lock the preview; click another point to replace it; use Close to unlock.</p></section>
+<section><h2>Threshold calibration and anomaly-score configuration</h2>
+<p><b>TAAS offset</b> controls spatial tolerance, <b>sigma</b> controls Gaussian smoothing of the residual map, and <b>quantile</b> selects the residual-map tail used as the frame score. These are anomaly-score parameters. The <b>threshold strategy</b> is a separate operation that converts validation-frame scores into the final decision boundary.</p>
+<div class="scroll"><table><thead><tr><th>Strategy</th><th>Area</th><th>Score function</th><th>TAAS offset</th><th>TAAS sigma</th><th>TAAS quantile</th><th>Threshold</th><th>Calibration strategy</th><th>Calibration images</th><th>Model epochs</th><th>Computed at</th><th>Matches score CSV</th><th>Metadata file</th></tr></thead><tbody>{threshold_rows}</tbody></table></div></section>
 <section>{plot}</section>
 <section><h2>Metrics by threshold strategy and safety area</h2><table><thead><tr><th>Strategy</th><th>Area</th><th>Evaluated</th><th>Verify excluded</th><th>TP</th><th>TN</th><th>FP</th><th>FN</th><th>Precision</th><th>Recall</th><th>Specificity</th><th>F1</th><th>Accuracy</th></tr></thead><tbody>{metric_rows}</tbody></table></section>
 <section><h2>Highest 100 normalized scores</h2><div class="scroll"><table><thead><tr><th>Area</th><th>Strategy</th><th>Frame</th><th>Annotation</th><th>Normalized score</th><th>Raw score</th><th>Processed image</th><th>Raw image</th></tr></thead><tbody>{high_score_rows}</tbody></table></div></section>
@@ -298,6 +336,10 @@ def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--annotations", required=True, type=Path)
     parser.add_argument("--scores", required=True, type=Path, nargs="+")
+    parser.add_argument(
+        "--threshold-dir", type=Path,
+        help="Threshold metadata root; default: sibling thresholds directory under results version.",
+    )
     parser.add_argument("--output", type=Path)
     return parser.parse_args()
 
@@ -306,6 +348,10 @@ def main():
     args = parse_args()
     annotations = args.annotations.expanduser().resolve()
     scores = [path.expanduser().resolve() for path in args.scores]
+    threshold_dir = (
+        args.threshold_dir.expanduser().resolve() if args.threshold_dir else
+        scores[0].parent.parent / "thresholds"
+    )
     if args.output:
         output = args.output.expanduser().resolve()
     elif len(scores) == 1:
@@ -319,7 +365,7 @@ def main():
         data["score_strategy"] = match.group(1) if match else score_path.stem
         datasets.append(data)
     data = pd.concat(datasets, ignore_index=True)
-    write_report(output, data, annotations, scores)
+    write_report(output, data, annotations, scores, threshold_dir)
     print(f"Aligned rows: {len(data)}")
     for (strategy, area), group in data.groupby(["score_strategy", "safety_area"], sort=False):
         values = binary_metrics(group)
