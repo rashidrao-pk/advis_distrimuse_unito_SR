@@ -271,6 +271,7 @@ def load_threshold(threshold_dir, area, strategy):
         "quantile": float(config["quantile"]),
         "strategy": configured_strategy or strategy,
         "score_func": config.get("score_func", "unknown"),
+        "reconstruction_mode": config.get("reconstruction_mode", "legacy-unspecified"),
         "path": path,
     }
 
@@ -309,6 +310,7 @@ def load_models(args, device):
             f"[threshold] {area}: {threshold_config['threshold']:.6f} | "
             f"strategy={threshold_config['strategy']} | "
             f"score={threshold_config['score_func']} | "
+            f"reconstruction={threshold_config['reconstruction_mode']} | "
             f"{threshold_config['path'].name}"
         )
     return models

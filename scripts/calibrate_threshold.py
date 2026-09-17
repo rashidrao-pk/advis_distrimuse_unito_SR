@@ -228,11 +228,11 @@ def load_model_for_area(area: str, params, paths, args, device):
 
 
 def reconstruct(Enc, Dec, data_t: torch.Tensor, device) -> torch.Tensor:
+    """Deterministic posterior-mean reconstruction, matching inference."""
     data_t = data_t.to(device)
-    with torch.no_grad():
-        mu, logvar = Enc(data_t)
-        z = mu + torch.randn_like(mu) * torch.exp(0.5 * logvar)
-        return Dec(z)
+    with torch.inference_mode():
+        mu, _ = Enc(data_t)
+        return Dec(mu)
 
 
 # ---------------------------------------------------------------------------
@@ -692,6 +692,7 @@ def _build_summary(area, suffix, n_epochs, args, tau, df_scores,
         "sigma":              args.sigma,
         "quantile":           args.quantile,
         "score_func":         f'TAAS_{args.offset}-s_{args.sigma}-q_{args.quantile}',  
+        "reconstruction_mode": "posterior_mean",
         "score_max":          float(df_scores.anomaly_score.max()),
         "score_mean":         float(df_scores.anomaly_score.mean()),
         "score_std":          float(df_scores.anomaly_score.std()),

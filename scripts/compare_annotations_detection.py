@@ -237,6 +237,7 @@ def write_report(output: Path, data: pd.DataFrame, annotation_csv: Path,
         "<tr>" + "".join(f"<td>{html.escape(str(value))}</td>" for value in (
             record["strategy"], record["area"],
             record.get("score_func", "metadata unavailable"),
+            record.get("reconstruction_mode", "legacy-unspecified"),
             record.get("offset", "—"), record.get("sigma", "—"),
             record.get("quantile", "—"), record.get("threshold", record["csv_threshold"]),
             record.get("threshold_strategy", "—"), record.get("n_images", "—"),
@@ -296,7 +297,7 @@ th,td{{padding:7px 9px;border-bottom:1px solid #dbe2ea;text-align:left}}th{{posi
 <section class="legend"><span style="background:#dcfce7">TN: safe, correct</span><span style="background:#ffedd5">TP: anomaly, correct</span><span style="background:#dbeafe">FP: normal, flagged</span><span style="background:#fee2e2">FN: anomaly, missed</span><span style="background:#e2e8f0">Verify: excluded</span><span>Dashed line = detection threshold (1.0×)</span><p>Hover a score to preview its frames. Click to lock the preview; click another point to replace it; use Close to unlock.</p></section>
 <section><h2>Threshold calibration and anomaly-score configuration</h2>
 <p><b>TAAS offset</b> controls spatial tolerance, <b>sigma</b> controls Gaussian smoothing of the residual map, and <b>quantile</b> selects the residual-map tail used as the frame score. These are anomaly-score parameters. The <b>threshold strategy</b> is a separate operation that converts validation-frame scores into the final decision boundary.</p>
-<div class="scroll"><table><thead><tr><th>Strategy</th><th>Area</th><th>Score function</th><th>TAAS offset</th><th>TAAS sigma</th><th>TAAS quantile</th><th>Threshold</th><th>Calibration strategy</th><th>Calibration images</th><th>Model epochs</th><th>Computed at</th><th>Matches score CSV</th><th>Metadata file</th></tr></thead><tbody>{threshold_rows}</tbody></table></div></section>
+<div class="scroll"><table><thead><tr><th>Strategy</th><th>Area</th><th>Score function</th><th>Reconstruction mode</th><th>TAAS offset</th><th>TAAS sigma</th><th>TAAS quantile</th><th>Threshold</th><th>Calibration strategy</th><th>Calibration images</th><th>Model epochs</th><th>Computed at</th><th>Matches score CSV</th><th>Metadata file</th></tr></thead><tbody>{threshold_rows}</tbody></table></div></section>
 <section>{plot}</section>
 <section><h2>Metrics by threshold strategy and safety area</h2><table><thead><tr><th>Strategy</th><th>Area</th><th>Evaluated</th><th>Verify excluded</th><th>TP</th><th>TN</th><th>FP</th><th>FN</th><th>Precision</th><th>Recall</th><th>Specificity</th><th>F1</th><th>Accuracy</th></tr></thead><tbody>{metric_rows}</tbody></table></section>
 <section><h2>Highest 100 normalized scores</h2><div class="scroll"><table><thead><tr><th>Area</th><th>Strategy</th><th>Frame</th><th>Annotation</th><th>Normalized score</th><th>Raw score</th><th>Processed image</th><th>Raw image</th></tr></thead><tbody>{high_score_rows}</tbody></table></div></section>
