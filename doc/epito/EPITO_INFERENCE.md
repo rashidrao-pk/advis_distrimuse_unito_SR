@@ -94,7 +94,22 @@ python scripts/infer_offline.py \
   --safety_areas ALL
 
 
+## RUN ALL INFERENCE
+#-------------------------------------------------------------------
+for sid in 8_0 8_1 8_2 8_3 8_4 9_0 10_0 10_1 11_0 11_1 12_0 12_1 13_0 13_1 14_1 14_1 15_0 16_0 16_1; do
+  echo "========================================="
+  echo "Processing scenario: $sid"
 
+  python scripts/infer_offline.py \
+    --config configs/cf_dataset_epito.yaml \
+    --input_type rosbag \
+    --scenario "$sid" \
+    --threshold_strategy percentile \
+    --safety_areas ALL
+
+  echo "========================================="
+done
+#-------------------------------------------------------------------
 python scripts/infer_offline.py \
   --config configs/cf_dataset_epito.yaml \
   --input_type rosbag \

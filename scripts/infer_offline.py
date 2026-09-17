@@ -192,7 +192,7 @@ def load_settings(args):
     args.output_csv = (
         args.output_csv.expanduser().resolve()
         if args.output_csv
-        else repository_root / "results" / args.dataset_version / "offline_inference" / "csv" /
+        else repository_root / "results" / args.dataset_version / "offline_inference" /
         f"{args.input_type}_{args.scenario}_{args.threshold_strategy}_scores.csv"
     )
     output_root = args.output_csv.parent
@@ -210,7 +210,7 @@ def load_settings(args):
     )
     args.timeline_video = (
         args.timeline_video.expanduser().resolve()
-        if args.timeline_video else output_root / f"{args.input_type}_{scenario_id}_{args.threshold_strategy}_timeline.mp4"
+        if args.timeline_video else output_root / "videos" / f"{args.input_type}_{scenario_id}_{args.threshold_strategy}_timeline.mp4"
     )
     args.timeline_png = (
         args.timeline_png.expanduser().resolve()
