@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -81,6 +82,7 @@ def binary_metrics(group: pd.DataFrame) -> dict:
     tn = int((~truth & ~prediction).sum())
     fp = int((~truth & prediction).sum())
     fn = int((truth & ~prediction).sum())
+    has_annotated_anomalies = bool(truth.any())
 
     def divide(numerator, denominator):
         return float(numerator / denominator) if denominator else None
@@ -89,7 +91,8 @@ def binary_metrics(group: pd.DataFrame) -> dict:
         "evaluated": len(evaluated), "excluded_verify": int((group["label"] == "Verify").sum()),
         "tp": tp, "tn": tn, "fp": fp, "fn": fn,
         "precision": divide(tp, tp + fp), "recall": divide(tp, tp + fn),
-        "specificity": divide(tn, tn + fp), "f1": divide(2 * tp, 2 * tp + fp + fn),
+        "specificity": divide(tn, tn + fp),
+        "f1": divide(2 * tp, 2 * tp + fp + fn) if has_annotated_anomalies else None,
         "accuracy": divide(tp + tn, len(evaluated)),
     }
 
@@ -115,24 +118,29 @@ def make_figure(data: pd.DataFrame) -> go.Figure:
     )
     for row_number, area in enumerate(areas, start=1):
         group = data[data["safety_area"] == area].sort_values("frame_id")
-        custom = np.column_stack((
-            group["label"], group["anomaly_score"], group["threshold"],
-            group.get("filename", pd.Series([""] * len(group))),
-            group["processed_image_path_uri"], group["raw_image_path_uri"],
-            group.get("note", pd.Series([""] * len(group))).fillna(""),
-            group["detected_anomalous"],
-        ))
-        figure.add_trace(go.Scatter(
-            x=group["frame_id"], y=group["normalized_score"], mode="lines",
-            line={"color": "#2563eb", "width": 1.5}, name="score / threshold",
-            legendgroup="score", showlegend=row_number == 1, customdata=custom,
-            hovertemplate=(
-                "Frame %{x}<br>Normalized score %{y:.3f}×<br>"
-                "Annotation %{customdata[0]}<br>Raw score %{customdata[1]:.5f}<br>"
-                "Threshold %{customdata[2]:.5f}<br>%{customdata[3]}"
-                "<br>%{customdata[6]}<extra></extra>"
-            ),
-        ), row=row_number, col=1)
+        strategy_colors = {"max": "#2563eb", "percentile": "#9333ea"}
+        for strategy, strategy_group in group.groupby("score_strategy", sort=False):
+            custom = np.column_stack((
+                strategy_group["label"], strategy_group["anomaly_score"],
+                strategy_group["threshold"],
+                strategy_group.get("filename", pd.Series([""] * len(strategy_group))),
+                strategy_group["processed_image_path_uri"],
+                strategy_group["raw_image_path_uri"],
+                strategy_group.get("note", pd.Series([""] * len(strategy_group))).fillna(""),
+                strategy_group["detected_anomalous"], strategy_group["score_strategy"],
+            ))
+            figure.add_trace(go.Scatter(
+                x=strategy_group["frame_id"], y=strategy_group["normalized_score"],
+                mode="lines", line={"color": strategy_colors.get(strategy), "width": 1.6},
+                name=f"{strategy}: score / threshold", legendgroup=f"score-{strategy}",
+                showlegend=row_number == 1, customdata=custom,
+                hovertemplate=(
+                    "Strategy %{customdata[8]}<br>Frame %{x}<br>"
+                    "Normalized score %{y:.3f}×<br>Annotation %{customdata[0]}<br>"
+                    "Raw score %{customdata[1]:.5f}<br>Threshold %{customdata[2]:.5f}"
+                    "<br>%{customdata[3]}<br>%{customdata[6]}<extra></extra>"
+                ),
+            ), row=row_number, col=1)
         axis_name = "y" if row_number == 1 else f"y{row_number}"
         figure.add_shape(
             type="line", x0=float(group.frame_id.min()), x1=float(group.frame_id.max()),
@@ -140,25 +148,35 @@ def make_figure(data: pd.DataFrame) -> go.Figure:
             xref="x" if row_number == 1 else f"x{row_number}", yref=axis_name,
         )
         y_max = max(1.1, float(group["normalized_score"].max()) * 1.08)
-        for start, end, label in label_runs(group):
+        annotation_group = group.drop_duplicates("frame_id").sort_values("frame_id")
+        for start, end, label in label_runs(annotation_group):
             figure.add_shape(
                 type="rect", x0=start - 0.5, x1=end + 0.5, y0=0, y1=y_max,
                 fillcolor=LABEL_COLORS.get(label, LABEL_COLORS["Unlabeled"]),
                 line={"width": 0}, layer="below",
                 xref="x" if row_number == 1 else f"x{row_number}", yref=axis_name,
             )
-        false_positive = group[(group["label"] == "Normal") & group["detected_anomalous"]]
-        false_negative = group[(group["label"] == "Anomalous") & ~group["detected_anomalous"]]
-        for subset, name, color, symbol in (
-            (false_positive, "False positive", "#2563eb", "x"),
-            (false_negative, "False negative", "#dc2626", "circle-open"),
-        ):
-            figure.add_trace(go.Scatter(
-                x=subset["frame_id"], y=subset["normalized_score"], mode="markers",
-                marker={"color": color, "symbol": symbol, "size": 7}, name=name,
-                legendgroup=name, showlegend=row_number == 1,
-                hovertemplate=f"{name}<br>Frame %{{x}}<br>Score %{{y:.3f}}×<extra></extra>",
-            ), row=row_number, col=1)
+        for strategy, strategy_group in group.groupby("score_strategy", sort=False):
+            false_positive = strategy_group[(strategy_group["label"] == "Normal") & strategy_group["detected_anomalous"]]
+            false_negative = strategy_group[(strategy_group["label"] == "Anomalous") & ~strategy_group["detected_anomalous"]]
+            for subset, name, color, symbol in (
+                (false_positive, "FP", "#2563eb", "x"),
+                (false_negative, "FN", "#dc2626", "circle-open"),
+            ):
+                marker_custom = np.column_stack((
+                    subset["label"], subset["anomaly_score"], subset["threshold"],
+                    subset.get("filename", pd.Series([""] * len(subset))),
+                    subset["processed_image_path_uri"], subset["raw_image_path_uri"],
+                    subset.get("note", pd.Series([""] * len(subset))).fillna(""),
+                    subset["detected_anomalous"], subset["score_strategy"],
+                ))
+                figure.add_trace(go.Scatter(
+                    x=subset["frame_id"], y=subset["normalized_score"], mode="markers",
+                    marker={"color": color, "symbol": symbol, "size": 7},
+                    name=f"{strategy} {name}", legendgroup=f"{strategy}-{name}",
+                    showlegend=row_number == 1, customdata=marker_custom,
+                    hovertemplate=f"{strategy} {name}<br>Frame %{{x}}<br>Score %{{y:.3f}}×<extra></extra>",
+                ), row=row_number, col=1)
         figure.update_yaxes(title_text="score / threshold", range=[0, y_max], row=row_number, col=1)
     figure.update_xaxes(title_text="Frame ID", row=len(areas), col=1)
     figure.update_layout(
@@ -174,17 +192,23 @@ def format_metric(value):
 
 
 def write_report(output: Path, data: pd.DataFrame, annotation_csv: Path,
-                 scores_csv: Path) -> None:
-    metrics = {area: binary_metrics(group) for area, group in data.groupby("safety_area", sort=False)}
+                 scores_csvs: list[Path]) -> None:
+    metrics = {
+        f"{strategy}:{area}": binary_metrics(group)
+        for (strategy, area), group in data.groupby(
+            ["score_strategy", "safety_area"], sort=False
+        )
+    }
     plot = make_figure(data).to_html(include_plotlyjs=True, full_html=False, div_id="comparison-plot")
     metric_rows = "".join(
         "<tr>" + "".join(f"<td>{value}</td>" for value in (
-            html.escape(area), values["evaluated"], values["excluded_verify"],
+            html.escape(key.split(":", 1)[0]), html.escape(key.split(":", 1)[1]),
+            values["evaluated"], values["excluded_verify"],
             values["tp"], values["tn"], values["fp"], values["fn"],
             format_metric(values["precision"]), format_metric(values["recall"]),
             format_metric(values["specificity"]), format_metric(values["f1"]),
             format_metric(values["accuracy"]),
-        )) + "</tr>" for area, values in metrics.items()
+        )) + "</tr>" for key, values in metrics.items()
     )
     disagreement = data[
         data["label"].isin(("Normal", "Anomalous"))
@@ -195,7 +219,7 @@ def write_report(output: Path, data: pd.DataFrame, annotation_csv: Path,
     )
     disagreement_rows = "".join(
         "<tr>" + "".join(f"<td>{html.escape(str(value))}</td>" for value in (
-            row.safety_area, row.frame_id, row.label, row.error,
+            row.score_strategy, row.safety_area, row.frame_id, row.label, row.error,
             f"{row.normalized_score:.3f}", getattr(row, "filename", ""),
             getattr(row, "note", ""),
         )) + "</tr>" for row in disagreement.itertuples()
@@ -204,6 +228,7 @@ def write_report(output: Path, data: pd.DataFrame, annotation_csv: Path,
     high_score_rows = "".join(
         "<tr>" + "".join((
             f"<td>{html.escape(str(row.safety_area))}</td>",
+            f"<td>{html.escape(str(row.score_strategy))}</td>",
             f"<td>{int(row.frame_id)}</td>",
             f"<td>{html.escape(str(row.label))}</td>",
             f"<td>{row.normalized_score:.3f}×</td>",
@@ -214,6 +239,9 @@ def write_report(output: Path, data: pd.DataFrame, annotation_csv: Path,
     )
     description = data.get("scenario_description", pd.Series([""])).dropna()
     scenario_description = description.iloc[0] if len(description) else ""
+    score_sources = "<br>".join(
+        f"<b>Scores:</b> <code>{html.escape(str(path))}</code>" for path in scores_csvs
+    )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(f"""<!doctype html><html><head><meta charset="utf-8">
 <title>Annotation versus detection</title><style>
@@ -229,12 +257,12 @@ th,td{{padding:7px 9px;border-bottom:1px solid #dbe2ea;text-align:left}}th{{posi
 </style></head><body><main>
 <h1>Annotation versus model detection</h1><p>{html.escape(str(scenario_description))}</p>
 <section><b>Alignment:</b> per-safety-area row order, verified equal counts. Binary metrics exclude <i>Verify</i> frames.<br>
-<b>Annotation:</b> <code>{html.escape(str(annotation_csv))}</code><br><b>Scores:</b> <code>{html.escape(str(scores_csv))}</code></section>
+<b>Annotation:</b> <code>{html.escape(str(annotation_csv))}</code><br>{score_sources}</section>
 <section class="legend"><span style="background:#dcfce7">TN: safe, correct</span><span style="background:#ffedd5">TP: anomaly, correct</span><span style="background:#dbeafe">FP: normal, flagged</span><span style="background:#fee2e2">FN: anomaly, missed</span><span style="background:#e2e8f0">Verify: excluded</span><span>Dashed line = detection threshold (1.0×)</span><p>Hover a score to preview its frames. Click to lock the preview; click another point to replace it; use Close to unlock.</p></section>
 <section>{plot}</section>
-<section><h2>Metrics by safety area</h2><table><thead><tr><th>Area</th><th>Evaluated</th><th>Verify excluded</th><th>TP</th><th>TN</th><th>FP</th><th>FN</th><th>Precision</th><th>Recall</th><th>Specificity</th><th>F1</th><th>Accuracy</th></tr></thead><tbody>{metric_rows}</tbody></table></section>
-<section><h2>Highest 100 scores</h2><div class="scroll"><table><thead><tr><th>Area</th><th>Frame</th><th>Annotation</th><th>Normalized score</th><th>Raw score</th><th>Processed image</th><th>Raw image</th></tr></thead><tbody>{high_score_rows}</tbody></table></div></section>
-<section><h2>Disagreements ({len(disagreement)})</h2><div class="scroll"><table><thead><tr><th>Area</th><th>Frame</th><th>Annotation</th><th>Error</th><th>Normalized score</th><th>Filename</th><th>Note</th></tr></thead><tbody>{disagreement_rows}</tbody></table></div></section>
+<section><h2>Metrics by threshold strategy and safety area</h2><table><thead><tr><th>Strategy</th><th>Area</th><th>Evaluated</th><th>Verify excluded</th><th>TP</th><th>TN</th><th>FP</th><th>FN</th><th>Precision</th><th>Recall</th><th>Specificity</th><th>F1</th><th>Accuracy</th></tr></thead><tbody>{metric_rows}</tbody></table></section>
+<section><h2>Highest 100 normalized scores</h2><div class="scroll"><table><thead><tr><th>Area</th><th>Strategy</th><th>Frame</th><th>Annotation</th><th>Normalized score</th><th>Raw score</th><th>Processed image</th><th>Raw image</th></tr></thead><tbody>{high_score_rows}</tbody></table></div></section>
+<section><h2>Disagreements ({len(disagreement)})</h2><div class="scroll"><table><thead><tr><th>Strategy</th><th>Area</th><th>Frame</th><th>Annotation</th><th>Error</th><th>Normalized score</th><th>Filename</th><th>Note</th></tr></thead><tbody>{disagreement_rows}</tbody></table></div></section>
 <aside id="frame-preview"><div><b id="preview-title"></b> <button id="preview-close" style="float:right">Close</button></div><div id="preview-status"></div><div id="preview-meta"></div><div class="images"><div><small>Processed safety area</small><img id="preview-processed"></div><div><small>Raw frame</small><img id="preview-raw"></div></div><div class="hint">Images are loaded from dataset paths and are not embedded in this report.</div></aside>
 <script type="application/json" id="comparison-metrics">{html.escape(json.dumps(metrics))}</script>
 <script>
@@ -253,7 +281,7 @@ function classification(label,detected){{
 function showFrame(point){{
   const d=point.customdata;if(!d)return;
   const result=classification(d[0],d[7]===true||String(d[7]).toLowerCase()==='true');
-  title.textContent=`Frame ${{point.x}} — ${{d[0]}}`;
+  title.textContent=`${{d[8]}} — Frame ${{point.x}} — ${{d[0]}}`;
   statusBadge.textContent=`${{result.code}} — ${{result.text}}`;statusBadge.style.background=result.color;preview.style.borderColor=result.color;
   meta.textContent=`Score ${{Number(point.y).toFixed(3)}}× | raw ${{Number(d[1]).toFixed(5)}} | threshold ${{Number(d[2]).toFixed(5)}}`;
   processed.src=d[4]||'';raw.src=d[5]||'';processed.style.display=d[4]?'block':'none';raw.style.display=d[5]?'block':'none';preview.style.display='block';
@@ -269,7 +297,7 @@ document.getElementById('preview-close').onclick=()=>{{locked=false;preview.styl
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--annotations", required=True, type=Path)
-    parser.add_argument("--scores", required=True, type=Path)
+    parser.add_argument("--scores", required=True, type=Path, nargs="+")
     parser.add_argument("--output", type=Path)
     return parser.parse_args()
 
@@ -277,16 +305,26 @@ def parse_args():
 def main():
     args = parse_args()
     annotations = args.annotations.expanduser().resolve()
-    scores = args.scores.expanduser().resolve()
-    output = (args.output.expanduser().resolve() if args.output else
-              scores.with_name(f"{scores.stem}_annotation_comparison.html"))
-    data = load_and_align(annotations, scores)
+    scores = [path.expanduser().resolve() for path in args.scores]
+    if args.output:
+        output = args.output.expanduser().resolve()
+    elif len(scores) == 1:
+        output = scores[0].with_name(f"{scores[0].stem}_annotation_comparison.html")
+    else:
+        output = scores[0].with_name("rosbag_threshold_strategies_annotation_comparison.html")
+    datasets = []
+    for score_path in scores:
+        data = load_and_align(annotations, score_path)
+        match = re.search(r"_(max|percentile|mean_std)_scores$", score_path.stem)
+        data["score_strategy"] = match.group(1) if match else score_path.stem
+        datasets.append(data)
+    data = pd.concat(datasets, ignore_index=True)
     write_report(output, data, annotations, scores)
     print(f"Aligned rows: {len(data)}")
-    for area, group in data.groupby("safety_area", sort=False):
+    for (strategy, area), group in data.groupby(["score_strategy", "safety_area"], sort=False):
         values = binary_metrics(group)
         print(
-            f"{area}: precision={format_metric(values['precision'])} "
+            f"{strategy}/{area}: precision={format_metric(values['precision'])} "
             f"recall={format_metric(values['recall'])} F1={format_metric(values['f1'])} "
             f"FP={values['fp']} FN={values['fn']} verify={values['excluded_verify']}"
         )

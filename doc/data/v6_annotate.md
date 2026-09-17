@@ -26,8 +26,29 @@ pixi run python scripts/annotate_safety_area.py \
 ```
 
 ```bash
-pixi run python scripts/annotate_safety_area.py \
-  /Users/rashid/data/DS/SR/v6/Jul27/extracted_frames/1_0 \
-  --camera back_view \
-  --areas PLeft PRight
+base_path="/Users/rashid/data/DS/SR/v6/Jul27/extracted_frames"
+
+for sid_path in "$base_path"/*; do
+  [[ -d "$sid_path" ]] || continue
+
+  s_id=$(basename "$sid_path")
+
+  # Accept IDs such as 9_0, 10_0, 13_1.
+  if [[ "$s_id" =~ ^([0-9]+)_([0-9]+)$ ]]; then
+    scenario_number="${match[1]}"
+
+    # Skip scenarios 8_x and earlier.
+    (( scenario_number > 8 )) || continue
+
+    echo "======================================"
+    echo "Processing anomalous scenario: $s_id"
+    echo "Path: $sid_path"
+    echo "======================================"
+
+    pixi run python scripts/annotate_safety_area.py \
+      "$sid_path" \
+      --camera back_view \
+      --areas PLeft PRight RoboArm ConvBelt
+  fi
+done
 ```

@@ -135,6 +135,32 @@ done
 
 ```
 
+```bash
+base_path="/Users/rashid/data/DS/SR/v6/Jul27/extracted_frames"
+
+for sid_path in "$base_path"/*; do
+  if [[ -d "$sid_path" ]]; then
+
+    s_id=$(basename "$sid_path")
+
+    echo "======================================"
+    echo "Processing scenario: $s_id"
+    echo "Path: $sid_path"
+    echo "======================================"
+
+    pixi run python scripts/process_rosbags_to_dataset.py \
+      --config configs/cf_dataset_mac.yaml \
+      --scenario $s_id \
+      --camera front_view \
+      --process-to video \
+      --progress
+
+  else
+    echo "Skipping: $sid_path (not a directory)"
+  fi
+done
+```
+
 ---
 
 ```bash

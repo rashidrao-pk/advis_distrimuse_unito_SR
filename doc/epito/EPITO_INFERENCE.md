@@ -135,5 +135,13 @@ awk -F',' '
 ```bash
 python scripts/compare_annotations_detection.py \
   --annotations reports/safety_area_annotations/saved_annotation/scenario_9_0_back_view_annotations.csv \
-  --scores results/V6/offline_inference/rosbag_9_0_scores.csv
+  --scores results/V6/offline_inference/rosbag_9_0_max_scores.csv
+
+```
+
+```bash
+python scripts/compare_annotations_detection.py \
+  --annotations reports/safety_area_annotations/saved_annotation/scenario_9_0_back_view_annotations.csv \
+  --scores results/V6/offline_inference/rosbag_9_0_percentile_scores.csv
+
 ```
