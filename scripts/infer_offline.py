@@ -192,8 +192,8 @@ def load_settings(args):
     args.output_csv = (
         args.output_csv.expanduser().resolve()
         if args.output_csv
-        else repository_root / "results" / args.dataset_version / "offline_inference" /
-        f"{args.input_type}_{args.scenario}_{args.threshold_strategy}/csv/_scores.csv"
+        else repository_root / "results" / args.dataset_version / "offline_inference" / "csv" /
+        f"{args.input_type}_{args.scenario}_{args.threshold_strategy}_scores.csv"
     )
     output_root = args.output_csv.parent
     scenario_id = (
@@ -201,12 +201,12 @@ def load_settings(args):
         if args.input_type == "rosbag" else None
     )
     default_video_name = (
-        f"rosbag_{scenario_id}_{args.threshold_strategy}/videos/_detections.mp4" if scenario_id
-        else f"{args.input_type}/videos/_detections.mp4"
+        f"rosbag_{scenario_id}_{args.threshold_strategy}_detections.mp4" if scenario_id
+        else f"{args.input_type}_{args.threshold_strategy}_detections.mp4"
     )
     args.output_video = (
         args.output_video.expanduser().resolve()
-        if args.output_video else output_root / default_video_name
+        if args.output_video else output_root / "videos" / default_video_name
     )
     args.timeline_video = (
         args.timeline_video.expanduser().resolve()
