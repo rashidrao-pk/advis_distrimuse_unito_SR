@@ -89,9 +89,9 @@ python scripts/infer_offline.py \
 python scripts/infer_offline.py \
   --config configs/cf_dataset_epito.yaml \
   --input_type rosbag \
-  --scenario 13_1 \
+  --scenario 8_0 \
   --threshold_strategy percentile \
-  --safety_areas ALL \
+  --safety_areas ALL
 
 
 

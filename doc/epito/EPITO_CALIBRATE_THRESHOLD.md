@@ -1,9 +1,11 @@
 ```bash
 ssh epito-mercurio
 
+# Check all Available sources
 sinfo -N -p mirri,gracehopper,cascadelake,epito \
   -o "%.18N %.18P %.10T %.16G %.20C"
 
+# Check all Reserved sources
 squeue -p mirri,gracehopper,cascadelake,epito \
   -o "%.12i %.12u %.18P %.18j %.8T %.15N %.12b %.20R"
 
@@ -26,16 +28,6 @@ sacct -j 92623 \
   --format=JobID,JobName%25,State,Elapsed,ExitCode,MaxRSS,NodeList
 ```
 
-## Reconnect:
-
-```bash
-ssh epito-mercurio
-squeue -u mrashid
-# 419800  epito  ShapBPT Tests  RUNNING  epito02
-srun --jobid=419800 --overlap --pty /bin/bash --noprofile --norc
-tmux ls
-tmux attach -t shapbpt
-```
 
 ## Threshold with Max Value in Validation Data
 
@@ -51,12 +43,6 @@ python scripts/calibrate_threshold.py --config configs/cf_dataset_epito.yaml --m
 python scripts/calibrate_threshold.py --config configs/cf_dataset_epito.yaml --mode val --safety_area ConvBelt --dataset_version V6
 
 python scripts/calibrate_threshold.py --config configs/cf_dataset_epito.yaml --mode val --safety_area RoboArm --dataset_version V6
-
-
-#  Plot Validation Timeline
-python scripts/plot_validation_timelines.py \
-  --dataset_version V6 \
-  --threshold_strategy max
 
 ```
 
@@ -124,5 +110,29 @@ python scripts/ablate_validation_thresholds.py \
   --config configs/cf_dataset_epito.yaml \
   --safety_area PLeft \
   --dataset_version V6 \
+<<<<<<< Updated upstream
   --max_images 1000
 ```
+=======
+  --max_images 200
+
+for SafetyArea in PLeft PRight ConvBelt RoboArm; do
+  python scripts/ablate_validation_thresholds.py \
+    --config configs/cf_dataset_epito.yaml \
+    --safety_area "$SafetyArea" \
+    --dataset_version V6
+done
+```
+
+
+## Reconnect:
+
+```bash
+ssh epito-mercurio
+squeue -u mrashid
+# 419800  epito  ShapBPT Tests  RUNNING  epito02
+srun --jobid=419800 --overlap --pty /bin/bash --noprofile --norc
+tmux ls
+tmux attach -t shapbpt
+```
+>>>>>>> Stashed changes
