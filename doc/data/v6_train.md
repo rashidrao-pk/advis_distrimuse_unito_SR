@@ -170,10 +170,10 @@ pixi run python scripts/process_rosbags_to_dataset.py \
   --scenario 9_0 \
   --camera back_view \
   --process-to frames \
+  --stretch \
   --progress \
   --target-size 128 \
   --image-format png \
-  --stretch \
   --max-frames 500 \
   --save-every-n 50
 

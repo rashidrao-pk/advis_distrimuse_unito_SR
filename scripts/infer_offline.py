@@ -40,7 +40,11 @@ def parse_args():
     )
     parser.add_argument(
         "--scenario",
-        help="Rosbag scenario ID such as 13_1; resolved under data.dataset_base/rosbags.",
+        help=(
+            "Scenario ID such as 13_1. Rosbags are resolved under "
+            "data.dataset_base/rosbags; videos under "
+            "data.dataset_base/extracted_frames/<scenario>/<camera>/video."
+        ),
     )
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--dataset_version", default="V6")
@@ -51,7 +55,10 @@ def parse_args():
     )
     parser.add_argument(
         "--topic", default="/camera/back_view/image_raw",
-        help="Image topic used in rosbag mode.",
+        help=(
+            "Image topic used in rosbag mode. In video scenario mode, its camera "
+            "component selects the video directory (for example, back_view)."
+        ),
     )
     parser.add_argument("--checkpoints", type=Path)
     parser.add_argument("--threshold_dir", type=Path)
@@ -138,6 +145,47 @@ def resolve_rosbag_scenario(scenario_id, data_config):
     return matches[0].resolve(), scenario_id
 
 
+def normalized_scenario_id(scenario_id):
+    scenario_id = re.sub(r"^Scenario_", "", str(scenario_id), flags=re.IGNORECASE)
+    if not re.fullmatch(r"\d+_\d+", scenario_id):
+        raise ValueError(f"Invalid scenario ID {scenario_id!r}; expected a value like 13_1")
+    return scenario_id
+
+
+def camera_name_from_topic(topic):
+    parts = [part for part in str(topic).split("/") if part]
+    if len(parts) >= 2 and parts[0] == "camera":
+        return parts[1]
+    raise ValueError(
+        f"Cannot determine camera from topic {topic!r}; expected "
+        "a topic such as /camera/back_view/image_raw"
+    )
+
+
+def resolve_video_scenario(scenario_id, data_config, topic):
+    """Resolve a generated scenario MP4 using the dataset directory convention."""
+    scenario_id = normalized_scenario_id(scenario_id)
+    dataset_base = data_config.get("dataset_base")
+    if not dataset_base:
+        raise ValueError("Scenario lookup requires data.dataset_base in --config")
+    camera = camera_name_from_topic(topic)
+    video_path = (
+        Path(dataset_base).expanduser()
+        / "extracted_frames"
+        / scenario_id
+        / camera
+        / "video"
+        / f"s-{scenario_id}_c-{camera}.mp4"
+    )
+    if not video_path.is_file():
+        raise FileNotFoundError(
+            f"Scenario video not found: {video_path}\n"
+            "Generate it with process_rosbags_to_dataset.py --process-to video, "
+            "or provide the video directly with --input."
+        )
+    return video_path.resolve(), scenario_id
+
+
 def resolve_path(value, repository_root):
     path = Path(value).expanduser()
     return path.resolve() if path.is_absolute() else (repository_root / path).resolve()
@@ -154,21 +202,30 @@ def load_settings(args):
     data_config = config.get("data") or {}
     model_config = config.get("models") or {}
     args.scenario_id = None
-    if args.input_type == "rosbag":
+    if args.input_type in {"rosbag", "video"}:
         if args.scenario and args.input is not None:
-            raise ValueError("Use either --scenario or --input for rosbag mode, not both")
+            raise ValueError(
+                f"Use either --scenario or --input for {args.input_type} mode, not both"
+            )
         scenario = args.scenario
-        if scenario is None and args.input is not None:
+        if args.input_type == "rosbag" and scenario is None and args.input is not None:
             candidate = args.input.expanduser()
             if len(candidate.parts) == 1 and not candidate.exists():
                 scenario = str(args.input)
         if scenario is not None:
-            args.input, args.scenario_id = resolve_rosbag_scenario(
-                scenario, data_config
-            )
+            if args.input_type == "rosbag":
+                args.input, args.scenario_id = resolve_rosbag_scenario(
+                    scenario, data_config
+                )
+            else:
+                args.input, args.scenario_id = resolve_video_scenario(
+                    scenario, data_config, args.topic
+                )
     if args.input is None:
         if args.input_type != "cropped" or not data_config.get("training"):
-            raise ValueError("Provide --input, or use --scenario ID for rosbag mode")
+            raise ValueError(
+                "Provide --input, or use --scenario ID for rosbag/video mode"
+            )
         args.input = Path(data_config["training"])
     args.input = args.input.expanduser().resolve()
     if not args.input.exists():
@@ -196,12 +253,10 @@ def load_settings(args):
         f"{args.input_type}_{args.scenario}_{args.threshold_strategy}_scores.csv"
     )
     output_root = args.output_csv.parent
-    scenario_id = (
-        scenario_id_from_rosbag(args.input)
-        if args.input_type == "rosbag" else None
-    )
+    scenario_id = args.scenario_id
     default_video_name = (
-        f"rosbag_{scenario_id}_{args.threshold_strategy}_detections.mp4" if scenario_id
+        f"{args.input_type}_{scenario_id}_{args.threshold_strategy}_detections.mp4"
+        if scenario_id
         else f"{args.input_type}_{args.threshold_strategy}_detections.mp4"
     )
     args.output_video = (

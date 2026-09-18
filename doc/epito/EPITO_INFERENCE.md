@@ -160,3 +160,52 @@ python scripts/compare_annotations_detection.py \
   --scores results/V6/offline_inference/rosbag_9_0_percentile_scores.csv
 
 ```
+
+## RUN EVALUATION for ALL Scenarios
+
+```bash
+annotation_dir="reports/safety_area_annotations/saved_annotation"
+score_dir="results/V6/offline_inference"
+
+scenarios=(
+  8_0 8_1 8_2 8_3 8_4
+  9_0
+  10_0 10_1
+  11_0 11_1
+  12_0 12_1
+  13_0 13_1
+  14_0 14_1
+  15_0
+  16_0 16_1
+)
+
+for sid in "${scenarios[@]}"; do
+  annotation_file="${annotation_dir}/scenario_${sid}_back_view_annotations.csv"
+  score_file="${score_dir}/rosbag_${sid}_max_scores.csv"
+
+  echo "=========================================================="
+  echo "Comparing scenario: ${sid}"
+
+  if [[ ! -f "$annotation_file" ]]; then
+    echo "Skipping: annotation file is missing"
+    echo "  $annotation_file"
+    continue
+  fi
+
+  if [[ ! -f "$score_file" ]]; then
+    echo "Skipping: score file is missing"
+    echo "  $score_file"
+    continue
+  fi
+
+  python scripts/compare_annotations_detection.py \
+    --annotations "$annotation_file" \
+    --scores "$score_file"
+
+  if [[ $? -ne 0 ]]; then
+    echo "FAILED: scenario ${sid}"
+  else
+    echo "Completed: scenario ${sid}"
+  fi
+done
+```
