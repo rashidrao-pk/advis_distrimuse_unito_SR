@@ -137,7 +137,36 @@ python scripts/infer_offline.py \
   --max_frames 200 \
   --skip-first 100 \
   --scores-only
+```
 
+## Ablation on Full Video
+
+```bash
+#  OFFSET, SIGMA, and QUANTILE variants 
+for ooff in 1 2 3; do
+  for ss in 1.0 1.5; do
+    for qq in 0.99 0.98 0.97; do
+      python scripts/infer_offline.py \
+        --config configs/cf_dataset_epito.yaml \
+        --input_type video \
+        --scenario 8_16 \
+        --topic /camera/back_view/image_raw \
+        --safety_areas ALL \
+        --threshold_strategy percentile \
+        --offset "$ooff" \
+        --sigma "$ss" \
+        --quantile "$qq" \
+        --scores-only || exit 1
+    done
+    echo " [COMPLETED] ------------- ALL Quantiles ----------------"
+  done
+  echo "[COMPLETED] ------------- ALL Sigmas ----------------"
+done
+echo "[COMPLETED] ------------- ALL COMBINATIONS ----------------"
+```
+
+
+```
 
 #  DOWNLOAD INFERENCE VIDEO ONLY
 scp mrashid@slurm.hpc4ai.unito.it:/beegfs/home/mrashid/repos/advis_distrimuse_unito_SR/results/V6/offline_inference/rosbag_detections.mp4 ~/Downloads/
@@ -228,10 +257,4 @@ for sid in "${scenarios[@]}"; do
     echo "Completed: scenario ${sid}"
   fi
 done
-```
-
-```bash
-python scripts/compare_annotations_detection.py \
-  --annotations /Users/rashid/data/PhD/datacloud_data/repos/DistriMuSe/advis_distrimuse_unito_SR/reports/safety_area_annotations/saved_annotation/scenario_8_16_back_view_annotations.csv \
-  --scores /Users/rashid/data/PhD/datacloud_data/repos/DistriMuSe/advis_distrimuse_unito_SR/results/V6/offline_inference/video_8_16_percentile_off1_sig1.0_q0.99_scores.csv
 ```
