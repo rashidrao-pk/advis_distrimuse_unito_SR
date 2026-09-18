@@ -14,10 +14,11 @@ scripts/results/model*
 scripts/results
 
 
-reports/
-results/
+reports/*
+results/*
 
 __MACOSX/
+__MACOSX/*
 
 # any zip files
 *.zip
@@ -27,3 +28,4 @@ __MACOSX/
 scripts/*.txt
 
 *__pycache__/
+
