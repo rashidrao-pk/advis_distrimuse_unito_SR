@@ -66,7 +66,7 @@ python scripts/calibrate_threshold.py --config configs/cf_dataset_epito.yaml --m
 
 python scripts/calibrate_threshold.py --config configs/cf_dataset_epito.yaml --mode val --safety_area ALL --dataset_version V6 --threshold_strategy percentile --threshold_percentile 99.0
 
-
+#  OFFSET, SIGMA, and QUANTILE variants 
 for ooff in 1 2 3; do
   for ss in 1.0 1.5; do
     for qq in 0.99 0.98 0.97; do
@@ -84,19 +84,14 @@ for ooff in 1 2 3; do
 done
 
 -----------------
+# Varios strategy
 for strategy in max percentile; do
-  for strategy in max percentile; do
-    for strategy in max percentile; do
-      for strategy in max percentile; do
   python scripts/calibrate_threshold.py \
     --config configs/cf_dataset_epito.yaml \
     --mode val \
     --safety_area ALL \
     --dataset_version V6 \
     --threshold_strategy "$strategy" \
-    --offset "$ooff"\
-    --sigma "$ss"\
-    --quantile "$qq"
 done
 
 #  Plot Validation Timeline
