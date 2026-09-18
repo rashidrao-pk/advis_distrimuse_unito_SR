@@ -708,7 +708,7 @@ def _build_summary(area, suffix, n_epochs, args, tau, df_scores,
 def _save_threshold_json(out_dir: str, area: str, summary: dict, args):
     area_dir = os.path.join(out_dir, area)
     os.makedirs(area_dir, exist_ok=True)
-    json_path = os.path.join(area_dir, f"threshold_{area}_{args.threshold_strategy}.json")
+    json_path = os.path.join(area_dir, f"threshold_{area}_{args.threshold_strategy}_off{args.offset}_sig{args.sigma}_q{args.quantile}.json")
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
     print(f"[save] Threshold JSON → {json_path}")
@@ -804,9 +804,9 @@ def parse_args():
                         "  (component_anomaly ∈ {ANOMALOUS, NORMAL})")
 
     # ── Anomaly score params (both modes) ─────────────────────────────────
-    p.add_argument("--offset",   default=1,   type=int)
+    p.add_argument("--offset",   default=1,   type=int) # 1
     p.add_argument("--sigma",    default=1.0, type=float)
-    p.add_argument("--quantile", default=0.99, type=float)
+    p.add_argument("--quantile", default=0.99, type=float) #0.99
 
     # ── Val-mode threshold strategies ─────────────────────────────────────
     p.add_argument("--threshold_strategy",   default="max",
@@ -900,7 +900,7 @@ def main():
 
     # ── Combined summary CSV ──────────────────────────────────────────────
     if all_summaries:
-        summary_csv = os.path.join(out_dir, f"thresholds_summary_{args.mode}_{args.threshold_strategy}.csv")
+        summary_csv = os.path.join(out_dir, f"thresholds_summary_{args.mode}_{args.threshold_strategy}_off{args.offset}_sig{args.sigma}_q{args.quantile}.csv")
         pd.DataFrame(all_summaries).to_csv(summary_csv, index=False)
         print(f"\n[save] Summary CSV → {summary_csv}")
 

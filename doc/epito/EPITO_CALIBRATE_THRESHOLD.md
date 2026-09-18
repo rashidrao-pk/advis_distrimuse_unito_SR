@@ -35,14 +35,14 @@ sacct -j 92623 \
 # -------------------------------------
 cd /beegfs/home/mrashid/repos/advis_distrimuse_unito_SR
 
-# python scripts/calibrate_threshold.py --mode val --safety_area PRight --dataset_version V6
-python scripts/calibrate_threshold.py --config configs/cf_dataset_epito.yaml --mode val --safety_area PRight --dataset_version V6 --threshold_strategy max
+# # python scripts/calibrate_threshold.py --mode val --safety_area PRight --dataset_version V6
+# python scripts/calibrate_threshold.py --config configs/cf_dataset_epito.yaml --mode val --safety_area PRight --dataset_version V6 --threshold_strategy max
 
-python scripts/calibrate_threshold.py --config configs/cf_dataset_epito.yaml --mode val --safety_area PLeft --dataset_version V6
+# python scripts/calibrate_threshold.py --config configs/cf_dataset_epito.yaml --mode val --safety_area PLeft --dataset_version V6
 
-python scripts/calibrate_threshold.py --config configs/cf_dataset_epito.yaml --mode val --safety_area ConvBelt --dataset_version V6
+# python scripts/calibrate_threshold.py --config configs/cf_dataset_epito.yaml --mode val --safety_area ConvBelt --dataset_version V6
 
-python scripts/calibrate_threshold.py --config configs/cf_dataset_epito.yaml --mode val --safety_area RoboArm --dataset_version V6
+# python scripts/calibrate_threshold.py --config configs/cf_dataset_epito.yaml --mode val --safety_area RoboArm --dataset_version V6
 
 ```
 
@@ -66,14 +66,37 @@ python scripts/calibrate_threshold.py --config configs/cf_dataset_epito.yaml --m
 
 python scripts/calibrate_threshold.py --config configs/cf_dataset_epito.yaml --mode val --safety_area ALL --dataset_version V6 --threshold_strategy percentile --threshold_percentile 99.0
 
+
+for ooff in 1 2 3; do
+  for ss in 1.0 1.5; do
+    for qq in 0.99 0.98 0.97; do
+      python scripts/calibrate_threshold.py \
+        --config configs/cf_dataset_epito.yaml \
+        --mode val \
+        --safety_area ALL \
+        --dataset_version V6 \
+        --threshold_strategy percentile \
+        --offset "$ooff" \
+        --sigma "$ss" \
+        --quantile "$qq" || exit 1
+    done
+  done
+done
+
 -----------------
 for strategy in max percentile; do
+  for strategy in max percentile; do
+    for strategy in max percentile; do
+      for strategy in max percentile; do
   python scripts/calibrate_threshold.py \
     --config configs/cf_dataset_epito.yaml \
     --mode val \
     --safety_area ALL \
     --dataset_version V6 \
-    --threshold_strategy "$strategy"
+    --threshold_strategy "$strategy" \
+    --offset "$ooff"\
+    --sigma "$ss"\
+    --quantile "$qq"
 done
 
 #  Plot Validation Timeline
