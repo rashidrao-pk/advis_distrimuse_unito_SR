@@ -11,6 +11,7 @@ from infer_offline import (  # noqa: E402
     camera_name_from_topic,
     load_threshold,
     parse_args,
+    public_result,
     resolve_video_scenario,
 )
 
@@ -127,3 +128,30 @@ def test_threshold_parameters_must_match_requested_variant(tmp_path):
 
     with pytest.raises(ValueError, match="TAAS parameters do not match"):
         load_threshold(tmp_path, "PLeft", "percentile", 2, 1.5, 0.98)
+
+
+def test_public_result_contains_threshold_provenance():
+    result = {
+        "safety_area": "PLeft",
+        "anomaly_score": 0.3,
+        "threshold": 0.2,
+        "normalized_score": 1.5,
+        "is_anomalous": True,
+        "threshold_strategy": "percentile",
+        "score_func": "taas",
+        "reconstruction_mode": "mean",
+        "offset": 2,
+        "sigma": 1.5,
+        "quantile": 0.98,
+        "threshold_file": "threshold_PLeft_percentile_off2_sig1.5_q0.98.json",
+        "original_bgr": object(),
+    }
+
+    row = public_result(result)
+
+    assert row["threshold_strategy"] == "percentile"
+    assert row["offset"] == 2
+    assert row["sigma"] == 1.5
+    assert row["quantile"] == 0.98
+    assert row["threshold_file"].endswith("_off2_sig1.5_q0.98.json")
+    assert "original_bgr" not in row

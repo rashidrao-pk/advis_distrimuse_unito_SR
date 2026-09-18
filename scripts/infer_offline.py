@@ -509,6 +509,13 @@ def infer_crop(image, area, model, normalize, device):
         "threshold": threshold,
         "normalized_score": normalized,
         "is_anomalous": normalized > 1.0,
+        "threshold_strategy": threshold_config["strategy"],
+        "score_func": threshold_config["score_func"],
+        "reconstruction_mode": threshold_config["reconstruction_mode"],
+        "offset": threshold_config["offset"],
+        "sigma": threshold_config["sigma"],
+        "quantile": threshold_config["quantile"],
+        "threshold_file": threshold_config["path"].name,
         "original_bgr": original_bgr,
         "reconstructed_bgr": reconstructed_bgr,
         "anomaly_bgr": anomaly_bgr,
@@ -819,6 +826,8 @@ def public_result(result):
         key: result[key] for key in (
             "safety_area", "anomaly_score", "threshold",
             "normalized_score", "is_anomalous",
+            "threshold_strategy", "score_func", "reconstruction_mode",
+            "offset", "sigma", "quantile", "threshold_file",
         )
     }
 
@@ -1165,6 +1174,8 @@ def main():
     fieldnames = (
         "sample_id", "safety_area", "anomaly_score", "threshold",
         "normalized_score", "is_anomalous",
+        "threshold_strategy", "score_func", "reconstruction_mode",
+        "offset", "sigma", "quantile", "threshold_file",
     )
     with args.output_csv.open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=fieldnames)
