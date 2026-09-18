@@ -121,21 +121,23 @@ python scripts/infer_offline.py \
   --max_frames 200 \
   --skip-first 100
 
+# /beegfs/home/mrashid/datasets/AD/SR/V6/videos/s-8_16_c-back_view.mp4
 
 python scripts/infer_offline.py \
   --config configs/cf_dataset_epito.yaml \
   --input_type video \
-  --scenario 8_0 \
+  --scenario 8_16 \
   --topic /camera/back_view/image_raw \
   --safety_areas ALL \
   --threshold_strategy percentile \
+  
   --offset 1 \
   --sigma 1.0 \
   --quantile 0.99 \
   --max_frames 200 \
   --skip-first 100 \
   --scores-only
-  
+
 
 #  DOWNLOAD INFERENCE VIDEO ONLY
 scp mrashid@slurm.hpc4ai.unito.it:/beegfs/home/mrashid/repos/advis_distrimuse_unito_SR/results/V6/offline_inference/rosbag_detections.mp4 ~/Downloads/

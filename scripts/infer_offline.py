@@ -67,6 +67,7 @@ def parse_args():
         default="max",
         help="Calibration strategy to load (default: max).",
     )
+    parser.add_argument("--threshold_percentile", default=99.0, type=float)
     parser.add_argument(
         "--offset", type=int, default=1,
         help="TAAS neighborhood offset used during threshold calibration (default: 1).",
@@ -338,10 +339,10 @@ def parse_masks(values, areas, masks_dir=None):
     return masks
 
 
-def load_threshold(threshold_dir, area, strategy, offset=1, sigma=1.0, quantile=0.99):
+def load_threshold(threshold_dir, area, strategy='percentile',threshold_percentiles=99.0, offset=1, sigma=1.0, quantile=0.99):
     area_dir = threshold_dir / area
     variant_name = (
-        f"threshold_{area}_{strategy}_off{offset}_sig{sigma}_q{quantile}.json"
+        f"threshold_{area}_{strategy}{threshold_percentiles}_off{offset}_sig{sigma}_q{quantile}.json"
     )
     candidates = (
         area_dir / variant_name,
@@ -419,6 +420,7 @@ def load_models(args, device):
             args.threshold_dir,
             area,
             args.threshold_strategy,
+            args.threshold_percentile,
             args.offset,
             args.sigma,
             args.quantile,
