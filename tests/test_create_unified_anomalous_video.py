@@ -1,3 +1,4 @@
+import csv
 from pathlib import Path
 import sys
 
@@ -15,6 +16,7 @@ from create_unified_anomalous_video import (  # noqa: E402
     draw_annotated_masks,
     load_annotations,
     scenario_key,
+    write_unified_annotations,
 )
 
 
@@ -67,3 +69,40 @@ def test_mask_overlay_uses_annotation_color():
 
     # Choose a masked point away from text and the header.
     assert tuple(output[68, 68]) == LABEL_COLORS["Anomalous"]
+
+
+def test_unified_annotations_use_global_video_frame_ids(tmp_path):
+    annotations = tmp_path / "annotations"
+    annotations.mkdir()
+    (annotations / "scenario_8_1_back_view_annotations.csv").write_text(
+        "frame_id,safety_area,label,scenario_description,note\n"
+        "0,PLeft,Normal,First scenario,\n"
+        "0,PRight,Anomalous,First scenario,object\n"
+        "2,PLeft,Verify,First scenario,check\n"
+        "2,PRight,Normal,First scenario,\n",
+        encoding="utf-8",
+    )
+    (annotations / "scenario_9_0_back_view_annotations.csv").write_text(
+        "frame_id,safety_area,label,scenario_description,note\n"
+        "0,PLeft,Anomalous,Second scenario,\n"
+        "0,PRight,Normal,Second scenario,\n",
+        encoding="utf-8",
+    )
+    videos = [
+        ("8_1", tmp_path / "8_1.mp4"),
+        ("9_0", tmp_path / "9_0.mp4"),
+    ]
+    output = tmp_path / "unified_annotations.csv"
+
+    rows = write_unified_annotations(
+        output, videos, {"8_1": 2, "9_0": 1}, annotations,
+        tmp_path / "frames", "back_view", ["PLeft", "PRight"], 2,
+    )
+
+    with output.open(newline="", encoding="utf-8") as stream:
+        data = list(csv.DictReader(stream))
+    assert rows == 6
+    assert [int(row["frame_id"]) for row in data] == [0, 0, 1, 1, 2, 2]
+    assert [int(row["source_frame_id"]) for row in data] == [0, 0, 2, 2, 0, 0]
+    assert data[2]["label"] == "Verify"
+    assert data[4]["source_scenario_id"] == "9_0"

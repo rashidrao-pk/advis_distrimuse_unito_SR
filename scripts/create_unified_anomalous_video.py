@@ -80,6 +80,28 @@ def load_annotations(path: Path) -> tuple[dict[tuple[int, str], str], str]:
     return labels, description
 
 
+def load_annotation_records(path: Path) -> tuple[dict[tuple[int, str], dict], str]:
+    """Load complete source rows for building a unified annotation CSV."""
+    records = {}
+    description = ""
+    with path.open(newline="", encoding="utf-8") as stream:
+        reader = csv.DictReader(stream)
+        required = {"frame_id", "safety_area", "label"}
+        if missing := required.difference(reader.fieldnames or []):
+            raise ValueError(f"Annotation CSV {path} is missing: {sorted(missing)}")
+        for row in reader:
+            frame_id = int(row["frame_id"])
+            area = row["safety_area"].strip()
+            key = (frame_id, area)
+            if key in records:
+                raise ValueError(f"Duplicate annotation for frame/area {key} in {path}")
+            row = dict(row)
+            row["label"] = row.get("label", "").strip().title() or "Unlabeled"
+            records[key] = row
+            description = description or row.get("scenario_description", "").strip()
+    return records, description
+
+
 def load_masks(config_path: Path, areas: list[str] | None) -> dict[str, np.ndarray]:
     with config_path.open(encoding="utf-8") as stream:
         config = yaml.safe_load(stream) or {}
@@ -237,7 +259,8 @@ def inspect_video(path: Path) -> tuple[float, int, int, int]:
 
 
 def combine_videos(videos: list[tuple[str, Path]], output: Path,
-                   output_fps: float | None, progress: bool) -> int:
+                   output_fps: float | None,
+                   progress: bool) -> tuple[int, dict[str, int]]:
     first_fps, width, height, _ = inspect_video(videos[0][1])
     fps = output_fps or first_fps
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -248,6 +271,7 @@ def combine_videos(videos: list[tuple[str, Path]], output: Path,
         raise RuntimeError(f"Could not create unified video: {output}")
 
     total_written = 0
+    written_by_scenario = {}
     try:
         for index, (scenario, path) in enumerate(videos, start=1):
             source_fps, source_width, source_height, expected_frames = inspect_video(path)
@@ -274,11 +298,81 @@ def combine_videos(videos: list[tuple[str, Path]], output: Path,
                 if progress and scenario_frames % 500 == 0:
                     print(f"  {scenario}: {scenario_frames}/{expected_frames}", end="\r")
             capture.release()
+            written_by_scenario[scenario] = scenario_frames
             if progress:
                 print(f"  {scenario}: {scenario_frames}/{expected_frames}")
     finally:
         writer.release()
-    return total_written
+    return total_written, written_by_scenario
+
+
+UNIFIED_ANNOTATION_FIELDS = (
+    "scenario_id", "scenario_description", "camera", "safety_area",
+    "frame_position", "frame_id", "filename", "label", "note",
+    "processed_image_path", "raw_image_path", "source_scenario_id",
+    "source_frame_id", "source_frame_position", "source_annotation_path",
+    "source_video_path",
+)
+
+
+def write_unified_annotations(
+    output: Path,
+    videos: list[tuple[str, Path]],
+    written_by_scenario: dict[str, int],
+    annotations_dir: Path,
+    base_path: Path,
+    camera: str,
+    areas: list[str],
+    save_every_n: int,
+) -> int:
+    """Write labels in the exact global frame order of the unified video."""
+    output.parent.mkdir(parents=True, exist_ok=True)
+    unified_frame_id = 0
+    row_count = 0
+    with output.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=UNIFIED_ANNOTATION_FIELDS)
+        writer.writeheader()
+        for scenario, video_path in videos:
+            source_csv = annotation_path(annotations_dir, scenario, camera)
+            records, description = (
+                load_annotation_records(source_csv)
+                if source_csv.is_file() else ({}, "")
+            )
+            for video_frame_id in range(written_by_scenario.get(scenario, 0)):
+                source_frame_id = video_frame_id * save_every_n
+                for area in areas:
+                    source = records.get((source_frame_id, area), {})
+                    processed = (
+                        base_path / scenario / camera / "processed" / area
+                        / f"s-{scenario}_s-{area}_f-{source_frame_id:06d}.png"
+                    )
+                    raw = (
+                        base_path / scenario / camera / "raw"
+                        / f"frame_{source_frame_id:06d}.png"
+                    )
+                    writer.writerow({
+                        "scenario_id": "unified",
+                        "scenario_description": description,
+                        "camera": camera,
+                        "safety_area": area,
+                        "frame_position": unified_frame_id + 1,
+                        "frame_id": unified_frame_id,
+                        "filename": source.get("filename", processed.name),
+                        "label": source.get("label", "Unlabeled"),
+                        "note": source.get("note", ""),
+                        "processed_image_path": source.get(
+                            "processed_image_path", str(processed)
+                        ),
+                        "raw_image_path": source.get("raw_image_path", str(raw)),
+                        "source_scenario_id": scenario,
+                        "source_frame_id": source_frame_id,
+                        "source_frame_position": video_frame_id + 1,
+                        "source_annotation_path": str(source_csv),
+                        "source_video_path": str(video_path),
+                    })
+                    row_count += 1
+                unified_frame_id += 1
+    return row_count
 
 
 def parse_args() -> argparse.Namespace:
@@ -291,6 +385,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--after", default="8_0", help="Include scenario IDs strictly after this ID.")
     parser.add_argument("--camera", choices=("front_view", "back_view"), default="front_view")
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--unified-annotations-output", type=Path,
+        help=(
+            "Unified annotation CSV path. With --annotated-masks, the default is "
+            "the unified video path with _annotations.csv appended."
+        ),
+    )
     parser.add_argument("--video-fps", type=float, default=25.0)
     parser.add_argument("--output-fps", type=float)
     parser.add_argument("--save-every-n", type=int, default=1)
@@ -389,9 +490,28 @@ def main() -> int:
         print("No videos are available to combine")
         return 1
 
-    frames = combine_videos(videos, output, args.output_fps, args.progress)
+    frames, written_by_scenario = combine_videos(
+        videos, output, args.output_fps, args.progress
+    )
     print(f"[done] Combined {len(videos)} scenarios and {frames} frames")
     print(f"[output] {output}")
+    if args.annotated_masks:
+        annotation_output = (
+            args.unified_annotations_output.expanduser().resolve()
+            if args.unified_annotations_output else
+            output.with_name(f"{output.stem}_annotations.csv")
+        )
+        rows = write_unified_annotations(
+            annotation_output,
+            videos,
+            written_by_scenario,
+            args.annotations_dir,
+            args.base_path,
+            args.camera,
+            list(masks),
+            args.save_every_n,
+        )
+        print(f"[annotations] {rows} area rows -> {annotation_output}")
     return 0
 
 
