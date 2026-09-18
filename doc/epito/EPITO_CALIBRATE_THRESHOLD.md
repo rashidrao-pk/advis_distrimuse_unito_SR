@@ -57,15 +57,19 @@ cd /beegfs/home/mrashid/repos/advis_distrimuse_unito_SR
 # python scripts/calibrate_threshold.py --mode val --safety_area PRight --dataset_version V6
 python scripts/calibrate_threshold.py --config configs/cf_dataset_epito.yaml --mode val --safety_area PRight --dataset_version V6 --threshold_strategy percentile --threshold_percentile 99.0
 
-python scripts/calibrate_threshold.py --config configs/cf_dataset_epito.yaml --mode val --safety_area PLeft --dataset_version V6 --threshold_strategy percentile --threshold_percentile 99.0
-
-python scripts/calibrate_threshold.py --config configs/cf_dataset_epito.yaml --mode val --safety_area ConvBelt --dataset_version V6 --threshold_strategy percentile --threshold_percentile 99.0
-
-python scripts/calibrate_threshold.py --config configs/cf_dataset_epito.yaml --mode val --safety_area RoboArm --dataset_version V6 --threshold_strategy percentile --threshold_percentile 99.0
-
-
 python scripts/calibrate_threshold.py --config configs/cf_dataset_epito.yaml --mode val --safety_area ALL --dataset_version V6 --threshold_strategy percentile --threshold_percentile 99.0
 
+
+#  Plot Validation Timeline
+python scripts/plot_validation_timelines.py \
+  --dataset_version V6 \
+  --threshold_strategy percentile
+
+```
+
+## Compute for Varios OFFSET, SIGMA, and QUANTILE Variants 
+
+```bash
 #  OFFSET, SIGMA, and QUANTILE variants 
 for ooff in 1 2 3; do
   for ss in 1.0 1.5; do
@@ -82,7 +86,18 @@ for ooff in 1 2 3; do
     done
   done
 done
+```
+## Plot Validation Plots
 
+```bash
+#  Plot Validation Timeline
+python scripts/plot_validation_timelines.py \
+  --dataset_version V6 \
+  --threshold_strategy percentile
+```
+
+## Various Strategy
+```bash
 -----------------
 # Varios strategy
 for strategy in max percentile; do
@@ -93,14 +108,7 @@ for strategy in max percentile; do
     --dataset_version V6 \
     --threshold_strategy "$strategy" \
 done
-
-#  Plot Validation Timeline
-python scripts/plot_validation_timelines.py \
-  --dataset_version V6 \
-  --threshold_strategy percentile
-
 ```
-
 ## Ablation Analysis:
 
 ```bash

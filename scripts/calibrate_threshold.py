@@ -294,7 +294,7 @@ def run_val_mode(area: str, args, device, out_dir: str) -> dict:
     df = pd.DataFrame(records)
     score_csv = os.path.join(
         out_dir, area,
-        f"val_scores_{area}_{args.threshold_strategy}_off{args.offset}_sig{args.sigma}_q{args.quantile}.csv"
+        f"val_scores_{area}_{args.threshold_strategy}{args.threshold_percentile}_off{args.offset}_sig{args.sigma}_q{args.quantile}.csv"
     )
     os.makedirs(os.path.dirname(score_csv), exist_ok=True)
     df.to_csv(score_csv, index=False)
@@ -686,12 +686,12 @@ def _build_summary(area, suffix, n_epochs, args, tau, df_scores,
         "suffix":             suffix,
         "epochs_trained":     n_epochs,
         "threshold":          float(tau),
-        "threshold_strategy": args.threshold_strategy if mode == "val"
-                              else args.threshold_method,
+        "threshold_strategy": args.threshold_strategy if mode == "val" else args.threshold_method,
+        "threshold_percentile": 1.0 if args.threshold_strategy == "max" else args.threshold_percentile,
         "offset":             args.offset,
         "sigma":              args.sigma,
         "quantile":           args.quantile,
-        "score_func":         f'TAAS_{args.offset}-s_{args.sigma}-q_{args.quantile}',  
+        "score_func":         f'TAAS_OFF{args.offset}-s_{args.sigma}-q_{args.quantile}',  
         "reconstruction_mode": "posterior_mean",
         "score_max":          float(df_scores.anomaly_score.max()),
         "score_mean":         float(df_scores.anomaly_score.mean()),
@@ -708,7 +708,7 @@ def _build_summary(area, suffix, n_epochs, args, tau, df_scores,
 def _save_threshold_json(out_dir: str, area: str, summary: dict, args):
     area_dir = os.path.join(out_dir, area)
     os.makedirs(area_dir, exist_ok=True)
-    json_path = os.path.join(area_dir, f"threshold_{area}_{args.threshold_strategy}_off{args.offset}_sig{args.sigma}_q{args.quantile}.json")
+    json_path = os.path.join(area_dir, f"threshold_{area}_{args.threshold_strategy}{args.threshold_percentile}_off{args.offset}_sig{args.sigma}_q{args.quantile}.json")
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
     print(f"[save] Threshold JSON → {json_path}")
@@ -833,7 +833,9 @@ def parse_args():
     p.add_argument("--output_dir", default=None,
                    help="Override output dir (default: results/training/threshold).")
 
+
     args = p.parse_args()
+    args.threshold_percentile = 1.0 if args.threshold_strategy == "max" else args.threshold_percentile
     try:
         model_config = load_model_config(args.config)
     except (OSError, ValueError, yaml.YAMLError) as exc:
@@ -865,9 +867,6 @@ def main():
     paths = ut.get_paths(paths, verbose=False)
     paths.path_codes_main = os.path.join(paths.path_codes, "scripts")
     paths.path_models      = os.path.join(os.getcwd(), args.checkpoints)
-
-    print('[-] DEBUGG')
-    print(f'[-] DEBUGG - paths.path_codes: {paths.path_codes}')
     print(args.dataset_version)
     out_dir = args.output_dir or os.path.join(
         paths.path_codes, "results",args.dataset_version, "thresholds"
@@ -900,7 +899,7 @@ def main():
 
     # ── Combined summary CSV ──────────────────────────────────────────────
     if all_summaries:
-        summary_csv = os.path.join(out_dir, f"thresholds_summary_{args.mode}_{args.threshold_strategy}_off{args.offset}_sig{args.sigma}_q{args.quantile}.csv")
+        summary_csv = os.path.join(out_dir, f"thresholds_summary_{args.mode}_{args.threshold_strategy}{args.threshold_percentile}_off{args.offset}_sig{args.sigma}_q{args.quantile}.csv")
         pd.DataFrame(all_summaries).to_csv(summary_csv, index=False)
         print(f"\n[save] Summary CSV → {summary_csv}")
 

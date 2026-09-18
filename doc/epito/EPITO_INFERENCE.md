@@ -61,6 +61,8 @@ python scripts/infer_offline.py \
   --safety_areas PRight RoboArm \
   --frame_stride 5
 
+# /beegfs/home/mrashid/datasets/AD/SR/V6/videos/all_scenarios_after_7_2_back_view.mp4
+
 
 # MCAP rosbag
 python scripts/infer_offline.py \
@@ -123,11 +125,17 @@ python scripts/infer_offline.py \
 python scripts/infer_offline.py \
   --config configs/cf_dataset_epito.yaml \
   --input_type video \
-  --scenario 13_1 \
+  --scenario 8_0 \
   --topic /camera/back_view/image_raw \
   --safety_areas ALL \
+  --threshold_strategy percentile \
+  --offset 1 \
+  --sigma 1.0 \
+  --quantile 0.99 \
   --max_frames 200 \
-  --skip-first 100
+  --skip-first 100 \
+  --scores-only
+  
 
 #  DOWNLOAD INFERENCE VIDEO ONLY
 scp mrashid@slurm.hpc4ai.unito.it:/beegfs/home/mrashid/repos/advis_distrimuse_unito_SR/results/V6/offline_inference/rosbag_detections.mp4 ~/Downloads/
