@@ -7,7 +7,11 @@ import pandas as pd
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-from compare_annotations_detection import binary_metrics, load_threshold_metadata  # noqa: E402
+from compare_annotations_detection import (  # noqa: E402
+    binary_metrics,
+    default_evaluation_path,
+    load_threshold_metadata,
+)
 
 
 def test_f1_is_undefined_without_annotated_anomalies():
@@ -33,6 +37,9 @@ def test_f1_is_computed_when_anomalies_are_annotated():
     metrics = binary_metrics(frames)
 
     assert metrics["f1"] == 2 / 3
+    assert metrics["total_normal"] == 1
+    assert metrics["total_anomalous"] == 2
+    assert metrics["balanced_accuracy"] == 0.75
 
 
 def test_threshold_metadata_identifies_taas_variant(tmp_path):
@@ -56,3 +63,15 @@ def test_threshold_metadata_identifies_taas_variant(tmp_path):
     assert record["sigma"] == 1.0
     assert record["quantile"] == 0.99
     assert record["threshold_matches_csv"] is True
+
+
+def test_default_evaluation_path_removes_input_type_prefix(tmp_path):
+    threshold_dir = tmp_path / "results" / "V6" / "thresholds"
+    score = tmp_path / "video_8_16_percentile_off1_sig1.0_q0.99_scores.csv"
+
+    output = default_evaluation_path(score, threshold_dir)
+
+    assert output == (
+        tmp_path / "results" / "V6" / "evaluation"
+        / "evaluation_8_16_percentile_off1_sig1.0_q0.99_scores.json"
+    )

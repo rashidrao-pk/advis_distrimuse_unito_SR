@@ -130,7 +130,7 @@ python scripts/infer_offline.py \
   --topic /camera/back_view/image_raw \
   --safety_areas ALL \
   --threshold_strategy percentile \
-  
+
   --offset 1 \
   --sigma 1.0 \
   --quantile 0.99 \
@@ -228,4 +228,10 @@ for sid in "${scenarios[@]}"; do
     echo "Completed: scenario ${sid}"
   fi
 done
+```
+
+```bash
+python scripts/compare_annotations_detection.py \
+  --annotations /Users/rashid/data/PhD/datacloud_data/repos/DistriMuSe/advis_distrimuse_unito_SR/reports/safety_area_annotations/saved_annotation/scenario_8_16_back_view_annotations.csv \
+  --scores /Users/rashid/data/PhD/datacloud_data/repos/DistriMuSe/advis_distrimuse_unito_SR/results/V6/offline_inference/video_8_16_percentile_off1_sig1.0_q0.99_scores.csv
 ```

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import html
 import json
 import re
@@ -40,8 +41,8 @@ def local_image_uri(value) -> str:
 
 
 def load_and_align(annotation_csv: Path, scores_csv: Path) -> pd.DataFrame:
-    annotations = pd.read_csv(annotation_csv)
-    scores = pd.read_csv(scores_csv)
+    annotations = pd.read_csv(annotation_csv, low_memory=False)
+    scores = pd.read_csv(scores_csv, low_memory=False)
     required_annotations = {"safety_area", "frame_id", "label"}
     required_scores = {
         "safety_area", "anomaly_score", "threshold", "normalized_score",
@@ -87,13 +88,30 @@ def binary_metrics(group: pd.DataFrame) -> dict:
     def divide(numerator, denominator):
         return float(numerator / denominator) if denominator else None
 
+    recall = divide(tp, tp + fn)
+    specificity = divide(tn, tn + fp)
     return {
+        "total_frames": (
+            int(group["frame_id"].nunique())
+            if "frame_id" in group.columns else int(len(group))
+        ),
+        "total_area_rows": int(len(group)),
+        "total_normal": int((group["label"] == "Normal").sum()),
+        "total_anomalous": int((group["label"] == "Anomalous").sum()),
+        "total_verify": int((group["label"] == "Verify").sum()),
+        "total_unlabeled": int((group["label"] == "Unlabeled").sum()),
         "evaluated": len(evaluated), "excluded_verify": int((group["label"] == "Verify").sum()),
         "tp": tp, "tn": tn, "fp": fp, "fn": fn,
-        "precision": divide(tp, tp + fp), "recall": divide(tp, tp + fn),
-        "specificity": divide(tn, tn + fp),
+        "precision": divide(tp, tp + fp), "recall": recall,
+        "specificity": specificity,
         "f1": divide(2 * tp, 2 * tp + fp + fn) if has_annotated_anomalies else None,
         "accuracy": divide(tp + tn, len(evaluated)),
+        "balanced_accuracy": (
+            (recall + specificity) / 2
+            if recall is not None and specificity is not None else None
+        ),
+        "false_positive_rate": divide(fp, fp + tn),
+        "false_negative_rate": divide(fn, fn + tp),
     }
 
 
@@ -197,7 +215,38 @@ def load_threshold_metadata(data: pd.DataFrame, threshold_dir: Path) -> list[dic
     for (strategy, area), group in data.groupby(
         ["score_strategy", "safety_area"], sort=False
     ):
-        path = threshold_dir / area / f"threshold_{area}_{strategy}.json"
+        first = group.iloc[0]
+        csv_metadata = {}
+        for key in (
+            "score_func", "reconstruction_mode", "offset", "sigma", "quantile",
+            "threshold_strategy",
+        ):
+            if key in group.columns and pd.notna(first.get(key)):
+                csv_metadata[key] = first[key]
+        area_dir = threshold_dir / area
+        candidates = []
+        if "threshold_file" in group.columns and pd.notna(first.get("threshold_file")):
+            threshold_file = Path(str(first["threshold_file"]))
+            candidates.append(
+                threshold_file if threshold_file.is_absolute()
+                else area_dir / threshold_file.name
+            )
+        if all(key in csv_metadata for key in ("offset", "sigma", "quantile")):
+            candidates.append(area_dir / (
+                f"threshold_{area}_{strategy}_off{csv_metadata['offset']}"
+                f"_sig{csv_metadata['sigma']}_q{csv_metadata['quantile']}.json"
+            ))
+            # Calibration encodes strategy parameters in some filenames, e.g.
+            # percentile99.0, while the JSON/score CSV records "percentile".
+            candidates.extend(sorted(area_dir.glob(
+                f"threshold_{area}_{strategy}*_off{csv_metadata['offset']}"
+                f"_sig{csv_metadata['sigma']}_q{csv_metadata['quantile']}.json"
+            )))
+        candidates.extend((
+            area_dir / f"threshold_{area}_{strategy}.json",
+            area_dir / f"threshold_{area}.json",
+        ))
+        path = next((candidate for candidate in candidates if candidate.is_file()), candidates[0])
         record = {
             "strategy": strategy, "area": area, "path": path,
             "available": path.is_file(),
@@ -209,8 +258,115 @@ def load_threshold_metadata(data: pd.DataFrame, threshold_dir: Path) -> list[dic
             record["threshold_matches_csv"] = bool(np.isclose(
                 float(payload["threshold"]), record["csv_threshold"]
             ))
+        # The score CSV records what inference actually used and is authoritative.
+        record.update(csv_metadata)
         records.append(record)
     return records
+
+
+def confusion_matrix_card(title: str, values: dict) -> str:
+    """Render an actual-by-predicted 2x2 confusion matrix."""
+    return f"""<article class="cm-card"><h3>{html.escape(title)}</h3>
+<table class="cm"><thead><tr><th>Actual \\ Predicted</th><th>Normal</th><th>Anomalous</th></tr></thead>
+<tbody><tr><th>Normal</th><td class="tn"><b>{values['tn']}</b><small>TN</small></td><td class="fp"><b>{values['fp']}</b><small>FP</small></td></tr>
+<tr><th>Anomalous</th><td class="fn"><b>{values['fn']}</b><small>FN</small></td><td class="tp"><b>{values['tp']}</b><small>TP</small></td></tr></tbody></table>
+<p>{values['evaluated']} evaluated · {values['excluded_verify']} Verify excluded</p></article>"""
+
+
+def load_model_metadata(threshold_dir: Path, area: str) -> dict:
+    """Load the compact training provenance saved beside model checkpoints."""
+    models_dir = threshold_dir.parent / "train" / "models"
+    candidates = sorted(models_dir.glob(f"model_{area}_*_config.json"))
+    if not candidates:
+        return {"available": False, "path": str(models_dir)}
+    path = candidates[0]
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return {
+        "available": True,
+        "path": str(path.resolve()),
+        "model_type": payload.get("model_type"),
+        "suffix": payload.get("suffix"),
+        "saved_at": payload.get("saved_at"),
+        "epochs_trained": payload.get("epochs_trained", payload.get("epoch")),
+        "dataset": payload.get("dataset", {}),
+        "training": payload.get("training", {}),
+        "model_parameters": payload.get("params", {}),
+        "augmentation": payload.get("augmentation", {}),
+        "notes": payload.get("notes"),
+    }
+
+
+def json_value(value):
+    """Convert NumPy/Pandas/Path values to strict JSON-compatible values."""
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return None
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, dict):
+        return {str(key): json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_value(item) for item in value]
+    return value
+
+
+def default_evaluation_path(score_csv: Path, threshold_dir: Path) -> Path:
+    stem = re.sub(r"^(?:video|rosbag|frames|cropped)_", "", score_csv.stem)
+    return threshold_dir.parent / "evaluation" / f"evaluation_{stem}.json"
+
+
+def write_evaluation_json(
+    output: Path,
+    data: pd.DataFrame,
+    annotation_csv: Path,
+    scores_csvs: list[Path],
+    report_html: Path,
+    threshold_dir: Path,
+) -> None:
+    threshold_records = load_threshold_metadata(data, threshold_dir)
+    threshold_by_key = {
+        (record["strategy"], record["area"]): record
+        for record in threshold_records
+    }
+    evaluations = {}
+    for strategy, strategy_group in data.groupby("score_strategy", sort=False):
+        areas = {}
+        for area, area_group in strategy_group.groupby("safety_area", sort=False):
+            threshold = dict(threshold_by_key[(strategy, area)])
+            threshold["path"] = str(Path(threshold["path"]).resolve())
+            areas[area] = {
+                "metrics": binary_metrics(area_group),
+                "model_training": load_model_metadata(threshold_dir, area),
+                "threshold_calibration": threshold,
+                "inference": {
+                    key: json_value(area_group.iloc[0][key])
+                    for key in (
+                        "threshold_strategy", "score_func", "reconstruction_mode",
+                        "offset", "sigma", "quantile", "threshold",
+                    ) if key in area_group.columns
+                },
+            }
+        evaluations[strategy] = {
+            "cumulative_metrics": binary_metrics(strategy_group),
+            "safety_areas": areas,
+        }
+    payload = {
+        "schema_version": 1,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "sources": {
+            "annotations": str(annotation_csv),
+            "scores": [str(path) for path in scores_csvs],
+            "html_report": str(report_html),
+            "threshold_directory": str(threshold_dir),
+        },
+        "evaluation": evaluations,
+    }
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        json.dumps(json_value(payload), indent=2, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
 
 
 def write_report(output: Path, data: pd.DataFrame, annotation_csv: Path,
@@ -229,8 +385,20 @@ def write_report(output: Path, data: pd.DataFrame, annotation_csv: Path,
             values["tp"], values["tn"], values["fp"], values["fn"],
             format_metric(values["precision"]), format_metric(values["recall"]),
             format_metric(values["specificity"]), format_metric(values["f1"]),
-            format_metric(values["accuracy"]),
+            format_metric(values["accuracy"]), format_metric(values["balanced_accuracy"]),
         )) + "</tr>" for key, values in metrics.items()
+    )
+    confusion_cards = "".join(
+        confusion_matrix_card(f"{key.split(':', 1)[0]} — {key.split(':', 1)[1]}", values)
+        for key, values in metrics.items()
+    )
+    cumulative_metrics = {
+        strategy: binary_metrics(group)
+        for strategy, group in data.groupby("score_strategy", sort=False)
+    }
+    cumulative_cards = "".join(
+        confusion_matrix_card(f"{strategy} — all safety areas", values)
+        for strategy, values in cumulative_metrics.items()
     )
     threshold_records = load_threshold_metadata(data, threshold_dir)
     threshold_rows = "".join(
@@ -286,6 +454,10 @@ section{{background:white;border-radius:12px;padding:18px;margin:14px 0;box-shad
 .legend span{{display:inline-block;padding:6px 12px;border-radius:12px;margin-right:8px}}table{{border-collapse:collapse;width:100%}}
 th,td{{padding:7px 9px;border-bottom:1px solid #dbe2ea;text-align:left}}th{{position:sticky;top:0;background:#eaf0f6}}
 .scroll{{max-height:520px;overflow:auto}}code{{word-break:break-all}}
+.cm-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}}
+.cm-card{{border:1px solid #dbe2ea;border-radius:10px;padding:12px}}.cm-card h3{{margin:0 0 10px}}
+.cm{{table-layout:fixed}}.cm td{{text-align:center;font-size:24px;border:5px solid white;border-radius:10px}}
+.cm td small{{display:block;font-size:12px;font-weight:600}}.cm .tn{{background:#dcfce7}}.cm .tp{{background:#ffedd5}}.cm .fp{{background:#dbeafe}}.cm .fn{{background:#fee2e2}}
 #frame-preview{{position:fixed;right:18px;top:18px;width:min(620px,44vw);z-index:20;background:#111827;color:white;padding:12px;border:8px solid #64748b;border-radius:14px;box-shadow:0 8px 30px #0007;display:none}}
 #frame-preview .images{{display:grid;grid-template-columns:1fr 1fr;gap:8px}}#frame-preview img{{width:100%;max-height:360px;object-fit:contain;background:#05070a}}
 #frame-preview .hint{{color:#cbd5e1;font-size:12px}}#preview-status{{display:inline-block;font-weight:800;font-size:16px;padding:5px 10px;margin:8px 0;border-radius:8px;color:white}}
@@ -299,7 +471,9 @@ th,td{{padding:7px 9px;border-bottom:1px solid #dbe2ea;text-align:left}}th{{posi
 <p><b>TAAS offset</b> controls spatial tolerance, <b>sigma</b> controls Gaussian smoothing of the residual map, and <b>quantile</b> selects the residual-map tail used as the frame score. These are anomaly-score parameters. The <b>threshold strategy</b> is a separate operation that converts validation-frame scores into the final decision boundary.</p>
 <div class="scroll"><table><thead><tr><th>Strategy</th><th>Area</th><th>Score function</th><th>Reconstruction mode</th><th>TAAS offset</th><th>TAAS sigma</th><th>TAAS quantile</th><th>Threshold</th><th>Calibration strategy</th><th>Calibration images</th><th>Model epochs</th><th>Computed at</th><th>Matches score CSV</th><th>Metadata file</th></tr></thead><tbody>{threshold_rows}</tbody></table></div></section>
 <section>{plot}</section>
-<section><h2>Metrics by threshold strategy and safety area</h2><table><thead><tr><th>Strategy</th><th>Area</th><th>Evaluated</th><th>Verify excluded</th><th>TP</th><th>TN</th><th>FP</th><th>FN</th><th>Precision</th><th>Recall</th><th>Specificity</th><th>F1</th><th>Accuracy</th></tr></thead><tbody>{metric_rows}</tbody></table></section>
+<section><h2>Metrics by threshold strategy and safety area</h2><table><thead><tr><th>Strategy</th><th>Area</th><th>Evaluated</th><th>Verify excluded</th><th>TP</th><th>TN</th><th>FP</th><th>FN</th><th>Precision</th><th>Recall</th><th>Specificity</th><th>F1</th><th>Accuracy</th><th>Balanced accuracy</th></tr></thead><tbody>{metric_rows}</tbody></table></section>
+<section><h2>Confusion matrices by safety area</h2><p>Rows are ground truth; columns are model predictions.</p><div class="cm-grid">{confusion_cards}</div></section>
+<section><h2>Cumulative confusion matrix</h2><p>All evaluated safety-area rows combined for each threshold strategy. Verify and Unlabeled rows are excluded.</p><div class="cm-grid">{cumulative_cards}</div></section>
 <section><h2>Highest 100 normalized scores</h2><div class="scroll"><table><thead><tr><th>Area</th><th>Strategy</th><th>Frame</th><th>Annotation</th><th>Normalized score</th><th>Raw score</th><th>Processed image</th><th>Raw image</th></tr></thead><tbody>{high_score_rows}</tbody></table></div></section>
 <section><h2>Disagreements ({len(disagreement)})</h2><div class="scroll"><table><thead><tr><th>Strategy</th><th>Area</th><th>Frame</th><th>Annotation</th><th>Error</th><th>Normalized score</th><th>Filename</th><th>Note</th></tr></thead><tbody>{disagreement_rows}</tbody></table></div></section>
 <aside id="frame-preview"><div><b id="preview-title"></b> <button id="preview-close" style="float:right">Close</button></div><div id="preview-status"></div><div id="preview-meta"></div><div class="images"><div><small>Processed safety area</small><img id="preview-processed"></div><div><small>Raw frame</small><img id="preview-raw"></div></div><div class="hint">Images are loaded from dataset paths and are not embedded in this report.</div></aside>
@@ -342,6 +516,13 @@ def parse_args():
         help="Threshold metadata root; default: sibling thresholds directory under results version.",
     )
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--evaluation-json", type=Path,
+        help=(
+            "Evaluation JSON path. Default: "
+            "results/<dataset-version>/evaluation/evaluation_<score-stem>.json"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -362,11 +543,28 @@ def main():
     datasets = []
     for score_path in scores:
         data = load_and_align(annotations, score_path)
-        match = re.search(r"_(max|percentile|mean_std)_scores$", score_path.stem)
-        data["score_strategy"] = match.group(1) if match else score_path.stem
+        if "threshold_strategy" in data.columns:
+            strategies = data["threshold_strategy"].dropna().astype(str).unique()
+        else:
+            strategies = []
+        if len(strategies) == 1:
+            strategy = strategies[0]
+        else:
+            match = re.search(
+                r"_(max|percentile|mean_std)(?:_|_scores$)", score_path.stem
+            )
+            strategy = match.group(1) if match else score_path.stem
+        data["score_strategy"] = strategy
         datasets.append(data)
     data = pd.concat(datasets, ignore_index=True)
     write_report(output, data, annotations, scores, threshold_dir)
+    evaluation_output = (
+        args.evaluation_json.expanduser().resolve()
+        if args.evaluation_json else default_evaluation_path(scores[0], threshold_dir)
+    )
+    write_evaluation_json(
+        evaluation_output, data, annotations, scores, output, threshold_dir
+    )
     print(f"Aligned rows: {len(data)}")
     for (strategy, area), group in data.groupby(["score_strategy", "safety_area"], sort=False):
         values = binary_metrics(group)
@@ -376,6 +574,7 @@ def main():
             f"FP={values['fp']} FN={values['fn']} verify={values['excluded_verify']}"
         )
     print(f"Report: {output}")
+    print(f"Evaluation JSON: {evaluation_output}")
 
 
 if __name__ == "__main__":
