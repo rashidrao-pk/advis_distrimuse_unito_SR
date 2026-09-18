@@ -40,6 +40,13 @@ def parse_args():
         default="max",
         help="Calibration strategy whose threshold JSON and score CSV are plotted.",
     )
+    parser.add_argument(
+        "--threshold_percentile", type=float, default=99.0,
+        help=(
+            "Calibration percentile encoded in threshold filenames "
+            "(default: 99.0)."
+        ),
+    )
     parser.add_argument("--offset", type=int, default=1)
     parser.add_argument("--sigma", type=float, default=1.0)
     parser.add_argument("--quantile", type=float, default=0.99)
@@ -68,12 +75,14 @@ def parse_args():
     args.output = args.output.expanduser().resolve() if args.output else None
     if args.rolling_window < 1:
         parser.error("--rolling_window must be at least 1")
+    if not 0.0 <= args.threshold_percentile <= 100.0:
+        parser.error("--threshold_percentile must be between 0 and 100")
     return args
 
 
 def score_filename(area, args):
     return (
-        f"val_scores_{area}_{args.threshold_strategy}_off{args.offset}_"
+        f"val_scores_{area}_{args.threshold_strategy}{args.threshold_percentile}_off{args.offset}_"
         f"sig{args.sigma}_q{args.quantile}.csv"
     )
 
@@ -98,11 +107,18 @@ def load_area_data(area, args):
     frame["anomaly_score"] = pd.to_numeric(frame["anomaly_score"], errors="raise")
 
     metadata = {}
-    threshold_path = area_dir / f"threshold_{area}_{args.threshold_strategy}.json"
-    if not threshold_path.is_file():
-        legacy_path = area_dir / f"threshold_{area}.json"
-        if legacy_path.is_file():
-            threshold_path = legacy_path
+    threshold_candidates = (
+        area_dir / (
+            f"threshold_{area}_{args.threshold_strategy}{args.threshold_percentile}_"
+            f"off{args.offset}_sig{args.sigma}_q{args.quantile}.json"
+        ),
+        area_dir / f"threshold_{area}_{args.threshold_strategy}.json",
+        area_dir / f"threshold_{area}.json",
+    )
+    threshold_path = next(
+        (path for path in threshold_candidates if path.is_file()),
+        threshold_candidates[0],
+    )
     if threshold_path.is_file():
         with threshold_path.open("r", encoding="utf-8") as stream:
             metadata = json.load(stream)
