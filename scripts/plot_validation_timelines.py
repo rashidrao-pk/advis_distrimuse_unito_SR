@@ -144,7 +144,7 @@ def plot_area(ax, area, frame, threshold, rolling_window):
     ax.set_xlabel("Validation sample index")
     ax.set_ylabel("Anomaly score")
     ax.grid(alpha=0.2)
-    ax.legend(loc="upper right")
+    ax.legend(loc="upper left")
 
 
 def main():
@@ -183,7 +183,7 @@ def main():
         plot_area(ax, area, frame, threshold, args.rolling_window)
     figure.suptitle(
         f"Validation anomaly-score timelines — {args.dataset_version} — "
-        f"{strategy} — {score_function}",
+        f"{strategy}{args.threshold_percentile} — {score_function}",
         fontsize=16,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
