@@ -169,17 +169,17 @@ def resolve_video_scenario(scenario_id, data_config, topic):
     if not dataset_base:
         raise ValueError("Scenario lookup requires data.dataset_base in --config")
     camera = camera_name_from_topic(topic)
-    video_path = (
-        Path(dataset_base).expanduser()
-        / "extracted_frames"
-        / scenario_id
-        / camera
-        / "video"
-        / f"s-{scenario_id}_c-{camera}.mp4"
+    dataset_root = Path(dataset_base).expanduser()
+    filename = f"s-{scenario_id}_c-{camera}.mp4"
+    candidates = (
+        dataset_root / "extracted_frames" / scenario_id / camera / "video" / filename,
+        dataset_root / "videos" / filename,
     )
-    if not video_path.is_file():
+    video_path = next((path for path in candidates if path.is_file()), None)
+    if video_path is None:
+        expected = "\n  ".join(str(path) for path in candidates)
         raise FileNotFoundError(
-            f"Scenario video not found: {video_path}\n"
+            f"Scenario video not found. Checked:\n  {expected}\n"
             "Generate it with process_rosbags_to_dataset.py --process-to video, "
             "or provide the video directly with --input."
         )

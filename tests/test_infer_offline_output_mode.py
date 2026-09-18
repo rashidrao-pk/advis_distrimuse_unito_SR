@@ -75,3 +75,16 @@ def test_video_scenario_reports_expected_missing_path(tmp_path):
         resolve_video_scenario(
             "13_1", {"dataset_base": str(tmp_path)}, "/camera/front_view/image_raw"
         )
+
+
+def test_video_scenario_resolves_epito_videos_directory(tmp_path):
+    video = tmp_path / "videos" / "s-8_0_c-back_view.mp4"
+    video.parent.mkdir(parents=True)
+    video.touch()
+
+    resolved, scenario_id = resolve_video_scenario(
+        "8_0", {"dataset_base": str(tmp_path)}, "/camera/back_view/image_raw"
+    )
+
+    assert resolved == video.resolve()
+    assert scenario_id == "8_0"
