@@ -128,8 +128,62 @@ def label_runs(group: pd.DataFrame):
     yield start, previous, label
 
 
+def scenario_runs(group: pd.DataFrame):
+    """Yield contiguous global-frame ranges for source scenarios."""
+    rows = group.drop_duplicates("frame_id").sort_values("frame_id")
+    scenario_column = (
+        "source_scenario_id" if "source_scenario_id" in rows.columns
+        else "scenario_id" if "scenario_id" in rows.columns else None
+    )
+    if not scenario_column or rows.empty:
+        return
+    start = previous = int(rows.iloc[0]["frame_id"])
+    scenario = str(rows.iloc[0][scenario_column])
+    description = str(rows.iloc[0].get("scenario_description", "") or "")
+    for _, row in rows.iloc[1:].iterrows():
+        frame = int(row["frame_id"])
+        current = str(row[scenario_column])
+        if current != scenario or frame != previous + 1:
+            yield start, previous, scenario, description
+            start = frame
+            scenario = current
+            description = str(row.get("scenario_description", "") or "")
+        previous = frame
+    yield start, previous, scenario, description
+
+
+def plot_custom_data(group: pd.DataFrame) -> np.ndarray:
+    """Build hover/preview data, including unified-video source provenance."""
+    size = len(group)
+    scenario = (
+        group["source_scenario_id"] if "source_scenario_id" in group
+        else group["scenario_id"] if "scenario_id" in group
+        else pd.Series([""] * size, index=group.index)
+    )
+    description = group.get(
+        "scenario_description", pd.Series([""] * size, index=group.index)
+    ).fillna("")
+    source_frame = group.get(
+        "source_frame_id", group["frame_id"]
+    )
+    return np.column_stack((
+        group["label"], group["anomaly_score"], group["threshold"],
+        group.get("filename", pd.Series([""] * size, index=group.index)),
+        group["processed_image_path_uri"], group["raw_image_path_uri"],
+        group.get("note", pd.Series([""] * size, index=group.index)).fillna(""),
+        group["detected_anomalous"], group["score_strategy"],
+        scenario.fillna("").astype(str), description.astype(str), source_frame,
+    ))
+
+
 def make_figure(data: pd.DataFrame) -> go.Figure:
     areas = list(dict.fromkeys(data["safety_area"]))
+    first_strategy = data["score_strategy"].iloc[0]
+    timeline = data[
+        (data["safety_area"] == areas[0])
+        & (data["score_strategy"] == first_strategy)
+    ]
+    source_runs = list(scenario_runs(timeline))
     figure = make_subplots(
         rows=len(areas), cols=1, shared_xaxes=True, vertical_spacing=0.045,
         subplot_titles=areas,
@@ -138,22 +192,16 @@ def make_figure(data: pd.DataFrame) -> go.Figure:
         group = data[data["safety_area"] == area].sort_values("frame_id")
         strategy_colors = {"max": "#2563eb", "percentile": "#9333ea"}
         for strategy, strategy_group in group.groupby("score_strategy", sort=False):
-            custom = np.column_stack((
-                strategy_group["label"], strategy_group["anomaly_score"],
-                strategy_group["threshold"],
-                strategy_group.get("filename", pd.Series([""] * len(strategy_group))),
-                strategy_group["processed_image_path_uri"],
-                strategy_group["raw_image_path_uri"],
-                strategy_group.get("note", pd.Series([""] * len(strategy_group))).fillna(""),
-                strategy_group["detected_anomalous"], strategy_group["score_strategy"],
-            ))
+            custom = plot_custom_data(strategy_group)
             figure.add_trace(go.Scatter(
                 x=strategy_group["frame_id"], y=strategy_group["normalized_score"],
                 mode="lines", line={"color": strategy_colors.get(strategy), "width": 1.6},
                 name=f"{strategy}: score / threshold", legendgroup=f"score-{strategy}",
                 showlegend=row_number == 1, customdata=custom,
                 hovertemplate=(
-                    "Strategy %{customdata[8]}<br>Frame %{x}<br>"
+                    "Strategy %{customdata[8]}<br>Scenario %{customdata[9]}<br>"
+                    "%{customdata[10]}<br>Global frame %{x}<br>"
+                    "Source frame %{customdata[11]}<br>"
                     "Normalized score %{y:.3f}×<br>Annotation %{customdata[0]}<br>"
                     "Raw score %{customdata[1]:.5f}<br>Threshold %{customdata[2]:.5f}"
                     "<br>%{customdata[3]}<br>%{customdata[6]}<extra></extra>"
@@ -166,6 +214,12 @@ def make_figure(data: pd.DataFrame) -> go.Figure:
             xref="x" if row_number == 1 else f"x{row_number}", yref=axis_name,
         )
         y_max = max(1.1, float(group["normalized_score"].max()) * 1.08)
+        for start, _, _, _ in source_runs[1:]:
+            figure.add_shape(
+                type="line", x0=start - 0.5, x1=start - 0.5, y0=0, y1=y_max,
+                line={"color": "#475569", "dash": "dot", "width": 1.2},
+                xref="x" if row_number == 1 else f"x{row_number}", yref=axis_name,
+            )
         annotation_group = group.drop_duplicates("frame_id").sort_values("frame_id")
         for start, end, label in label_runs(annotation_group):
             figure.add_shape(
@@ -181,25 +235,36 @@ def make_figure(data: pd.DataFrame) -> go.Figure:
                 (false_positive, "FP", "#2563eb", "x"),
                 (false_negative, "FN", "#dc2626", "circle-open"),
             ):
-                marker_custom = np.column_stack((
-                    subset["label"], subset["anomaly_score"], subset["threshold"],
-                    subset.get("filename", pd.Series([""] * len(subset))),
-                    subset["processed_image_path_uri"], subset["raw_image_path_uri"],
-                    subset.get("note", pd.Series([""] * len(subset))).fillna(""),
-                    subset["detected_anomalous"], subset["score_strategy"],
-                ))
+                marker_custom = plot_custom_data(subset)
                 figure.add_trace(go.Scatter(
                     x=subset["frame_id"], y=subset["normalized_score"], mode="markers",
                     marker={"color": color, "symbol": symbol, "size": 7},
                     name=f"{strategy} {name}", legendgroup=f"{strategy}-{name}",
                     showlegend=row_number == 1, customdata=marker_custom,
-                    hovertemplate=f"{strategy} {name}<br>Frame %{{x}}<br>Score %{{y:.3f}}×<extra></extra>",
+                    hovertemplate=(
+                        f"{strategy} {name}<br>Scenario %{{customdata[9]}}<br>"
+                        "%{customdata[10]}<br>Global frame %{x}<br>"
+                        "Source frame %{customdata[11]}<br>"
+                        "Score %{y:.3f}×<extra></extra>"
+                    ),
                 ), row=row_number, col=1)
         figure.update_yaxes(title_text="score / threshold", range=[0, y_max], row=row_number, col=1)
-    figure.update_xaxes(title_text="Frame ID", row=len(areas), col=1)
+    if source_runs:
+        figure.update_xaxes(
+            title_text="Source scenario along unified global-frame timeline",
+            tickmode="array",
+            tickvals=[(start + end) / 2 for start, end, _, _ in source_runs],
+            ticktext=[scenario for _, _, scenario, _ in source_runs],
+            tickangle=-45,
+            row=len(areas), col=1,
+        )
+    else:
+        figure.update_xaxes(title_text="Frame ID", row=len(areas), col=1)
     figure.update_layout(
         height=max(850, 290 * len(areas)), template="plotly_white", hovermode="x unified",
-        legend={"orientation": "h", "y": 1.03}, margin={"t": 100},
+        autosize=True,
+        legend={"orientation": "h", "y": 1.03},
+        margin={"l": 58, "r": 18, "t": 100, "b": 95},
         title="Annotation versus model detection",
     )
     return figure
@@ -377,7 +442,12 @@ def write_report(output: Path, data: pd.DataFrame, annotation_csv: Path,
             ["score_strategy", "safety_area"], sort=False
         )
     }
-    plot = make_figure(data).to_html(include_plotlyjs=True, full_html=False, div_id="comparison-plot")
+    plot = make_figure(data).to_html(
+        include_plotlyjs=True,
+        full_html=False,
+        div_id="comparison-plot",
+        config={"responsive": True, "scrollZoom": True},
+    )
     metric_rows = "".join(
         "<tr>" + "".join(f"<td>{value}</td>" for value in (
             html.escape(key.split(":", 1)[0]), html.escape(key.split(":", 1)[1]),
@@ -449,8 +519,9 @@ def write_report(output: Path, data: pd.DataFrame, annotation_csv: Path,
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(f"""<!doctype html><html><head><meta charset="utf-8">
 <title>Annotation versus detection</title><style>
-body{{font-family:system-ui;background:#f3f6f9;color:#172033;margin:0}}main{{max-width:1800px;margin:auto;padding:22px}}
+body{{font-family:system-ui;background:#f3f6f9;color:#172033;margin:0}}main{{width:calc(100vw - 16px);max-width:none;margin:0 auto;padding:8px;box-sizing:border-box}}
 section{{background:white;border-radius:12px;padding:18px;margin:14px 0;box-shadow:0 1px 4px #0001}}
+.plot-section{{padding:6px 2px;overflow:hidden}}#comparison-plot,.plotly-graph-div{{width:100%!important}}
 .legend span{{display:inline-block;padding:6px 12px;border-radius:12px;margin-right:8px}}table{{border-collapse:collapse;width:100%}}
 th,td{{padding:7px 9px;border-bottom:1px solid #dbe2ea;text-align:left}}th{{position:sticky;top:0;background:#eaf0f6}}
 .scroll{{max-height:520px;overflow:auto}}code{{word-break:break-all}}
@@ -458,6 +529,7 @@ th,td{{padding:7px 9px;border-bottom:1px solid #dbe2ea;text-align:left}}th{{posi
 .cm-card{{border:1px solid #dbe2ea;border-radius:10px;padding:12px}}.cm-card h3{{margin:0 0 10px}}
 .cm{{table-layout:fixed}}.cm td{{text-align:center;font-size:24px;border:5px solid white;border-radius:10px}}
 .cm td small{{display:block;font-size:12px;font-weight:600}}.cm .tn{{background:#dcfce7}}.cm .tp{{background:#ffedd5}}.cm .fp{{background:#dbeafe}}.cm .fn{{background:#fee2e2}}
+details>summary{{cursor:pointer;font-size:1.35rem;font-weight:700;padding:4px 0}}details>summary:hover{{color:#2563eb}}details[open]>summary{{margin-bottom:14px}}
 #frame-preview{{position:fixed;right:18px;top:18px;width:min(620px,44vw);z-index:20;background:#111827;color:white;padding:12px;border:8px solid #64748b;border-radius:14px;box-shadow:0 8px 30px #0007;display:none}}
 #frame-preview .images{{display:grid;grid-template-columns:1fr 1fr;gap:8px}}#frame-preview img{{width:100%;max-height:360px;object-fit:contain;background:#05070a}}
 #frame-preview .hint{{color:#cbd5e1;font-size:12px}}#preview-status{{display:inline-block;font-weight:800;font-size:16px;padding:5px 10px;margin:8px 0;border-radius:8px;color:white}}
@@ -467,13 +539,13 @@ th,td{{padding:7px 9px;border-bottom:1px solid #dbe2ea;text-align:left}}th{{posi
 <section><b>Alignment:</b> per-safety-area row order, verified equal counts. Binary metrics exclude <i>Verify</i> frames.<br>
 <b>Annotation:</b> <code>{html.escape(str(annotation_csv))}</code><br>{score_sources}</section>
 <section class="legend"><span style="background:#dcfce7">TN: safe, correct</span><span style="background:#ffedd5">TP: anomaly, correct</span><span style="background:#dbeafe">FP: normal, flagged</span><span style="background:#fee2e2">FN: anomaly, missed</span><span style="background:#e2e8f0">Verify: excluded</span><span>Dashed line = detection threshold (1.0×)</span><p>Hover a score to preview its frames. Click to lock the preview; click another point to replace it; use Close to unlock.</p></section>
-<section><h2>Threshold calibration and anomaly-score configuration</h2>
+<section><details><summary>Threshold calibration and anomaly-score configuration</summary>
 <p><b>TAAS offset</b> controls spatial tolerance, <b>sigma</b> controls Gaussian smoothing of the residual map, and <b>quantile</b> selects the residual-map tail used as the frame score. These are anomaly-score parameters. The <b>threshold strategy</b> is a separate operation that converts validation-frame scores into the final decision boundary.</p>
-<div class="scroll"><table><thead><tr><th>Strategy</th><th>Area</th><th>Score function</th><th>Reconstruction mode</th><th>TAAS offset</th><th>TAAS sigma</th><th>TAAS quantile</th><th>Threshold</th><th>Calibration strategy</th><th>Calibration images</th><th>Model epochs</th><th>Computed at</th><th>Matches score CSV</th><th>Metadata file</th></tr></thead><tbody>{threshold_rows}</tbody></table></div></section>
-<section>{plot}</section>
-<section><h2>Metrics by threshold strategy and safety area</h2><table><thead><tr><th>Strategy</th><th>Area</th><th>Evaluated</th><th>Verify excluded</th><th>TP</th><th>TN</th><th>FP</th><th>FN</th><th>Precision</th><th>Recall</th><th>Specificity</th><th>F1</th><th>Accuracy</th><th>Balanced accuracy</th></tr></thead><tbody>{metric_rows}</tbody></table></section>
-<section><h2>Confusion matrices by safety area</h2><p>Rows are ground truth; columns are model predictions.</p><div class="cm-grid">{confusion_cards}</div></section>
+<div class="scroll"><table><thead><tr><th>Strategy</th><th>Area</th><th>Score function</th><th>Reconstruction mode</th><th>TAAS offset</th><th>TAAS sigma</th><th>TAAS quantile</th><th>Threshold</th><th>Calibration strategy</th><th>Calibration images</th><th>Model epochs</th><th>Computed at</th><th>Matches score CSV</th><th>Metadata file</th></tr></thead><tbody>{threshold_rows}</tbody></table></div></details></section>
 <section><h2>Cumulative confusion matrix</h2><p>All evaluated safety-area rows combined for each threshold strategy. Verify and Unlabeled rows are excluded.</p><div class="cm-grid">{cumulative_cards}</div></section>
+<section><h2>Confusion matrices by safety area</h2><p>Rows are ground truth; columns are model predictions.</p><div class="cm-grid">{confusion_cards}</div></section>
+<section><h2>Metrics by threshold strategy and safety area</h2><table><thead><tr><th>Strategy</th><th>Area</th><th>Evaluated</th><th>Verify excluded</th><th>TP</th><th>TN</th><th>FP</th><th>FN</th><th>Precision</th><th>Recall</th><th>Specificity</th><th>F1</th><th>Accuracy</th><th>Balanced accuracy</th></tr></thead><tbody>{metric_rows}</tbody></table></section>
+<section class="plot-section">{plot}</section>
 <section><h2>Highest 100 normalized scores</h2><div class="scroll"><table><thead><tr><th>Area</th><th>Strategy</th><th>Frame</th><th>Annotation</th><th>Normalized score</th><th>Raw score</th><th>Processed image</th><th>Raw image</th></tr></thead><tbody>{high_score_rows}</tbody></table></div></section>
 <section><h2>Disagreements ({len(disagreement)})</h2><div class="scroll"><table><thead><tr><th>Strategy</th><th>Area</th><th>Frame</th><th>Annotation</th><th>Error</th><th>Normalized score</th><th>Filename</th><th>Note</th></tr></thead><tbody>{disagreement_rows}</tbody></table></div></section>
 <aside id="frame-preview"><div><b id="preview-title"></b> <button id="preview-close" style="float:right">Close</button></div><div id="preview-status"></div><div id="preview-meta"></div><div class="images"><div><small>Processed safety area</small><img id="preview-processed"></div><div><small>Raw frame</small><img id="preview-raw"></div></div><div class="hint">Images are loaded from dataset paths and are not embedded in this report.</div></aside>
@@ -494,9 +566,9 @@ function classification(label,detected){{
 function showFrame(point){{
   const d=point.customdata;if(!d)return;
   const result=classification(d[0],d[7]===true||String(d[7]).toLowerCase()==='true');
-  title.textContent=`${{d[8]}} — Frame ${{point.x}} — ${{d[0]}}`;
+  title.textContent=`Scenario ${{d[9]}} — Global frame ${{point.x}} — ${{d[0]}}`;
   statusBadge.textContent=`${{result.code}} — ${{result.text}}`;statusBadge.style.background=result.color;preview.style.borderColor=result.color;
-  meta.textContent=`Score ${{Number(point.y).toFixed(3)}}× | raw ${{Number(d[1]).toFixed(5)}} | threshold ${{Number(d[2]).toFixed(5)}}`;
+  meta.textContent=`${{d[10]}} | Source frame ${{d[11]}} | ${{d[8]}} | Score ${{Number(point.y).toFixed(3)}}× | raw ${{Number(d[1]).toFixed(5)}} | threshold ${{Number(d[2]).toFixed(5)}}`;
   processed.src=d[4]||'';raw.src=d[5]||'';processed.style.display=d[4]?'block':'none';raw.style.display=d[5]?'block':'none';preview.style.display='block';
 }}
 plot.on('plotly_hover',e=>{{if(!locked&&e.points.length)showFrame(e.points[0]);}});

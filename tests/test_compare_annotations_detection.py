@@ -11,6 +11,7 @@ from compare_annotations_detection import (  # noqa: E402
     binary_metrics,
     default_evaluation_path,
     load_threshold_metadata,
+    scenario_runs,
 )
 
 
@@ -75,3 +76,16 @@ def test_default_evaluation_path_removes_input_type_prefix(tmp_path):
         tmp_path / "results" / "V6" / "evaluation"
         / "evaluation_8_16_percentile_off1_sig1.0_q0.99_scores.json"
     )
+
+
+def test_scenario_runs_map_global_frames_to_source_scenarios():
+    data = pd.DataFrame({
+        "frame_id": [0, 1, 2, 3, 4],
+        "source_scenario_id": ["8_0", "8_0", "9_0", "9_0", "9_0"],
+        "scenario_description": ["first", "first", "second", "second", "second"],
+    })
+
+    assert list(scenario_runs(data)) == [
+        (0, 1, "8_0", "first"),
+        (2, 4, "9_0", "second"),
+    ]
