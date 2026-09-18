@@ -13,6 +13,7 @@ from infer_offline import (  # noqa: E402
     parse_args,
     public_result,
     resolve_video_scenario,
+    threshold_variant_tag,
 )
 
 
@@ -155,3 +156,10 @@ def test_public_result_contains_threshold_provenance():
     assert row["quantile"] == 0.98
     assert row["threshold_file"].endswith("_off2_sig1.5_q0.98.json")
     assert "original_bgr" not in row
+
+
+def test_threshold_variant_tag_matches_calibration_filename_convention():
+    assert (
+        threshold_variant_tag("percentile", 2, 1.5, 0.98)
+        == "percentile_off2_sig1.5_q0.98"
+    )

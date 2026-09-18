@@ -207,6 +207,11 @@ def resolve_path(value, repository_root):
     return path.resolve() if path.is_absolute() else (repository_root / path).resolve()
 
 
+def threshold_variant_tag(strategy, offset, sigma, quantile):
+    """Return the filename tag shared by calibration and inference outputs."""
+    return f"{strategy}_off{offset}_sig{sigma}_q{quantile}"
+
+
 def load_settings(args):
     repository_root = Path(__file__).resolve().parent.parent
     config_path = args.config.expanduser().resolve()
@@ -262,18 +267,21 @@ def load_settings(args):
     args.config_masks_dir = None
     if data_config.get("masks"):
         args.config_masks_dir = Path(data_config["masks"]).expanduser().resolve()
+    variant_tag = threshold_variant_tag(
+        args.threshold_strategy, args.offset, args.sigma, args.quantile
+    )
     args.output_csv = (
         args.output_csv.expanduser().resolve()
         if args.output_csv
         else repository_root / "results" / args.dataset_version / "offline_inference" /
-        f"{args.input_type}_{args.scenario}_{args.threshold_strategy}_scores.csv"
+        f"{args.input_type}_{args.scenario}_{variant_tag}_scores.csv"
     )
     output_root = args.output_csv.parent
     scenario_id = args.scenario_id
     default_video_name = (
-        f"{args.input_type}_{scenario_id}_{args.threshold_strategy}_detections.mp4"
+        f"{args.input_type}_{scenario_id}_{variant_tag}_detections.mp4"
         if scenario_id
-        else f"{args.input_type}_{args.threshold_strategy}_detections.mp4"
+        else f"{args.input_type}_{variant_tag}_detections.mp4"
     )
     args.output_video = (
         args.output_video.expanduser().resolve()
@@ -281,11 +289,11 @@ def load_settings(args):
     )
     args.timeline_video = (
         args.timeline_video.expanduser().resolve()
-        if args.timeline_video else output_root / "videos" / f"{args.input_type}_{scenario_id}_{args.threshold_strategy}_timeline.mp4"
+        if args.timeline_video else output_root / "videos" / f"{args.input_type}_{scenario_id}_{variant_tag}_timeline.mp4"
     )
     args.timeline_png = (
         args.timeline_png.expanduser().resolve()
-        if args.timeline_png else output_root / f"{args.input_type}_{scenario_id}_{args.threshold_strategy}_timeline.png"
+        if args.timeline_png else output_root / f"{args.input_type}_{scenario_id}_{variant_tag}_timeline.png"
     )
     return args
 
