@@ -9,6 +9,7 @@ sys.path.insert(0, str(SCRIPTS))
 
 from infer_offline import (  # noqa: E402
     camera_name_from_topic,
+    load_threshold,
     parse_args,
     resolve_video_scenario,
 )
@@ -88,3 +89,41 @@ def test_video_scenario_resolves_epito_videos_directory(tmp_path):
 
     assert resolved == video.resolve()
     assert scenario_id == "8_0"
+
+
+def test_threshold_ablation_variant_is_selected(tmp_path):
+    import json
+
+    area_dir = tmp_path / "PLeft"
+    area_dir.mkdir()
+    threshold = area_dir / "threshold_PLeft_percentile_off2_sig1.5_q0.98.json"
+    threshold.write_text(json.dumps({
+        "threshold": 0.42,
+        "threshold_strategy": "percentile",
+        "offset": 2,
+        "sigma": 1.5,
+        "quantile": 0.98,
+    }))
+
+    loaded = load_threshold(tmp_path, "PLeft", "percentile", 2, 1.5, 0.98)
+
+    assert loaded["path"] == threshold
+    assert loaded["threshold"] == 0.42
+
+
+def test_threshold_parameters_must_match_requested_variant(tmp_path):
+    import json
+
+    area_dir = tmp_path / "PLeft"
+    area_dir.mkdir()
+    threshold = area_dir / "threshold_PLeft_percentile.json"
+    threshold.write_text(json.dumps({
+        "threshold": 0.42,
+        "threshold_strategy": "percentile",
+        "offset": 3,
+        "sigma": 1.5,
+        "quantile": 0.98,
+    }))
+
+    with pytest.raises(ValueError, match="TAAS parameters do not match"):
+        load_threshold(tmp_path, "PLeft", "percentile", 2, 1.5, 0.98)

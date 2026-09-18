@@ -67,6 +67,18 @@ def parse_args():
         default="max",
         help="Calibration strategy to load (default: max).",
     )
+    parser.add_argument(
+        "--offset", type=int, default=1,
+        help="TAAS neighborhood offset used during threshold calibration (default: 1).",
+    )
+    parser.add_argument(
+        "--sigma", type=float, default=1.0,
+        help="TAAS Gaussian smoothing sigma used during calibration (default: 1.0).",
+    )
+    parser.add_argument(
+        "--quantile", type=float, default=0.99,
+        help="TAAS spatial score quantile used during calibration (default: 0.99).",
+    )
     parser.add_argument("--latent_dims", type=int)
     parser.add_argument("--frame_stride", type=int, default=1)
     parser.add_argument(
@@ -100,6 +112,10 @@ def parse_args():
         parser.error("--skip-first must be zero or greater")
     if args.max_frames is not None and args.max_frames < 1:
         parser.error("--max_frames must be at least 1")
+    if args.offset < 0 or args.sigma < 0 or not 0.0 <= args.quantile <= 1.0:
+        parser.error(
+            "--offset and --sigma must be non-negative; --quantile must be in [0, 1]"
+        )
     if args.output_fps <= 0 or args.timeline_history < 2 or args.timeline_seconds < 0:
         parser.error(
             "--output_fps must be positive, --timeline_history at least 2, "
@@ -314,21 +330,26 @@ def parse_masks(values, areas, masks_dir=None):
     return masks
 
 
-def load_threshold(threshold_dir, area, strategy):
+def load_threshold(threshold_dir, area, strategy, offset=1, sigma=1.0, quantile=0.99):
     area_dir = threshold_dir / area
-    path = area_dir / f"threshold_{area}_{strategy}.json"
-    if not path.is_file():
-        legacy_path = area_dir / f"threshold_{area}.json"
-        if legacy_path.is_file():
-            path = legacy_path
-        else:
-            available = ", ".join(
-                item.name for item in sorted(area_dir.glob("threshold_*.json"))
-            )
-            raise FileNotFoundError(
-                f"Threshold config not found: {path}. "
-                f"Available: {available or 'none'}"
-            )
+    variant_name = (
+        f"threshold_{area}_{strategy}_off{offset}_sig{sigma}_q{quantile}.json"
+    )
+    candidates = (
+        area_dir / variant_name,
+        area_dir / f"threshold_{area}_{strategy}.json",
+        area_dir / f"threshold_{area}.json",
+    )
+    path = next((candidate for candidate in candidates if candidate.is_file()), None)
+    if path is None:
+        available = ", ".join(
+            item.name for item in sorted(area_dir.glob("threshold_*.json"))
+        )
+        raise FileNotFoundError(
+            f"Threshold config not found for strategy={strategy}, offset={offset}, "
+            f"sigma={sigma}, quantile={quantile}. Expected {variant_name}. "
+            f"Available: {available or 'none'}"
+        )
     with path.open("r", encoding="utf-8") as stream:
         config = json.load(stream)
     configured_strategy = config.get("threshold_strategy")
@@ -337,6 +358,22 @@ def load_threshold(threshold_dir, area, strategy):
             f"Requested threshold strategy {strategy!r}, but {path} contains "
             f"{configured_strategy!r}"
         )
+    requested = {"offset": int(offset), "sigma": float(sigma), "quantile": float(quantile)}
+    actual = {
+        "offset": int(config["offset"]),
+        "sigma": float(config["sigma"]),
+        "quantile": float(config["quantile"]),
+    }
+    mismatches = [
+        key for key in requested
+        if not np.isclose(actual[key], requested[key], rtol=0.0, atol=1e-12)
+    ]
+    if mismatches:
+        details = ", ".join(
+            f"{key}: requested {requested[key]}, file has {actual[key]}"
+            for key in mismatches
+        )
+        raise ValueError(f"Threshold TAAS parameters do not match {path}: {details}")
     return {
         "threshold": float(config["threshold"]),
         "offset": int(config["offset"]),
@@ -371,7 +408,12 @@ def load_models(args, device):
         encoder.eval()
         decoder.eval()
         threshold_config = load_threshold(
-            args.threshold_dir, area, args.threshold_strategy
+            args.threshold_dir,
+            area,
+            args.threshold_strategy,
+            args.offset,
+            args.sigma,
+            args.quantile,
         )
         models[area] = {
             "encoder": encoder,
