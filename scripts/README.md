@@ -1,18 +1,117 @@
-## Model Checkpoints - UC3/UniTo - DistriMuSe
+```bash
+#!/bin/bash
 
-This Repo Contains the Checkpoints for Trained Models on Smart Robotics dataset for UC3 (Real Palletizing dataset) (`DEMO3.3`)
+set -e
+trap 'echo "Stopping all processes..."; kill 0' EXIT
 
-All codes are available at [GitHub/rashidrao-pk/**_distrimuse_unito_**](https://github.com/rashidrao-pk/distrimuse_unito)
+export ROS_LOCALHOST_ONLY=1
+export ROS_DOMAIN_ID=0
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 
-### Structure
+echo "Starting image broadcaster..."
+cd ~/advis/distrimuse-image-broadcaster || exit 1
+pixi run replay /home/unito/advis/bags/recording_20260313_133316/ --no-display --loop &
+
+sleep 5
+
+echo "Starting inference GUI..."
+cd ~/advis/advis_distrimuse_unito_SR || exit 1
+source /home/unito/advis/distrimuse-ros2-api/install/setup.bash
+
+pixi run python scripts/infer_ros_live_GUI_v3.py \
+  --camera_topic /camera/back_view/image_raw \
+  --safety_area ALL \
+  --area_names RoboArm ConvBelt PLeft PRight \
+  --static_mask_paths \
+    "/home/unito/advis/DS/SR/v3/masks/Mask Generation_RoboArm_MASK.png" \
+    "/home/unito/advis/DS/SR/v3/masks/Mask Generation_ConvBelt_MASK.png" \
+    "/home/unito/advis/DS/SR/v3/masks/Mask Generation_PLeft_MASK.png" \
+    "/home/unito/advis/DS/SR/v3/masks/Mask Generation_PRight_MASK.png" \
+  --threshold_dir /home/unito/advis/advis_distrimuse_unito_SR/scripts/results/thresholds \
+  --checkpoints /home/unito/advis/advis_distrimuse_unito_SR/scripts/results/models_v2 \
+  --latent_dims 64 \
+  --frame_stride 1 \
+  --verbose_level 1 \
+  --log_every_n 10 \
+  --process_period 0.02 \
+  --show_timeline \
+  --show_model_input
+```
+
+- Make it executable:
+```bash
+chmod +x run_advis.sh
+```
+
+- Run it:
+```bash
+./run_advis.sh
+```
+
+
+
+- RUN BOTH
 
 ```bash
---- dm_checkpoints
-    --- checkpoints                 (930MB)
-        --- model_ConvBelt_64.pt    (232MB)
-        --- model_PLeft_64.pt       (232MB)
-        --- model_PRight_64.pt      (232MB)
-        --- model_RoboArm_64.pt     (232MB)
+#!/bin/bash
+
+export ROS_LOCALHOST_ONLY=1
+export ROS_DOMAIN_ID=0
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+
+gnome-terminal -- bash -c '
+cd ~/advis/distrimuse-image-broadcaster || exit 1
+export ROS_LOCALHOST_ONLY=1
+export ROS_DOMAIN_ID=0
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+pixi run replay /home/unito/advis/bags/recording_20260313_133316/ --no-display --loop
+exec bash
+'
+
+sleep 5
+
+gnome-terminal -- bash -c '
+cd ~/advis/advis_distrimuse_unito_SR || exit 1
+export ROS_LOCALHOST_ONLY=1
+export ROS_DOMAIN_ID=0
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+source /home/unito/advis/distrimuse-ros2-api/install/setup.bash
+pixi run python scripts/infer_ros_live_GUI_v3.py \
+  --camera_topic /camera/back_view/image_raw \
+  --safety_area ALL \
+  --area_names RoboArm ConvBelt PLeft PRight \
+  --static_mask_paths \
+    "/home/unito/advis/DS/SR/v3/masks/Mask Generation_RoboArm_MASK.png" \
+    "/home/unito/advis/DS/SR/v3/masks/Mask Generation_ConvBelt_MASK.png" \
+    "/home/unito/advis/DS/SR/v3/masks/Mask Generation_PLeft_MASK.png" \
+    "/home/unito/advis/DS/SR/v3/masks/Mask Generation_PRight_MASK.png" \
+  --threshold_dir /home/unito/advis/advis_distrimuse_unito_SR/scripts/results/thresholds \
+  --checkpoints /home/unito/advis/advis_distrimuse_unito_SR/scripts/results/models_v2 \
+  --latent_dims 64 \
+  --frame_stride 1 \
+  --verbose_level 1 \
+  --log_every_n 10 \
+  --process_period 0.02 \
+  --show_timeline \
+  --show_model_input
+exec bash
+'
+
+gnome-terminal -- bash -c '
+cd ~/advis/advis_distrimuse_unito_SR || exit 1
+source /home/unito/advis/distrimuse-ros2-api/install/setup.bash
+pixi run ros2 topic echo /rulex/detection_result
+exec bash
+'
 ```
+
+- RUN 
+```bash
+chmod +x run_advis_terminals.sh
+./run_advis_terminals.sh
+```
+
+
+
 
 
