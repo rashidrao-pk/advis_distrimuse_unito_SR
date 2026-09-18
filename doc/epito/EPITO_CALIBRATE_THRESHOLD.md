@@ -87,7 +87,27 @@ for ooff in 1 2 3; do
   done
 done
 ```
+
 ## Plot Validation Plots
+
+```bash
+for ooff in 1 2 3; do
+  for ss in 1.0 1.5; do
+    for qq in 0.99 0.98 0.97; do
+      echo "=============================================================================================="
+      echo "Offset=${ooff}, Sigma=${ss}, Quantile=${qq}"
+      echo "=============================================================================================="
+      python scripts/plot_validation_timelines.py \
+        --dataset_version V6 \
+        --threshold_strategy percentile \
+        --threshold_percentile 99.0 \
+        --offset "$ooff" \
+        --sigma "$ss" \
+        --quantile "$qq" || exit 1
+    done
+  done
+done
+```
 
 ```bash
 #  Plot Validation Timeline
