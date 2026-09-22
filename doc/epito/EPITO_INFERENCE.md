@@ -423,6 +423,8 @@ New params added:
 - --add_score_name
 - --add_fps_details
 - --profile-timing
+- --taas_backend `cython`
+- --taas_backend `numpy`
 
 ```bash
 python scripts/infer_offline.py \

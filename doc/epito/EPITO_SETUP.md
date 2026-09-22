@@ -15,6 +15,21 @@ du -sh /beegfs/home/mrashid/datasets/AD/SR/V6/rosbags
 
 ```
 
+## Install Cython and TAAS
+
+[Follow this](/doc/METHODS.md#taas)
+
+```bash
+
+conda activate pt_312
+python -m pip install cython
+```
+
+```bash
+python scripts/setup_taas_cython.py build_ext --inplace
+ls scripts/taas_cython*.so
+```
+
 ```text
 | /ROSBAGS
 |------ extracted_frames
@@ -30,7 +45,7 @@ du -sh /beegfs/home/mrashid/datasets/AD/SR/V6/rosbags
 |---------- 2_0
 |-------------
 |---------- Jul27_Scenario_1_0_2026-07-27_10-25-24
-|------------- 
+|-------------
 |---------- Jul27_Scenario_1_0_2026-07-27_10-25-24
 |---------- Jul27_Scenario_1_0_2026-07-27_10-25-24
 |---------- Jul27_Scenario_1_0_2026-07-27_10-25-24

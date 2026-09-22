@@ -1,13 +1,27 @@
 ### TAAS:
 
-$$s(x,\hat{x}) =
+```bash
+
+conda activate pt_312
+python -m pip install cython
+```
+
+```bash
+python scripts/setup_taas_cython.py build_ext --inplace
+ls scripts/taas_cython*.so
+```
+
+$$
+s(x,\hat{x}) =
 Q_q\left(
 G_\sigma\left(
 \min_{|\Delta i|,|\Delta j|\leq o}
 \lVert x_{i,j}-\hat{x}_{i+\Delta i,j+\Delta j}\rVert_2
-\right)\right)$$
+\right)\right)
+$$
 
 In practical terms:
+
 1. Compare the original and reconstructed image.
 2. For each pixel, search a spatial neighborhood controlled by offset.
 3. Keep the smallest RGB distance in that neighborhood.
@@ -24,6 +38,7 @@ offset=3  search a 7×7 neighborhood
 ```
 
 A larger offset:
+
 - Tolerates small reconstruction shifts.
 - Reduces false alarms caused by alignment errors.
 - Can hide small localized anomalies if too large.
@@ -37,7 +52,9 @@ sigma=0.5  light smoothing
 sigma=1.0  moderate smoothing
 sigma=1.5  stronger smoothing
 ```
+
 A larger sigma:
+
 - Suppresses isolated noisy pixels.
 - Makes scores more stable.
 - Can blur small defects or thin objects.
@@ -61,19 +78,19 @@ input is less consistent with the learned normal appearance. Every score needs
 its own calibrated threshold: numerical thresholds cannot be transferred from
 one score family to another.
 
-| Score name in ablation | Definition | Strength | Main limitation |
-|---|---|---|---|
-| `L1_mean` | Mean absolute residual | Robust, simple and comparable across equal preprocessing | Treats every pixel equally and is sensitive to small spatial shifts |
-| `L2_norm` | Euclidean norm of the complete residual | Emphasizes larger errors | Depends on image dimensions and can be dominated by broad reconstruction error |
-| `MSE_mean` | Mean squared residual | Standard VAE reconstruction metric | Can emphasize large pixel errors and background reconstruction artifacts |
-| `RAVI_max_abs` | Maximum absolute residual per image | Very sensitive to tiny/local anomalies | Extremely sensitive to one noisy or saturated pixel |
-| `dSSIM_sig*` | Structural dissimilarity, (1-SSIM) | Responds to structural/texture changes and is less tied to exact color error | Window and Gaussian sigma affect sensitivity; global averaging may dilute small anomalies |
-| `TAAS_off*_sig*_q*` | Tolerance-aware anomaly score described above | Tolerates small spatial reconstruction shifts and permits tail control | Large tolerance or strong smoothing can hide small anomalies |
+| Score name in ablation | Definition                                    | Strength                                                                     | Main limitation                                                                           |
+| ---------------------- | --------------------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `L1_mean`              | Mean absolute residual                        | Robust, simple and comparable across equal preprocessing                     | Treats every pixel equally and is sensitive to small spatial shifts                       |
+| `L2_norm`              | Euclidean norm of the complete residual       | Emphasizes larger errors                                                     | Depends on image dimensions and can be dominated by broad reconstruction error            |
+| `MSE_mean`             | Mean squared residual                         | Standard VAE reconstruction metric                                           | Can emphasize large pixel errors and background reconstruction artifacts                  |
+| `RAVI_max_abs`         | Maximum absolute residual per image           | Very sensitive to tiny/local anomalies                                       | Extremely sensitive to one noisy or saturated pixel                                       |
+| `dSSIM_sig*`           | Structural dissimilarity, (1-SSIM)            | Responds to structural/texture changes and is less tied to exact color error | Window and Gaussian sigma affect sensitivity; global averaging may dilute small anomalies |
+| `TAAS_off*_sig*_q*`    | Tolerance-aware anomaly score described above | Tolerates small spatial reconstruction shifts and permits tail control       | Large tolerance or strong smoothing can hide small anomalies                              |
 
 ### L1: mean absolute reconstruction error
 
 \[
-s_{L1}(x,\hat{x})=\frac{1}{CHW}\sum_{c,i,j}|x_{cij}-\hat{x}_{cij}|
+s*{L1}(x,\hat{x})=\frac{1}{CHW}\sum*{c,i,j}|x*{cij}-\hat{x}*{cij}|
 \]
 
 L1 is a useful baseline because it has a direct interpretation as average
@@ -83,7 +100,7 @@ than MSE or L2.
 ### L2: full-image Euclidean residual
 
 \[
-s_{L2}(x,\hat{x})=\sqrt{\sum_{c,i,j}(x_{cij}-\hat{x}_{cij})^2}
+s*{L2}(x,\hat{x})=\sqrt{\sum*{c,i,j}(x*{cij}-\hat{x}*{cij})^2}
 \]
 
 This matches `ComputeDifferences.get_l2_difference` in `scripts/utils.py`.
@@ -93,7 +110,7 @@ thresholds are valid only for the same image size and channel configuration.
 ### MSE: mean squared reconstruction error
 
 \[
-s_{MSE}(x,\hat{x})=\frac{1}{CHW}\sum_{c,i,j}(x_{cij}-\hat{x}_{cij})^2
+s*{MSE}(x,\hat{x})=\frac{1}{CHW}\sum*{c,i,j}(x*{cij}-\hat{x}*{cij})^2
 \]
 
 MSE is included because it is the reconstruction objective used by the model.
@@ -105,7 +122,7 @@ loss is not necessarily the score that best separates anomalies.
 For threshold ablation, RAVI is calculated per image:
 
 \[
-s_{RAVI}(x,\hat{x})=\max_{c,i,j}|x_{cij}-\hat{x}_{cij}|
+s*{RAVI}(x,\hat{x})=\max*{c,i,j}|x*{cij}-\hat{x}*{cij}|
 \]
 
 This follows the residual and maximum operation in
@@ -121,7 +138,7 @@ saturation.
 ### d-SSIM: structural dissimilarity
 
 \[
-s_{dSSIM}(x,\hat{x})=1-SSIM(x,\hat{x})
+s\_{dSSIM}(x,\hat{x})=1-SSIM(x,\hat{x})
 \]
 
 SSIM close to 1 means similar structure, so d-SSIM close to 0 is normal. The
