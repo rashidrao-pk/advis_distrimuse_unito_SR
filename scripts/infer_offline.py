@@ -5,6 +5,7 @@ import argparse
 import csv
 import json
 import re
+import time
 from collections import OrderedDict, deque
 from pathlib import Path
 
@@ -103,6 +104,17 @@ def parse_args():
     )
     parser.set_defaults(save_video=None)
     parser.add_argument("--output_fps", type=float, default=10.0)
+    parser.add_argument(
+        "--add_score_name", "--add-score-name", action="store_true",
+        help=(
+            "Add the anomaly-score function used for threshold calibration and "
+            "the function used during inference to the dashboard details panel."
+        ),
+    )
+    parser.add_argument(
+        "--add_fps_details", "--add-fps-details", action="store_true",
+        help="Add current processing FPS and configured output FPS to the dashboard.",
+    )
     parser.add_argument("--timeline_history", type=int, default=500)
     parser.add_argument("--timeline_seconds", type=float, default=4.0)
     args = parser.parse_args()
@@ -505,6 +517,10 @@ def infer_crop(image, area, model, normalize, device):
         distance = gaussian_filter(distance, sigma=threshold_config["sigma"])
     score = float(np.quantile(distance, threshold_config["quantile"]))
     threshold = threshold_config["threshold"]
+    inference_score_func = (
+        f"TAAS_OFF{threshold_config['offset']}-s_{threshold_config['sigma']}"
+        f"-q_{threshold_config['quantile']}"
+    )
     normalized = score / threshold
     original_bgr = (original[..., ::-1] * 255).clip(0, 255).astype(np.uint8)
     reconstructed_bgr = (
@@ -520,7 +536,10 @@ def infer_crop(image, area, model, normalize, device):
         "normalized_score": normalized,
         "is_anomalous": normalized > 1.0,
         "threshold_strategy": threshold_config["strategy"],
+        # Keep score_func for compatibility with existing score CSV consumers.
         "score_func": threshold_config["score_func"],
+        "calibration_score_func": threshold_config["score_func"],
+        "inference_score_func": inference_score_func,
         "reconstruction_mode": threshold_config["reconstruction_mode"],
         "offset": threshold_config["offset"],
         "sigma": threshold_config["sigma"],
@@ -832,7 +851,7 @@ def iter_rosbag(args):
 
 def public_result(result):
     """Drop image arrays before writing a result to CSV."""
-    return {
+    public = {
         key: result[key] for key in (
             "safety_area", "anomaly_score", "threshold",
             "normalized_score", "is_anomalous",
@@ -840,6 +859,15 @@ def public_result(result):
             "offset", "sigma", "quantile",
         )
     }
+    public["calibration_score_func"] = result.get(
+        "calibration_score_func", result["score_func"]
+    )
+    public["inference_score_func"] = result.get(
+        "inference_score_func", result["score_func"]
+    )
+    if "threshold_file" in result:
+        public["threshold_file"] = result["threshold_file"]
+    return public
 
 
 def annotate_full_frame(frame, masks, results):
@@ -902,7 +930,23 @@ def paste_patch(canvas, patch, mask):
     canvas[y1:y2 + 1, x1:x2 + 1] = np.where(region_mask, resized, target)
 
 
-def make_advis_dashboard(frame, masks, results, sample_id, cropped_area=None):
+def compact_sample_name(sample_id):
+    """Remove directory components while retaining frame/timestamp information."""
+    parts = []
+    for part in str(sample_id).split("#"):
+        if "=" in part:
+            key, value = part.split("=", 1)
+            parts.append(f"{key}={Path(value).name}")
+        else:
+            parts.append(Path(part).name)
+    return "#".join(parts)
+
+
+def make_advis_dashboard(
+    frame, masks, results, sample_id, cropped_area=None,
+    add_score_name=False, add_fps_details=False, processing_fps=None,
+    output_fps=None,
+):
     """Create the four-panel ADVIS dashboard used by the Zenoh viewer."""
     width, height, padding = 1600, 1000, 16
     canvas = np.full((height, width, 3), 235, dtype=np.uint8)
@@ -960,7 +1004,7 @@ def make_advis_dashboard(frame, masks, results, sample_id, cropped_area=None):
     details[:] = (245, 245, 245)
     cv2.line(details, (20, 24), (details.shape[1] - 20, 24), (40, 40, 40), 2)
     cv2.putText(
-        details, f"Sample: {str(sample_id)[-75:]}", (25, 58),
+        details, f"Sample: {compact_sample_name(sample_id)[:75]}", (25, 58),
         cv2.FONT_HERSHEY_SIMPLEX, 0.55, (25, 25, 25), 1, cv2.LINE_AA,
     )
     headers = ("Safety Area", "RawVal", "Threshold", "Score", "Status")
@@ -997,6 +1041,32 @@ def make_advis_dashboard(frame, masks, results, sample_id, cropped_area=None):
         y += 20
         cv2.line(details, (20, y), (details.shape[1] - 20, y), (150, 150, 150), 1)
         y += 38
+    footer_lines = []
+    if add_score_name and results:
+        calibration = ", ".join(dict.fromkeys(
+            str(result.get("calibration_score_func", result.get("score_func", "unknown")))
+            for result in results.values()
+        ))
+        inference = ", ".join(dict.fromkeys(
+            str(result.get("inference_score_func", "unknown"))
+            for result in results.values()
+        ))
+        footer_lines.append(
+            f"Tau score: {calibration}  |  Inference score: {inference}"
+        )
+    if add_fps_details:
+        measured = "warming up" if processing_fps is None else f"{processing_fps:.2f} fps"
+        footer_lines.append(
+            f"Average processing: {measured}  |  Output video: {output_fps:.2f} fps"
+        )
+    if footer_lines:
+        footer_y = details.shape[0] - 20 * len(footer_lines) - 8
+        for line in footer_lines:
+            cv2.putText(
+                details, line[:100], (25, footer_y), cv2.FONT_HERSHEY_SIMPLEX,
+                0.43, (35, 35, 35), 1, cv2.LINE_AA,
+            )
+            footer_y += 20
     return canvas
 
 def render_dashboard(visual, histories, latest, sample_id, final=False):
@@ -1090,6 +1160,8 @@ def main():
     )
     latest = OrderedDict()
     rows = []
+    processed_frames = 0
+    processing_started = time.perf_counter()
     video = VideoOutput(args.output_video, args.output_fps) if args.save_video else None
     timeline_video = (
         VideoOutput(args.timeline_video, args.output_fps) if args.save_video else None
@@ -1120,8 +1192,16 @@ def main():
                 )
                 progress.set_postfix_str(status_text)
                 if args.save_video:
+                    processed_frames += 1
+                    processing_fps = processed_frames / max(
+                        time.perf_counter() - processing_started, 1e-9
+                    )
                     dashboard = make_advis_dashboard(
-                        crops, None, frame_results, sample_id, cropped_area="ALL"
+                        crops, None, frame_results, sample_id, cropped_area="ALL",
+                        add_score_name=args.add_score_name,
+                        add_fps_details=args.add_fps_details,
+                        processing_fps=processing_fps,
+                        output_fps=args.output_fps,
                     )
                     video.write(dashboard)
                     timeline_video.write(
@@ -1133,7 +1213,6 @@ def main():
                 "video": iter_video,
                 "rosbag": iter_rosbag,
             }
-            processed_frames = 0
             progress = tqdm(
                 factories[args.input_type](args), total=input_progress_total(args),
                 desc=f"Offline inference [{args.input_type}]", unit="frame",
@@ -1156,8 +1235,16 @@ def main():
                 )
                 progress.set_postfix_str(status_text)
                 if args.save_video:
+                    next_count = processed_frames + 1
+                    processing_fps = next_count / max(
+                        time.perf_counter() - processing_started, 1e-9
+                    )
                     dashboard = make_advis_dashboard(
-                        frame, masks, frame_results, sample_id
+                        frame, masks, frame_results, sample_id,
+                        add_score_name=args.add_score_name,
+                        add_fps_details=args.add_fps_details,
+                        processing_fps=processing_fps,
+                        output_fps=args.output_fps,
                     )
                     video.write(dashboard)
                     timeline_video.write(
@@ -1184,7 +1271,8 @@ def main():
     fieldnames = (
         "sample_id", "safety_area", "anomaly_score", "threshold",
         "normalized_score", "is_anomalous",
-        "threshold_strategy", "score_func", "reconstruction_mode",
+        "threshold_strategy", "score_func", "calibration_score_func",
+        "inference_score_func", "reconstruction_mode",
         "offset", "sigma", "quantile",
     )
     with args.output_csv.open("w", newline="", encoding="utf-8") as stream:

@@ -130,8 +130,8 @@ python scripts/infer_offline.py \
   --topic /camera/back_view/image_raw \
   --safety_areas ALL \
   --threshold_strategy percentile \
-  --offset 3 \
-  --sigma 1.5 \
+  --offset 1 \
+  --sigma 1.0 \
   --quantile 0.99 \
   --max_frames 200 \
   --skip-first 100 \
@@ -414,4 +414,25 @@ echo "[COMPLETED] All ${total} threshold combinations"
 ```bash
 chmod +x scripts/bash/run_evaluation.sh
 ./scripts/bash/run_evaluation.sh
+```
+
+## Run on Winning without RollingMin
+
+New params added:
+
+- --add_score_name
+- --add_fps_details
+
+```bash
+python scripts/infer_offline.py \
+  --config configs/cf_dataset_epito.yaml \
+  --input_type video \
+  --scenario 8_16 \
+  --safety_areas ALL \
+  --threshold_strategy percentile \
+  --offset 3 \
+  --sigma 1.5 \
+  --quantile 0.99 \
+  --add_score_name \
+  --add_fps_details
 ```

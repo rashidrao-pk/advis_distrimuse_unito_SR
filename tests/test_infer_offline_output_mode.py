@@ -9,6 +9,7 @@ sys.path.insert(0, str(SCRIPTS))
 
 from infer_offline import (  # noqa: E402
     camera_name_from_topic,
+    compact_sample_name,
     load_threshold,
     parse_args,
     public_result,
@@ -35,6 +36,23 @@ def test_scores_only_disables_video_outputs(monkeypatch):
 
 def test_save_video_switch_enables_video_outputs(monkeypatch):
     assert parse(monkeypatch, "--save-video").save_video is True
+
+
+def test_optional_dashboard_details_are_disabled_by_default(monkeypatch):
+    args = parse(monkeypatch)
+    assert args.add_score_name is False
+    assert args.add_fps_details is False
+
+
+def test_optional_dashboard_details_can_be_enabled(monkeypatch):
+    args = parse(monkeypatch, "--add_score_name", "--add_fps_details")
+    assert args.add_score_name is True
+    assert args.add_fps_details is True
+
+
+def test_sample_display_does_not_include_full_path():
+    sample = compact_sample_name("/beegfs/home/user/videos/input.mp4#frame=42")
+    assert sample == "input.mp4#frame=42"
 
 
 def test_explicit_video_path_enables_video_outputs(monkeypatch):
@@ -98,7 +116,7 @@ def test_threshold_ablation_variant_is_selected(tmp_path):
 
     area_dir = tmp_path / "PLeft"
     area_dir.mkdir()
-    threshold = area_dir / "threshold_PLeft_percentile_off2_sig1.5_q0.98.json"
+    threshold = area_dir / "threshold_PLeft_percentile99.0_off2_sig1.5_q0.98.json"
     threshold.write_text(json.dumps({
         "threshold": 0.42,
         "threshold_strategy": "percentile",
@@ -107,7 +125,9 @@ def test_threshold_ablation_variant_is_selected(tmp_path):
         "quantile": 0.98,
     }))
 
-    loaded = load_threshold(tmp_path, "PLeft", "percentile", 2, 1.5, 0.98)
+    loaded = load_threshold(
+        tmp_path, "PLeft", "percentile", 99.0, 2, 1.5, 0.98
+    )
 
     assert loaded["path"] == threshold
     assert loaded["threshold"] == 0.42
@@ -128,7 +148,7 @@ def test_threshold_parameters_must_match_requested_variant(tmp_path):
     }))
 
     with pytest.raises(ValueError, match="TAAS parameters do not match"):
-        load_threshold(tmp_path, "PLeft", "percentile", 2, 1.5, 0.98)
+        load_threshold(tmp_path, "PLeft", "percentile", 99.0, 2, 1.5, 0.98)
 
 
 def test_public_result_contains_threshold_provenance():
