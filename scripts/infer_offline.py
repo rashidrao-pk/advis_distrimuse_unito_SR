@@ -13,7 +13,6 @@ from pathlib import Path
 import cv2
 import numpy as np
 import torch
-import torchvision.transforms as transforms
 import yaml
 from matplotlib import colormaps
 from scipy.ndimage import gaussian_filter
@@ -620,6 +619,11 @@ def to_tensor(image, normalize, device):
     rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
     tensor = torch.from_numpy(rgb).permute(2, 0, 1).float() / 255.0
     return normalize(tensor).unsqueeze(0).to(device)
+
+
+def normalize_model_input(tensor):
+    """Match torchvision Normalize(mean=0.5, std=0.5) without importing it."""
+    return (tensor - 0.5) / 0.5
 
 
 def tensor_to_hwc(tensor):
@@ -1391,7 +1395,7 @@ def main():
     )
     models = load_models(args, device)
     profiler = TimingProfiler(args.profile_timing)
-    normalize = transforms.Normalize((0.5,) * 3, (0.5,) * 3)
+    normalize = normalize_model_input
     masks = None
     mask_geometries = None
     if args.input_type != "cropped":

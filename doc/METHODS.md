@@ -9,6 +9,7 @@ python -m pip install cython
 ```bash
 python scripts/setup_taas_cython.py build_ext --inplace
 ls scripts/tass_cython_distance*.so
+
 ```
 
 ```bash

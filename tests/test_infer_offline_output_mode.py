@@ -3,6 +3,7 @@ import sys
 from collections import deque
 
 import pytest
+import torch
 
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
@@ -13,6 +14,7 @@ from infer_offline import (  # noqa: E402
     camera_name_from_topic,
     compact_sample_name,
     load_threshold,
+    normalize_model_input,
     parse_args,
     public_result,
     resolve_taas_backend,
@@ -32,6 +34,13 @@ def parse(monkeypatch, *extra):
 
 def test_csv_and_video_are_default(monkeypatch):
     assert parse(monkeypatch).save_video is True
+
+
+def test_inference_normalization_does_not_require_torchvision():
+    tensor = torch.tensor([0.0, 0.5, 1.0])
+    assert torch.equal(
+        normalize_model_input(tensor), torch.tensor([-1.0, 0.0, 1.0])
+    )
 
 
 def test_scores_only_disables_video_outputs(monkeypatch):
