@@ -12,6 +12,10 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
@@ -90,6 +94,7 @@ def binary_metrics(group: pd.DataFrame) -> dict:
 
     recall = divide(tp, tp + fn)
     specificity = divide(tn, tn + fp)
+    ranking = ranking_curve_data(group)
     return {
         "total_frames": (
             int(group["frame_id"].nunique())
@@ -112,6 +117,48 @@ def binary_metrics(group: pd.DataFrame) -> dict:
         ),
         "false_positive_rate": divide(fp, fp + tn),
         "false_negative_rate": divide(fn, fn + tp),
+        "auroc": ranking["auroc"],
+        "auprc": ranking["auprc"],
+        "aupro": None,
+        "aupro_status": (
+            "unavailable: requires pixel-level ground-truth masks and anomaly maps"
+        ),
+    }
+
+
+def ranking_curve_data(group: pd.DataFrame) -> dict:
+    """Compute frame-level ROC and precision-recall curves without sklearn."""
+    empty = {
+        "fpr": np.array([]), "tpr": np.array([]),
+        "recall": np.array([]), "precision": np.array([]),
+        "auroc": None, "auprc": None,
+    }
+    if "normalized_score" not in group.columns:
+        return empty
+    evaluated = group[group["label"].isin(("Normal", "Anomalous"))]
+    truth = evaluated["label"].eq("Anomalous").to_numpy(dtype=np.int8)
+    scores = evaluated["normalized_score"].to_numpy(dtype=float)
+    positives = int(truth.sum())
+    negatives = int(len(truth) - positives)
+    if not positives or not negatives or not len(scores):
+        return empty
+    order = np.argsort(-scores, kind="mergesort")
+    truth = truth[order]
+    scores = scores[order]
+    cumulative_tp = np.cumsum(truth)
+    cumulative_fp = np.cumsum(1 - truth)
+    distinct_ends = np.r_[np.where(np.diff(scores) != 0)[0], len(scores) - 1]
+    tp = cumulative_tp[distinct_ends].astype(float)
+    fp = cumulative_fp[distinct_ends].astype(float)
+    tpr = np.r_[0.0, tp / positives]
+    fpr = np.r_[0.0, fp / negatives]
+    recall = np.r_[0.0, tp / positives]
+    precision = np.r_[1.0, tp / np.maximum(tp + fp, 1.0)]
+    return {
+        "fpr": fpr, "tpr": tpr,
+        "recall": recall, "precision": precision,
+        "auroc": float(np.trapz(tpr, fpr)),
+        "auprc": float(np.sum(np.diff(recall) * precision[1:])),
     }
 
 
@@ -381,6 +428,129 @@ def default_evaluation_path(score_csv: Path, threshold_dir: Path) -> Path:
     return threshold_dir.parent / "evaluation" / f"evaluation_{stem}.json"
 
 
+def safe_filename(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", str(value)).strip("-")
+
+
+def plot_confusion_matrix(path: Path, title: str, metrics: dict) -> None:
+    matrix = np.array([[metrics["tn"], metrics["fp"]],
+                       [metrics["fn"], metrics["tp"]]], dtype=int)
+    figure, ax = plt.subplots(figsize=(6.2, 5.2), constrained_layout=True)
+    image = ax.imshow(matrix, cmap="Blues")
+    for row in range(2):
+        for column in range(2):
+            value = matrix[row, column]
+            color = "white" if value > matrix.max() * 0.55 else "#111827"
+            code = (("TN", "FP"), ("FN", "TP"))[row][column]
+            ax.text(column, row, f"{value:,}\n{code}", ha="center", va="center",
+                    fontsize=15, fontweight="bold", color=color)
+    ax.set_xticks((0, 1), ("Predicted Normal", "Predicted Anomalous"))
+    ax.set_yticks((0, 1), ("Actual Normal", "Actual Anomalous"))
+    ax.set_title(title)
+    figure.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
+    figure.savefig(path, dpi=180, bbox_inches="tight")
+    plt.close(figure)
+
+
+def save_evaluation_plots(data: pd.DataFrame, output_dir: Path) -> dict:
+    """Save per-area and cumulative diagnostic plots for each strategy."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    artifacts = {}
+    metric_names = ("precision", "recall", "f1", "accuracy", "balanced_accuracy")
+    for strategy, strategy_group in data.groupby("score_strategy", sort=False):
+        strategy_name = safe_filename(strategy)
+        groups = [(area, group) for area, group in strategy_group.groupby(
+            "safety_area", sort=False
+        )]
+        groups.append(("cumulative", strategy_group))
+        strategy_artifacts = {"confusion_matrices": {}, "aupro": {
+            "available": False,
+            "reason": "requires pixel-level ground-truth masks and anomaly maps",
+        }}
+
+        for name, group in groups:
+            path = output_dir / f"{strategy_name}_{safe_filename(name)}_confusion_matrix.png"
+            plot_confusion_matrix(
+                path, f"{strategy} — {name} confusion matrix", binary_metrics(group)
+            )
+            strategy_artifacts["confusion_matrices"][name] = str(path.resolve())
+
+        figure, (roc_ax, pr_ax) = plt.subplots(
+            1, 2, figsize=(14, 5.5), constrained_layout=True
+        )
+        curve_metrics = {}
+        for name, group in groups:
+            curve = ranking_curve_data(group)
+            curve_metrics[name] = {
+                "auroc": curve["auroc"], "auprc": curve["auprc"]
+            }
+            if curve["auroc"] is None:
+                continue
+            width = 2.5 if name == "cumulative" else 1.5
+            roc_ax.plot(curve["fpr"], curve["tpr"], linewidth=width,
+                        label=f"{name} (AUROC={curve['auroc']:.3f})")
+            pr_ax.plot(curve["recall"], curve["precision"], linewidth=width,
+                       label=f"{name} (AUPRC={curve['auprc']:.3f})")
+        roc_ax.plot((0, 1), (0, 1), "--", color="#64748b", linewidth=1)
+        roc_ax.set(xlabel="False-positive rate", ylabel="True-positive rate",
+                   title=f"ROC curves — {strategy}", xlim=(0, 1), ylim=(0, 1))
+        pr_ax.set(xlabel="Recall", ylabel="Precision",
+                  title=f"Precision–recall curves — {strategy}", xlim=(0, 1), ylim=(0, 1))
+        for ax in (roc_ax, pr_ax):
+            ax.grid(alpha=0.25)
+            ax.legend(fontsize=8)
+        curves_path = output_dir / f"{strategy_name}_roc_precision_recall_curves.png"
+        figure.savefig(curves_path, dpi=180, bbox_inches="tight")
+        plt.close(figure)
+        strategy_artifacts["roc_precision_recall"] = str(curves_path.resolve())
+        strategy_artifacts["curve_metrics"] = curve_metrics
+
+        columns = 2
+        rows = int(np.ceil(len(groups) / columns))
+        figure, axes = plt.subplots(rows, columns, figsize=(14, 3.6 * rows),
+                                    constrained_layout=True, squeeze=False)
+        for ax, (name, group) in zip(axes.flat, groups):
+            evaluated = group[group["label"].isin(("Normal", "Anomalous"))]
+            for label, color in (("Normal", "#16a34a"), ("Anomalous", "#dc2626")):
+                values = evaluated.loc[evaluated["label"] == label, "normalized_score"]
+                if len(values):
+                    ax.hist(values, bins=70, density=True, alpha=0.48,
+                            label=f"{label} (n={len(values):,})", color=color)
+            ax.axvline(1.0, color="#111827", linestyle="--", label="Decision threshold")
+            ax.set(title=name, xlabel="Normalized anomaly score", ylabel="Density")
+            ax.grid(alpha=0.2)
+            ax.legend(fontsize=8)
+        for ax in axes.flat[len(groups):]:
+            ax.set_visible(False)
+        distributions_path = output_dir / f"{strategy_name}_score_distributions.png"
+        figure.suptitle(f"Normal versus anomalous score distributions — {strategy}")
+        figure.savefig(distributions_path, dpi=180, bbox_inches="tight")
+        plt.close(figure)
+        strategy_artifacts["score_distributions"] = str(distributions_path.resolve())
+
+        labels = [name for name, _ in groups]
+        metrics_by_group = [binary_metrics(group) for _, group in groups]
+        x = np.arange(len(labels))
+        width = 0.15
+        figure, ax = plt.subplots(figsize=(14, 6), constrained_layout=True)
+        for index, metric in enumerate(metric_names):
+            values = [item[metric] if item[metric] is not None else np.nan
+                      for item in metrics_by_group]
+            ax.bar(x + (index - 2) * width, values, width, label=metric.replace("_", " "))
+        ax.set_xticks(x, labels)
+        ax.set_ylim(0, 1.05)
+        ax.set_ylabel("Metric value")
+        ax.set_title(f"Evaluation metric summary — {strategy}")
+        ax.grid(axis="y", alpha=0.25)
+        ax.legend(ncols=3)
+        metrics_path = output_dir / f"{strategy_name}_metrics_summary.png"
+        figure.savefig(metrics_path, dpi=180, bbox_inches="tight")
+        plt.close(figure)
+        strategy_artifacts["metrics_summary"] = str(metrics_path.resolve())
+        artifacts[strategy] = strategy_artifacts
+    return artifacts
+
+
 def write_evaluation_json(
     output: Path,
     data: pd.DataFrame,
@@ -388,6 +558,7 @@ def write_evaluation_json(
     scores_csvs: list[Path],
     report_html: Path,
     threshold_dir: Path,
+    plot_artifacts: dict | None = None,
 ) -> None:
     threshold_records = load_threshold_metadata(data, threshold_dir)
     threshold_by_key = {
@@ -425,6 +596,7 @@ def write_evaluation_json(
             "html_report": str(report_html),
             "threshold_directory": str(threshold_dir),
         },
+        "plot_artifacts": plot_artifacts or {},
         "evaluation": evaluations,
     }
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -595,6 +767,13 @@ def parse_args():
             "results/<dataset-version>/evaluation/evaluation_<score-stem>.json"
         ),
     )
+    parser.add_argument(
+        "--plots-dir", type=Path,
+        help=(
+            "Evaluation plot directory. Default: "
+            "results/<dataset-version>/evaluation/plots/<evaluation-name>."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -634,8 +813,15 @@ def main():
         args.evaluation_json.expanduser().resolve()
         if args.evaluation_json else default_evaluation_path(scores[0], threshold_dir)
     )
+    plots_output = (
+        args.plots_dir.expanduser().resolve()
+        if args.plots_dir else
+        evaluation_output.parent / "plots" / evaluation_output.stem
+    )
+    plot_artifacts = save_evaluation_plots(data, plots_output)
     write_evaluation_json(
-        evaluation_output, data, annotations, scores, output, threshold_dir
+        evaluation_output, data, annotations, scores, output, threshold_dir,
+        plot_artifacts,
     )
     print(f"Aligned rows: {len(data)}")
     for (strategy, area), group in data.groupby(["score_strategy", "safety_area"], sort=False):
@@ -647,6 +833,7 @@ def main():
         )
     print(f"Report: {output}")
     print(f"Evaluation JSON: {evaluation_output}")
+    print(f"Evaluation plots: {plots_output}")
 
 
 if __name__ == "__main__":

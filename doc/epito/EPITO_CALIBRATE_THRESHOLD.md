@@ -28,7 +28,6 @@ sacct -j 92623 \
   --format=JobID,JobName%25,State,Elapsed,ExitCode,MaxRSS,NodeList
 ```
 
-
 ## Threshold with Max Value in Validation Data
 
 ```bash
@@ -67,10 +66,10 @@ python scripts/plot_validation_timelines.py \
 
 ```
 
-## Compute for Varios OFFSET, SIGMA, and QUANTILE Variants 
+## Compute for Varios OFFSET, SIGMA, and QUANTILE Variants
 
 ```bash
-#  OFFSET, SIGMA, and QUANTILE variants 
+#  OFFSET, SIGMA, and QUANTILE variants
 for ooff in 1 2 3; do
   for ss in 1.0 1.5; do
     for qq in 0.99 0.98 0.97; do
@@ -86,6 +85,11 @@ for ooff in 1 2 3; do
     done
   done
 done
+```
+
+```bash
+chmod +x scripts/bash/run_calibration.sh
+./scripts/bash/run_calibration.sh
 ```
 
 ## Plot Validation Plots
@@ -117,6 +121,7 @@ python scripts/plot_validation_timelines.py \
 ```
 
 ## Various Strategy
+
 ```bash
 -----------------
 # Varios strategy
@@ -129,6 +134,7 @@ for strategy in max percentile; do
     --threshold_strategy "$strategy" \
 done
 ```
+
 ## Ablation Analysis:
 
 ```bash
@@ -159,16 +165,18 @@ python scripts/ablate_validation_thresholds.py \
 <<<<<<< Updated upstream
   --max_images 1000
 ```
+
 =======
-  --max_images 200
+--max_images 200
 
 for SafetyArea in PLeft PRight ConvBelt RoboArm; do
-  python scripts/ablate_validation_thresholds.py \
-    --config configs/cf_dataset_epito.yaml \
-    --safety_area "$SafetyArea" \
-    --dataset_version V6
+python scripts/ablate_validation_thresholds.py \
+ --config configs/cf_dataset_epito.yaml \
+ --safety_area "$SafetyArea" \
+ --dataset_version V6
 done
-```
+
+````
 
 
 ## Reconnect:
@@ -180,5 +188,6 @@ squeue -u mrashid
 srun --jobid=419800 --overlap --pty /bin/bash --noprofile --norc
 tmux ls
 tmux attach -t shapbpt
-```
->>>>>>> Stashed changes
+````
+
+> > > > > > > Stashed changes

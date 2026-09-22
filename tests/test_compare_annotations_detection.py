@@ -11,6 +11,7 @@ from compare_annotations_detection import (  # noqa: E402
     binary_metrics,
     default_evaluation_path,
     load_threshold_metadata,
+    ranking_curve_data,
     scenario_runs,
 )
 
@@ -89,3 +90,15 @@ def test_scenario_runs_map_global_frames_to_source_scenarios():
         (0, 1, "8_0", "first"),
         (2, 4, "9_0", "second"),
     ]
+
+
+def test_ranking_metrics_are_perfect_for_separated_scores():
+    data = pd.DataFrame({
+        "label": ["Normal", "Normal", "Anomalous", "Anomalous", "Verify"],
+        "normalized_score": [0.1, 0.2, 0.8, 0.9, 2.0],
+    })
+
+    curves = ranking_curve_data(data)
+
+    assert curves["auroc"] == 1.0
+    assert curves["auprc"] == 1.0

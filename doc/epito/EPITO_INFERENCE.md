@@ -130,9 +130,8 @@ python scripts/infer_offline.py \
   --topic /camera/back_view/image_raw \
   --safety_areas ALL \
   --threshold_strategy percentile \
-
-  --offset 1 \
-  --sigma 1.0 \
+  --offset 3 \
+  --sigma 1.5 \
   --quantile 0.99 \
   --max_frames 200 \
   --skip-first 100 \
@@ -142,7 +141,7 @@ python scripts/infer_offline.py \
 ## Ablation on Full Video
 
 ```bash
-#  OFFSET, SIGMA, and QUANTILE variants 
+#  OFFSET, SIGMA, and QUANTILE variants
 #!/usr/bin/env bash
 
 set -euo pipefail
@@ -184,7 +183,6 @@ echo "[COMPLETED] ✅ All ${total} threshold combinations"
 
 ```
 
-
 ```bash
 set -euo pipefail
 
@@ -223,6 +221,12 @@ done
 
 echo "[COMPLETED] ✅ All ${total} threshold combinations"
 ```
+
+```bash
+chmod +x scripts/bash/run_inference.sh
+./scripts/bash/run_inference.sh
+```
+
 ```bash
 
 #  DOWNLOAD INFERENCE VIDEO ONLY
@@ -316,9 +320,98 @@ for sid in "${scenarios[@]}"; do
 done
 ```
 
-
 ```bash
 python scripts/compare_annotations_detection.py \
   --annotations /Users/rashid/data/PhD/datacloud_data/repos/DistriMuSe/advis_distrimuse_unito_SR/reports/safety_area_annotations/saved_annotation/scenario_8_16_back_view_annotations.csv \
   --scores /Users/rashid/data/PhD/datacloud_data/repos/DistriMuSe/advis_distrimuse_unito_SR/results/V6/offline_inference/video_8_16_percentile_off1_sig1.0_q0.99_scores.csv
+```
+
+```bash
+set -euo pipefail
+
+total=18
+current=0
+
+annotations="/Users/rashid/data/PhD/datacloud_data/repos/DistriMuSe/advis_distrimuse_unito_SR/reports/safety_area_annotations/saved_annotation/scenario_8_16_back_view_annotations.csv"
+
+scores_dir="/Users/rashid/data/PhD/datacloud_data/repos/DistriMuSe/advis_distrimuse_unito_SR/results/V6/offline_inference"
+
+for ooff in 1,2,3; do
+  for ss in 1.0 1.5; do
+    for qq in 0.99 0.98 0.97; do
+      ((current += 1))
+
+      scores="${scores_dir}/video_8_16_percentile_off${ooff}_sig${ss}_q${qq}_scores.csv"
+
+      echo "================================================================"
+      echo "Combination ${current}/${total}"
+      echo "Offset=${ooff}, Sigma=${ss}, Quantile=${qq}"
+      echo "Scores: ${scores}"
+      echo "================================================================"
+
+      if [[ ! -f "$scores" ]]; then
+        echo "[ERROR] Score CSV does not exist: $scores"
+        exit 1
+      fi
+
+      python scripts/compare_annotations_detection.py \
+        --annotations "$annotations" \
+        --scores "$scores"
+    done
+
+    echo "[COMPLETED] All quantiles for offset=${ooff}, sigma=${ss}"
+  done
+
+  echo "[COMPLETED] All sigma values for offset=${ooff}"
+done
+
+echo "[COMPLETED] All ${total} threshold combinations"
+```
+
+```bash
+set -euo pipefail
+
+total=6
+current=0
+
+annotations="/Users/rashid/data/PhD/datacloud_data/repos/DistriMuSe/advis_distrimuse_unito_SR/reports/safety_area_annotations/saved_annotation/scenario_8_16_back_view_annotations.csv"
+
+scores_dir="/Users/rashid/data/PhD/datacloud_data/repos/DistriMuSe/advis_distrimuse_unito_SR/results/V6/offline_inference"
+
+for ooff in 3; do
+  for ss in 1.0 1.5; do
+    for qq in 0.99 0.98 0.97; do
+      ((current += 1))
+
+      scores="${scores_dir}/video_8_16_percentile_off${ooff}_sig${ss}_q${qq}_scores.csv"
+
+      echo "================================================================"
+      echo "Combination ${current}/${total}"
+      echo "Offset=${ooff}, Sigma=${ss}, Quantile=${qq}"
+      echo "Scores: ${scores}"
+      echo "================================================================"
+
+      if [[ ! -f "$scores" ]]; then
+        echo "[ERROR] Score CSV does not exist: $scores"
+        exit 1
+      fi
+
+      python scripts/compare_annotations_detection.py \
+        --annotations "$annotations" \
+        --scores "$scores"
+    done
+
+    echo "[COMPLETED] All quantiles for offset=${ooff}, sigma=${ss}"
+  done
+
+  echo "[COMPLETED] All sigma values for offset=${ooff}"
+done
+
+echo "[COMPLETED] All ${total} threshold combinations"
+
+```
+
+```bash
+chmod +x scripts/bash/run_evaluation.sh
+./scripts/bash/run_evaluation.sh
 ```
