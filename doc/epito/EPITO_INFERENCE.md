@@ -423,8 +423,15 @@ New params added:
 - --add_score_name
 - --add_fps_details
 - --profile-timing
-- --taas_backend `cython`
-- --taas_backend `numpy`
+- --taas_backend `cython`, or `numpy`
+- --rolling `mean`, `min`, `max` or `none`
+
+#### Rolling:
+
+- `mean`: smooths short spikes and dips.
+- `min`: requires all recent frames to remain high, giving the strongest false-alarm suppression but more detection delay.
+- `max`: preserves any recent peak, improving short-anomaly sensitivity but keeping alarms active longer.
+- `none`: original instantaneous behavior.
 
 ```bash
 python scripts/infer_offline.py \
@@ -437,5 +444,8 @@ python scripts/infer_offline.py \
   --sigma 1.5 \
   --quantile 0.99 \
   --add_score_name \
-  --add_fps_details
+  --add_fps_details \
+  --rolling mean \
+  --rolling_window 5 \
+  --taas_backend cython
 ```

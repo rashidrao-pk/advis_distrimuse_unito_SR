@@ -136,6 +136,18 @@ def parse_args():
             "available and otherwise falls back to NumPy (default: auto)."
         ),
     )
+    parser.add_argument(
+        "--rolling", type=str.lower, choices=("none", "mean", "min", "max"),
+        default="none",
+        help=(
+            "Temporal score policy per safety area: none, mean, min, or max "
+            "(default: none). The rolling score is used for threshold decisions."
+        ),
+    )
+    parser.add_argument(
+        "--rolling_window", "--rolling-window", type=int, default=5,
+        help="Number of recent frames in the rolling score window (default: 5).",
+    )
     parser.add_argument("--timeline_history", type=int, default=500)
     parser.add_argument("--timeline_seconds", type=float, default=4.0)
     args = parser.parse_args()
@@ -146,6 +158,8 @@ def parse_args():
         parser.error("--skip-first must be zero or greater")
     if args.max_frames is not None and args.max_frames < 1:
         parser.error("--max_frames must be at least 1")
+    if args.rolling_window < 1:
+        parser.error("--rolling_window must be at least 1")
     if args.offset < 0 or args.sigma < 0 or not 0.0 <= args.quantile <= 1.0:
         parser.error(
             "--offset and --sigma must be non-negative; --quantile must be in [0, 1]"
@@ -323,6 +337,11 @@ def threshold_variant_tag(strategy, offset, sigma, quantile):
     return f"{strategy}_off{offset}_sig{sigma}_q{quantile}"
 
 
+def rolling_variant_tag(policy, window):
+    """Return a filename suffix only when temporal stabilization is active."""
+    return "" if policy == "none" else f"_roll{policy}_w{window}"
+
+
 def load_settings(args):
     repository_root = Path(__file__).resolve().parent.parent
     config_path = args.config.expanduser().resolve()
@@ -381,6 +400,7 @@ def load_settings(args):
     variant_tag = threshold_variant_tag(
         args.threshold_strategy, args.offset, args.sigma, args.quantile
     )
+    variant_tag += rolling_variant_tag(args.rolling, args.rolling_window)
     args.output_csv = (
         args.output_csv.expanduser().resolve()
         if args.output_csv
@@ -689,6 +709,36 @@ def infer_crop(
         "reconstructed_bgr": reconstructed_bgr,
         "anomaly_bgr": anomaly_bgr,
     }
+
+
+def apply_rolling_policy(result, score_window, policy, window_size):
+    """Apply temporal stabilization and update the score used for detection."""
+    instantaneous_score = float(result["anomaly_score"])
+    instantaneous_normalized = float(result["normalized_score"])
+    score_window.append(instantaneous_score)
+    values = np.asarray(
+        [instantaneous_score] if policy == "none" else score_window,
+        dtype=np.float64,
+    )
+    aggregators = {
+        "none": lambda array: array[-1],
+        "mean": np.mean,
+        "min": np.min,
+        "max": np.max,
+    }
+    stabilized_score = float(aggregators[policy](values))
+    stabilized_normalized = stabilized_score / float(result["threshold"])
+    result.update({
+        "instantaneous_anomaly_score": instantaneous_score,
+        "instantaneous_normalized_score": instantaneous_normalized,
+        "anomaly_score": stabilized_score,
+        "normalized_score": stabilized_normalized,
+        "is_anomalous": stabilized_normalized > 1.0,
+        "rolling_policy": policy,
+        "rolling_window": 1 if policy == "none" else int(window_size),
+        "rolling_count": len(values),
+    })
+    return result
 
 
 def image_paths(root):
@@ -1008,6 +1058,15 @@ def public_result(result):
     public["inference_score_backend"] = result.get(
         "inference_score_backend", "numpy"
     )
+    public["instantaneous_anomaly_score"] = result.get(
+        "instantaneous_anomaly_score", result["anomaly_score"]
+    )
+    public["instantaneous_normalized_score"] = result.get(
+        "instantaneous_normalized_score", result["normalized_score"]
+    )
+    public["rolling_policy"] = result.get("rolling_policy", "none")
+    public["rolling_window"] = result.get("rolling_window", 1)
+    public["rolling_count"] = result.get("rolling_count", 1)
     if "threshold_file" in result:
         public["threshold_file"] = result["threshold_file"]
     return public
@@ -1201,6 +1260,17 @@ def make_advis_dashboard(
         footer_lines.append(
             f"Average processing: {measured}  |  Output video: {output_fps:.2f} fps"
         )
+    if results:
+        first_result = next(iter(results.values()))
+        rolling_policy = first_result.get("rolling_policy", "none")
+        if rolling_policy == "none":
+            footer_lines.append("Temporal stabilization: none")
+        else:
+            footer_lines.append(
+                f"Temporal stabilization: rolling {rolling_policy}, "
+                f"window={first_result.get('rolling_window', 1)}, "
+                f"available={first_result.get('rolling_count', 1)}"
+            )
     if footer_lines:
         footer_y = details.shape[0] - 20 * len(footer_lines) - 8
         for line in footer_lines:
@@ -1298,6 +1368,10 @@ def main():
     print(f"[checkpoints] {args.checkpoints}")
     print(f"[output mode] {'CSV + videos' if args.save_video else 'scores CSV only'}")
     print(f"[TAAS backend] {args.taas_backend}")
+    print(
+        f"[rolling] policy={args.rolling} | "
+        f"window={args.rolling_window if args.rolling != 'none' else 1}"
+    )
     models = load_models(args, device)
     profiler = TimingProfiler(args.profile_timing)
     normalize = transforms.Normalize((0.5,) * 3, (0.5,) * 3)
@@ -1308,6 +1382,9 @@ def main():
 
     histories = OrderedDict(
         (area, deque(maxlen=args.timeline_history)) for area in args.safety_areas
+    )
+    score_windows = OrderedDict(
+        (area, deque(maxlen=args.rolling_window)) for area in args.safety_areas
     )
     latest = OrderedDict()
     rows = []
@@ -1333,6 +1410,11 @@ def main():
                         crop, area, models[area], normalize, device, profiler,
                         args.taas_backend,
                     )
+                    with profiler.measure("rolling_policy"):
+                        apply_rolling_policy(
+                            result, score_windows[area], args.rolling,
+                            args.rolling_window,
+                        )
                     rows.append({
                         "sample_id": source_paths[area],
                         **public_result(result),
@@ -1398,6 +1480,11 @@ def main():
                         crop, area, models[area], normalize, device, profiler,
                         args.taas_backend,
                     )
+                    with profiler.measure("rolling_policy"):
+                        apply_rolling_policy(
+                            result, score_windows[area], args.rolling,
+                            args.rolling_window,
+                        )
                     rows.append({"sample_id": sample_id, **public_result(result)})
                     histories[area].append(float(result["normalized_score"]))
                     latest[area] = result
@@ -1452,6 +1539,8 @@ def main():
     fieldnames = (
         "sample_id", "safety_area", "anomaly_score", "threshold",
         "normalized_score", "is_anomalous",
+        "instantaneous_anomaly_score", "instantaneous_normalized_score",
+        "rolling_policy", "rolling_window", "rolling_count",
         "threshold_strategy", "score_func", "calibration_score_func",
         "inference_score_func", "inference_score_backend", "reconstruction_mode",
         "offset", "sigma", "quantile",

@@ -10,6 +10,13 @@ python -m pytest \
   -v
 ```
 
+### Test TAAS Cython Part:
+
+```bash
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
+python -m pytest tests/test_taas_cython.py -v
+```
+
 ```bash
 python scripts/check_model_checkpoints.py \
  --config configs/cf_dataset_epito.yaml

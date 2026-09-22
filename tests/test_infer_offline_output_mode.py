@@ -1,5 +1,6 @@
 from pathlib import Path
 import sys
+from collections import deque
 
 import pytest
 
@@ -8,6 +9,7 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 from infer_offline import (  # noqa: E402
+    apply_rolling_policy,
     camera_name_from_topic,
     compact_sample_name,
     load_threshold,
@@ -15,6 +17,7 @@ from infer_offline import (  # noqa: E402
     public_result,
     resolve_taas_backend,
     resolve_video_scenario,
+    rolling_variant_tag,
     threshold_variant_tag,
 )
 
@@ -61,6 +64,27 @@ def test_taas_backend_defaults_to_auto(monkeypatch):
 
 def test_numpy_taas_backend_is_always_available():
     assert resolve_taas_backend("numpy") == "numpy"
+
+
+def test_rolling_policy_is_disabled_by_default(monkeypatch):
+    args = parse(monkeypatch)
+    assert args.rolling == "none"
+    assert args.rolling_window == 5
+
+
+def test_rolling_policy_and_window_can_be_selected(monkeypatch):
+    args = parse(monkeypatch, "--rolling", "mean", "--rolling_window", "7")
+    assert args.rolling == "mean"
+    assert args.rolling_window == 7
+
+
+def test_rolling_policy_accepts_case_insensitive_none(monkeypatch):
+    assert parse(monkeypatch, "--rolling", "None").rolling == "none"
+
+
+def test_rolling_window_must_be_positive(monkeypatch):
+    with pytest.raises(SystemExit):
+        parse(monkeypatch, "--rolling_window", "0")
 
 
 def test_sample_display_does_not_include_full_path():
@@ -196,3 +220,30 @@ def test_threshold_variant_tag_matches_calibration_filename_convention():
         threshold_variant_tag("percentile", 2, 1.5, 0.98)
         == "percentile_off2_sig1.5_q0.98"
     )
+
+
+def test_rolling_variant_tag_only_changes_active_rolling_outputs():
+    assert rolling_variant_tag("none", 5) == ""
+    assert rolling_variant_tag("mean", 5) == "_rollmean_w5"
+
+
+@pytest.mark.parametrize(
+    ("policy", "expected"),
+    (("mean", 0.4), ("min", 0.2), ("max", 0.6), ("none", 0.6)),
+)
+def test_rolling_policy_controls_detection_score(policy, expected):
+    window = deque([0.2, 0.4], maxlen=3)
+    result = {
+        "anomaly_score": 0.6,
+        "normalized_score": 1.2,
+        "threshold": 0.5,
+        "is_anomalous": True,
+    }
+
+    apply_rolling_policy(result, window, policy, 3)
+
+    assert result["instantaneous_anomaly_score"] == 0.6
+    assert result["anomaly_score"] == pytest.approx(expected)
+    assert result["normalized_score"] == pytest.approx(expected / 0.5)
+    assert result["is_anomalous"] == (expected > 0.5)
+    assert result["rolling_policy"] == policy

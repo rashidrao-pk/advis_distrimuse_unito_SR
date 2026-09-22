@@ -11,6 +11,11 @@ python scripts/setup_taas_cython.py build_ext --inplace
 ls scripts/taas_cython*.so
 ```
 
+```bash
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
+python -m pytest tests/test_taas_cython.py -v
+```
+
 $$
 s(x,\hat{x}) =
 Q_q\left(
