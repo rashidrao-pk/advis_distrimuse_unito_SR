@@ -11,6 +11,7 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 from calibrate_threshold import score_batch, score_pair  # noqa: E402
+from infer_offline import distance_offset, distance_offset_cython  # noqa: E402
 from test_model_inference import image_metrics  # noqa: E402
 from utils import ComputeDifferences, get_anomaly_score_ravi  # noqa: E402
 
@@ -62,6 +63,19 @@ def test_spatial_offset_tolerates_one_pixel_translation():
     tolerant, _ = score_pair(original, shifted, offset=1, sigma=0, quantile=0.99)
 
     assert tolerant < no_tolerance
+
+
+def test_cython_taas_matches_numpy_when_extension_is_available():
+    if distance_offset_cython is None:
+        return
+    rng = np.random.default_rng(42)
+    original = rng.random((32, 32, 3), dtype=np.float32)
+    reconstruction = rng.random((32, 32, 3), dtype=np.float32)
+
+    numpy_distance = distance_offset(original, reconstruction, 3, "numpy")
+    cython_distance = distance_offset(original, reconstruction, 3, "cython")
+
+    assert np.allclose(cython_distance, numpy_distance, rtol=1e-6, atol=1e-7)
 
 
 def test_taas_score_is_batch_invariant_and_order_preserving():

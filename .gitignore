@@ -29,3 +29,7 @@ scripts/*.txt
 
 *__pycache__/
 
+# Optional local Cython build products (source .pyx remains tracked).
+scripts/taas_cython.c
+scripts/taas_cython*.so
+scripts/build/

@@ -22,6 +22,11 @@ from tqdm import tqdm
 import utils_model as utmc
 from utils_model import Decoder, Discriminator, Encoder
 
+try:
+    from taas_cython import distance_offset as distance_offset_cython
+except ImportError:
+    distance_offset_cython = None
+
 
 ALL_AREAS = ("PLeft", "PRight", "RoboArm", "ConvBelt")
 IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff"}
@@ -123,6 +128,14 @@ def parse_args():
             "inference, TAAS phases, dashboard rendering, and video writing."
         ),
     )
+    parser.add_argument(
+        "--taas_backend", "--taas-backend",
+        choices=("auto", "cython", "numpy"), default="auto",
+        help=(
+            "TAAS offset backend. 'auto' uses the compiled Cython extension when "
+            "available and otherwise falls back to NumPy (default: auto)."
+        ),
+    )
     parser.add_argument("--timeline_history", type=int, default=500)
     parser.add_argument("--timeline_seconds", type=float, default=4.0)
     args = parser.parse_args()
@@ -222,6 +235,17 @@ def synchronize_device(device):
         torch.cuda.synchronize(device)
     elif device.type == "mps" and hasattr(torch, "mps"):
         torch.mps.synchronize()
+
+
+def resolve_taas_backend(requested):
+    if requested == "auto":
+        return "cython" if distance_offset_cython is not None else "numpy"
+    if requested == "cython" and distance_offset_cython is None:
+        raise RuntimeError(
+            "--taas_backend cython requested, but the extension is not built. Run: "
+            "python scripts/setup_taas_cython.py build_ext --inplace"
+        )
+    return requested
 
 
 def scenario_id_from_rosbag(path):
@@ -574,7 +598,13 @@ def tensor_to_hwc(tensor):
     )
 
 
-def distance_offset(image_a, image_b, offset):
+def distance_offset(image_a, image_b, offset, backend="numpy"):
+    if backend == "cython":
+        return distance_offset_cython(
+            np.ascontiguousarray(image_a, dtype=np.float32),
+            np.ascontiguousarray(image_b, dtype=np.float32),
+            offset,
+        )
     height, width, _ = image_a.shape
     distance = np.full((height, width), np.inf, dtype=np.float32)
     for row_offset in range(-offset, offset + 1):
@@ -597,7 +627,9 @@ def distance_offset(image_a, image_b, offset):
     return distance
 
 
-def infer_crop(image, area, model, normalize, device, profiler=None):
+def infer_crop(
+    image, area, model, normalize, device, profiler=None, taas_backend="numpy"
+):
     profiler = profiler or TimingProfiler(False)
     with profiler.measure("preprocess_to_tensor"):
         input_tensor = to_tensor(image, normalize, device)
@@ -615,7 +647,7 @@ def infer_crop(image, area, model, normalize, device, profiler=None):
     threshold_config = model["threshold"]
     with profiler.measure("taas_offset_distance"):
         distance = distance_offset(
-            original, reconstructed, threshold_config["offset"]
+            original, reconstructed, threshold_config["offset"], taas_backend
         )
     with profiler.measure("taas_gaussian_filter"):
         if threshold_config["sigma"] > 0:
@@ -647,6 +679,7 @@ def infer_crop(image, area, model, normalize, device, profiler=None):
         "score_func": threshold_config["score_func"],
         "calibration_score_func": threshold_config["score_func"],
         "inference_score_func": inference_score_func,
+        "inference_score_backend": taas_backend,
         "reconstruction_mode": threshold_config["reconstruction_mode"],
         "offset": threshold_config["offset"],
         "sigma": threshold_config["sigma"],
@@ -972,6 +1005,9 @@ def public_result(result):
     public["inference_score_func"] = result.get(
         "inference_score_func", result["score_func"]
     )
+    public["inference_score_backend"] = result.get(
+        "inference_score_backend", "numpy"
+    )
     if "threshold_file" in result:
         public["threshold_file"] = result["threshold_file"]
     return public
@@ -1153,7 +1189,8 @@ def make_advis_dashboard(
             for result in results.values()
         ))
         inference = ", ".join(dict.fromkeys(
-            str(result.get("inference_score_func", "unknown"))
+            f"{result.get('inference_score_func', 'unknown')} "
+            f"[{result.get('inference_score_backend', 'numpy')}]"
             for result in results.values()
         ))
         footer_lines.append(
@@ -1247,6 +1284,7 @@ class VideoOutput:
 
 def main():
     args = load_settings(parse_args())
+    args.taas_backend = resolve_taas_backend(args.taas_backend)
     if args.cpu:
         device = torch.device("cpu")
     elif torch.cuda.is_available():
@@ -1259,6 +1297,7 @@ def main():
     print(f"[input] {args.input_type}: {args.input}")
     print(f"[checkpoints] {args.checkpoints}")
     print(f"[output mode] {'CSV + videos' if args.save_video else 'scores CSV only'}")
+    print(f"[TAAS backend] {args.taas_backend}")
     models = load_models(args, device)
     profiler = TimingProfiler(args.profile_timing)
     normalize = transforms.Normalize((0.5,) * 3, (0.5,) * 3)
@@ -1291,7 +1330,8 @@ def main():
                 frame_results = OrderedDict()
                 for area, crop in crops.items():
                     result = infer_crop(
-                        crop, area, models[area], normalize, device, profiler
+                        crop, area, models[area], normalize, device, profiler,
+                        args.taas_backend,
                     )
                     rows.append({
                         "sample_id": source_paths[area],
@@ -1355,7 +1395,8 @@ def main():
                             frame, masks[area], mask_geometries[area]
                         )
                     result = infer_crop(
-                        crop, area, models[area], normalize, device, profiler
+                        crop, area, models[area], normalize, device, profiler,
+                        args.taas_backend,
                     )
                     rows.append({"sample_id": sample_id, **public_result(result)})
                     histories[area].append(float(result["normalized_score"]))
@@ -1412,7 +1453,7 @@ def main():
         "sample_id", "safety_area", "anomaly_score", "threshold",
         "normalized_score", "is_anomalous",
         "threshold_strategy", "score_func", "calibration_score_func",
-        "inference_score_func", "reconstruction_mode",
+        "inference_score_func", "inference_score_backend", "reconstruction_mode",
         "offset", "sigma", "quantile",
     )
     with args.output_csv.open("w", newline="", encoding="utf-8") as stream:

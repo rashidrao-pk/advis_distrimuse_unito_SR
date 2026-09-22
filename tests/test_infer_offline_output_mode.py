@@ -13,6 +13,7 @@ from infer_offline import (  # noqa: E402
     load_threshold,
     parse_args,
     public_result,
+    resolve_taas_backend,
     resolve_video_scenario,
     threshold_variant_tag,
 )
@@ -52,6 +53,14 @@ def test_optional_dashboard_details_can_be_enabled(monkeypatch):
 
 def test_timing_profile_can_be_enabled(monkeypatch):
     assert parse(monkeypatch, "--profile-timing").profile_timing is True
+
+
+def test_taas_backend_defaults_to_auto(monkeypatch):
+    assert parse(monkeypatch).taas_backend == "auto"
+
+
+def test_numpy_taas_backend_is_always_available():
+    assert resolve_taas_backend("numpy") == "numpy"
 
 
 def test_sample_display_does_not_include_full_path():
