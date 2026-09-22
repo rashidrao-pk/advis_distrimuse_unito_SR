@@ -20,8 +20,8 @@ os.chdir(HERE)
 
 extensions = [
     Extension(
-        "taas_cython",
-        [str(HERE / "taas_cython.pyx")],
+        "tass_cython_distance",
+        [str(HERE / "tass_cython_distance.pyx")],
         include_dirs=[numpy.get_include()],
         extra_compile_args=["-O3"],
     )

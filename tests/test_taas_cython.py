@@ -18,6 +18,7 @@ sys.path.insert(0, str(SCRIPTS))
 from infer_offline import (  # noqa: E402
     distance_offset,
     distance_offset_cython,
+    minimization_offset_cython,
     resolve_taas_backend,
 )
 
@@ -82,7 +83,7 @@ def test_compiled_kernel_rejects_different_image_shapes():
     first = np.zeros((8, 8, 3), dtype=np.float32)
     second = np.zeros((7, 8, 3), dtype=np.float32)
 
-    with pytest.raises(ValueError, match="shapes differ"):
+    with pytest.raises(ValueError, match="same shape|shapes differ"):
         distance_offset_cython(first, second, 1)
 
 
@@ -91,3 +92,35 @@ def test_compiled_kernel_rejects_negative_offset():
 
     with pytest.raises(ValueError, match="non-negative"):
         distance_offset_cython(image, image, -1)
+
+
+@pytest.mark.skipif(
+    minimization_offset_cython is None,
+    reason="The enhanced tass_cython_distance extension is not built",
+)
+@pytest.mark.parametrize("offset", [0, 1, 3])
+def test_compiled_minimum_filter_matches_python_reference(offset):
+    rng = np.random.default_rng(300 + offset)
+    distance = rng.random((19, 23), dtype=np.float32)
+    expected = np.empty_like(distance)
+    for row in range(distance.shape[0]):
+        for col in range(distance.shape[1]):
+            expected[row, col] = np.min(distance[
+                max(0, row - offset):row + offset + 1,
+                max(0, col - offset):col + offset + 1,
+            ])
+
+    actual = minimization_offset_cython(distance, offset)
+
+    assert actual.dtype == np.float32
+    assert np.array_equal(actual, expected)
+
+
+@pytest.mark.skipif(
+    minimization_offset_cython is None,
+    reason="The enhanced tass_cython_distance extension is not built",
+)
+def test_compiled_minimum_filter_rejects_negative_offset():
+    distance = np.zeros((8, 8), dtype=np.float32)
+    with pytest.raises(ValueError, match="non-negative"):
+        minimization_offset_cython(distance, -1)

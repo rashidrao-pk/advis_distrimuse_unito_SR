@@ -449,3 +449,7 @@ python scripts/infer_offline.py \
   --rolling_window 5 \
   --taas_backend cython
 ```
+
+```bash
+python scripts/infer_offline.py   --config configs/cf_dataset_epito.yaml   --input_type video   --scenario 8_16   --safety_areas ALL   --threshold_strategy percentile   --threshold_percentile 99   --offset 3   --sigma 1   --quantile 0.99   --max_frames 200   --profile-timing --add_score_name --add_fps_details   --rolling min --rolling_window 5 --taas_backend cython
+```

@@ -32,4 +32,6 @@ scripts/*.txt
 # Optional local Cython build products (source .pyx remains tracked).
 scripts/taas_cython.c
 scripts/taas_cython*.so
+scripts/tass_cython_distance.c
+scripts/tass_cython_distance*.so
 scripts/build/

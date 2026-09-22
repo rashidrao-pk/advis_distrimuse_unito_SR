@@ -23,9 +23,20 @@ import utils_model as utmc
 from utils_model import Decoder, Discriminator, Encoder
 
 try:
-    from taas_cython import distance_offset as distance_offset_cython
+    from tass_cython_distance import (
+        compute_distance_offset as distance_offset_cython,
+        compute_minimization_offset as minimization_offset_cython,
+    )
+    CYTHON_TAAS_MODULE = "tass_cython_distance"
 except ImportError:
-    distance_offset_cython = None
+    # Backward compatibility for environments that built the first extension.
+    try:
+        from taas_cython import distance_offset as distance_offset_cython
+        CYTHON_TAAS_MODULE = "taas_cython (legacy)"
+    except ImportError:
+        distance_offset_cython = None
+        CYTHON_TAAS_MODULE = None
+    minimization_offset_cython = None
 
 
 ALL_AREAS = ("PLeft", "PRight", "RoboArm", "ConvBelt")
@@ -699,7 +710,10 @@ def infer_crop(
         "score_func": threshold_config["score_func"],
         "calibration_score_func": threshold_config["score_func"],
         "inference_score_func": inference_score_func,
-        "inference_score_backend": taas_backend,
+        "inference_score_backend": (
+            f"cython:{CYTHON_TAAS_MODULE}" if taas_backend == "cython"
+            else taas_backend
+        ),
         "reconstruction_mode": threshold_config["reconstruction_mode"],
         "offset": threshold_config["offset"],
         "sigma": threshold_config["sigma"],
@@ -1367,7 +1381,10 @@ def main():
     print(f"[input] {args.input_type}: {args.input}")
     print(f"[checkpoints] {args.checkpoints}")
     print(f"[output mode] {'CSV + videos' if args.save_video else 'scores CSV only'}")
-    print(f"[TAAS backend] {args.taas_backend}")
+    backend_details = (
+        f" ({CYTHON_TAAS_MODULE})" if args.taas_backend == "cython" else ""
+    )
+    print(f"[TAAS backend] {args.taas_backend}{backend_details}")
     print(
         f"[rolling] policy={args.rolling} | "
         f"window={args.rolling_window if args.rolling != 'none' else 1}"
