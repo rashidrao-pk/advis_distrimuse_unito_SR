@@ -422,6 +422,7 @@ New params added:
 
 - --add_score_name
 - --add_fps_details
+- --profile-timing
 
 ```bash
 python scripts/infer_offline.py \

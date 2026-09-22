@@ -50,6 +50,10 @@ def test_optional_dashboard_details_can_be_enabled(monkeypatch):
     assert args.add_fps_details is True
 
 
+def test_timing_profile_can_be_enabled(monkeypatch):
+    assert parse(monkeypatch, "--profile-timing").profile_timing is True
+
+
 def test_sample_display_does_not_include_full_path():
     sample = compact_sample_name("/beegfs/home/user/videos/input.mp4#frame=42")
     assert sample == "input.mp4#frame=42"

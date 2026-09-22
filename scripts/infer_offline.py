@@ -6,7 +6,8 @@ import csv
 import json
 import re
 import time
-from collections import OrderedDict, deque
+from collections import OrderedDict, defaultdict, deque
+from contextlib import contextmanager
 from pathlib import Path
 
 import cv2
@@ -115,6 +116,13 @@ def parse_args():
         "--add_fps_details", "--add-fps-details", action="store_true",
         help="Add current processing FPS and configured output FPS to the dashboard.",
     )
+    parser.add_argument(
+        "--profile_timing", "--profile-timing", action="store_true",
+        help=(
+            "Measure and print time spent in input decoding, preprocessing, model "
+            "inference, TAAS phases, dashboard rendering, and video writing."
+        ),
+    )
     parser.add_argument("--timeline_history", type=int, default=500)
     parser.add_argument("--timeline_seconds", type=float, default=4.0)
     args = parser.parse_args()
@@ -148,6 +156,72 @@ def parse_args():
     if args.save_video is None:
         args.save_video = True
     return args
+
+
+class TimingProfiler:
+    """Accumulate wall-clock timings and report cost per processed source frame."""
+
+    def __init__(self, enabled=False):
+        self.enabled = enabled
+        self.totals = defaultdict(float)
+        self.calls = defaultdict(int)
+        self.source_frames = 0
+        self.wall_started = time.perf_counter()
+
+    @contextmanager
+    def measure(self, phase):
+        if not self.enabled:
+            yield
+            return
+        started = time.perf_counter()
+        try:
+            yield
+        finally:
+            self.record(phase, time.perf_counter() - started)
+
+    def record(self, phase, elapsed):
+        if self.enabled:
+            self.totals[phase] += elapsed
+            self.calls[phase] += 1
+
+    def report(self):
+        if not self.enabled:
+            return
+        measured = sum(self.totals.values())
+        frames = max(self.source_frames, 1)
+        print("\n[timing] Phase breakdown (GPU/MPS calls synchronized):")
+        print(
+            f"{'Phase':<28} {'Total s':>10} {'Calls':>9} "
+            f"{'ms/call':>11} {'ms/frame':>11} {'Share':>8}"
+        )
+        print("-" * 83)
+        for phase, total in sorted(
+            self.totals.items(), key=lambda item: item[1], reverse=True
+        ):
+            calls = self.calls[phase]
+            share = 100.0 * total / measured if measured else 0.0
+            print(
+                f"{phase:<28} {total:>10.3f} {calls:>9,d} "
+                f"{1000.0 * total / calls:>11.3f} "
+                f"{1000.0 * total / frames:>11.3f} {share:>7.1f}%"
+            )
+        accounted_fps = frames / measured if measured else 0.0
+        wall_elapsed = time.perf_counter() - self.wall_started
+        wall_fps = self.source_frames / wall_elapsed if wall_elapsed else 0.0
+        print("-" * 83)
+        print(
+            f"[timing] {self.source_frames:,} source frames; summed-phase rate "
+            f"{accounted_fps:.2f} fps; end-to-end rate {wall_fps:.2f} fps. "
+            "Phase shares overlap only where explicitly nested."
+        )
+
+
+def synchronize_device(device):
+    """Make accelerator timing accurate; no-op for CPU."""
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    elif device.type == "mps" and hasattr(torch, "mps"):
+        torch.mps.synchronize()
 
 
 def scenario_id_from_rosbag(path):
@@ -458,16 +532,32 @@ def resize_for_model(image, target_size=128):
     return cv2.resize(image, (target_size, target_size), interpolation=cv2.INTER_AREA)
 
 
-def crop_area(frame, mask):
-    height, width = frame.shape[:2]
+def prepare_mask_geometry(mask, frame_shape):
+    """Resize/threshold a static mask and cache its contours and bounding box."""
+    height, width = frame_shape[:2]
     if mask.shape[:2] != (height, width):
         mask = cv2.resize(mask, (width, height), interpolation=cv2.INTER_NEAREST)
     _, binary = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
     ys, xs = np.where(binary > 0)
     if not len(xs) or not len(ys):
         raise ValueError("Safety-area mask is empty")
-    masked = cv2.bitwise_and(frame, frame, mask=binary)
-    return masked[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
+    contours, _ = cv2.findContours(
+        binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
+    return {
+        "binary": binary,
+        "contours": contours,
+        "bbox": (xs.min(), ys.min(), xs.max() + 1, ys.max() + 1),
+    }
+
+
+def crop_area(frame, mask, geometry=None):
+    height, width = frame.shape[:2]
+    geometry = geometry or prepare_mask_geometry(mask, (height, width))
+    x1, y1, x2, y2 = geometry["bbox"]
+    frame_crop = frame[y1:y2, x1:x2]
+    mask_crop = geometry["binary"][y1:y2, x1:x2]
+    return cv2.bitwise_and(frame_crop, frame_crop, mask=mask_crop)
 
 
 def to_tensor(image, normalize, device):
@@ -497,38 +587,55 @@ def distance_offset(image_a, image_b, offset):
                 image_a[a_r0:a_r1, a_c0:a_c1]
                 - image_b[b_r0:b_r1, b_c0:b_c1]
             )
-            local = np.sqrt((delta ** 2).sum(axis=2)).astype(np.float32)
+            # einsum avoids allocating delta ** 2 and is numerically equivalent.
+            local = np.sqrt(
+                np.einsum("ijk,ijk->ij", delta, delta, optimize=False)
+            ).astype(np.float32)
             distance[a_r0:a_r1, a_c0:a_c1] = np.minimum(
                 distance[a_r0:a_r1, a_c0:a_c1], local
             )
     return distance
 
 
-def infer_crop(image, area, model, normalize, device):
-    input_tensor = to_tensor(image, normalize, device)
-    with torch.no_grad():
-        mean, _ = model["encoder"](input_tensor)
-        reconstruction = model["decoder"](mean)
-    original = tensor_to_hwc(input_tensor.squeeze(0))
-    reconstructed = tensor_to_hwc(reconstruction.squeeze(0))
+def infer_crop(image, area, model, normalize, device, profiler=None):
+    profiler = profiler or TimingProfiler(False)
+    with profiler.measure("preprocess_to_tensor"):
+        input_tensor = to_tensor(image, normalize, device)
+    if profiler.enabled:
+        synchronize_device(device)
+    with profiler.measure("encoder_decoder"):
+        with torch.no_grad():
+            mean, _ = model["encoder"](input_tensor)
+            reconstruction = model["decoder"](mean)
+        if profiler.enabled:
+            synchronize_device(device)
+    with profiler.measure("tensor_to_numpy"):
+        original = tensor_to_hwc(input_tensor.squeeze(0))
+        reconstructed = tensor_to_hwc(reconstruction.squeeze(0))
     threshold_config = model["threshold"]
-    distance = distance_offset(original, reconstructed, threshold_config["offset"])
-    if threshold_config["sigma"] > 0:
-        distance = gaussian_filter(distance, sigma=threshold_config["sigma"])
-    score = float(np.quantile(distance, threshold_config["quantile"]))
+    with profiler.measure("taas_offset_distance"):
+        distance = distance_offset(
+            original, reconstructed, threshold_config["offset"]
+        )
+    with profiler.measure("taas_gaussian_filter"):
+        if threshold_config["sigma"] > 0:
+            distance = gaussian_filter(distance, sigma=threshold_config["sigma"])
+    with profiler.measure("taas_quantile"):
+        score = float(np.quantile(distance, threshold_config["quantile"]))
     threshold = threshold_config["threshold"]
     inference_score_func = (
         f"TAAS_OFF{threshold_config['offset']}-s_{threshold_config['sigma']}"
         f"-q_{threshold_config['quantile']}"
     )
     normalized = score / threshold
-    original_bgr = (original[..., ::-1] * 255).clip(0, 255).astype(np.uint8)
-    reconstructed_bgr = (
-        reconstructed[..., ::-1] * 255
-    ).clip(0, 255).astype(np.uint8)
-    heat = np.clip(distance / max(2.0 * threshold, 1e-6), 0.0, 1.0)
-    anomaly_rgb = (colormaps["Reds"](heat)[..., :3] * 255).astype(np.uint8)
-    anomaly_bgr = cv2.cvtColor(anomaly_rgb, cv2.COLOR_RGB2BGR)
+    with profiler.measure("visual_artifacts"):
+        original_bgr = (original[..., ::-1] * 255).clip(0, 255).astype(np.uint8)
+        reconstructed_bgr = (
+            reconstructed[..., ::-1] * 255
+        ).clip(0, 255).astype(np.uint8)
+        heat = np.clip(distance / max(2.0 * threshold, 1e-6), 0.0, 1.0)
+        anomaly_rgb = (colormaps["Reds"](heat)[..., :3] * 255).astype(np.uint8)
+        anomaly_bgr = cv2.cvtColor(anomaly_rgb, cv2.COLOR_RGB2BGR)
     return {
         "safety_area": area,
         "anomaly_score": score,
@@ -870,20 +977,16 @@ def public_result(result):
     return public
 
 
-def annotate_full_frame(frame, masks, results):
+def annotate_full_frame(frame, masks, results, mask_geometries=None):
     """Draw each safety-area boundary, status, and normalized score."""
     output = frame.copy()
     height, width = output.shape[:2]
     for area, result in results.items():
-        mask = masks[area]
-        if mask.shape[:2] != (height, width):
-            mask = cv2.resize(
-                mask, (width, height), interpolation=cv2.INTER_NEAREST
-            )
-        _, binary = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
-        contours, _ = cv2.findContours(
-            binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        geometry = (
+            mask_geometries[area] if mask_geometries
+            else prepare_mask_geometry(masks[area], (height, width))
         )
+        contours = geometry["contours"]
         color = (0, 0, 255) if result["is_anomalous"] else (0, 220, 0)
         cv2.drawContours(output, contours, -1, color, 3)
         if contours:
@@ -909,18 +1012,15 @@ def fit_image(image, width, height, background=(0, 0, 0)):
     return canvas
 
 
-def paste_patch(canvas, patch, mask):
+def paste_patch(canvas, patch, mask, geometry=None):
     """Project a stretched model patch back into its safety-area bounding box."""
     height, width = canvas.shape[:2]
-    if mask.shape[:2] != (height, width):
-        mask = cv2.resize(mask, (width, height), interpolation=cv2.INTER_NEAREST)
-    _, binary = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
-    ys, xs = np.where(binary > 0)
-    if not len(xs) or not len(ys):
-        return
-    x1, x2, y1, y2 = xs.min(), xs.max(), ys.min(), ys.max()
-    crop_width = x2 - x1 + 1
-    crop_height = y2 - y1 + 1
+    geometry = geometry or prepare_mask_geometry(mask, (height, width))
+    binary = geometry["binary"]
+    x1, y1, x2_exclusive, y2_exclusive = geometry["bbox"]
+    x2, y2 = x2_exclusive - 1, y2_exclusive - 1
+    crop_width = x2_exclusive - x1
+    crop_height = y2_exclusive - y1
 
     resized = cv2.resize(
         patch, (crop_width, crop_height), interpolation=cv2.INTER_AREA
@@ -945,7 +1045,7 @@ def compact_sample_name(sample_id):
 def make_advis_dashboard(
     frame, masks, results, sample_id, cropped_area=None,
     add_score_name=False, add_fps_details=False, processing_fps=None,
-    output_fps=None,
+    output_fps=None, mask_geometries=None,
 ):
     """Create the four-panel ADVIS dashboard used by the Zenoh viewer."""
     width, height, padding = 1600, 1000, 16
@@ -982,14 +1082,19 @@ def make_advis_dashboard(
             results,
         )
     else:
-        input_view = annotate_full_frame(frame, masks, results)
+        input_view = annotate_full_frame(
+            frame, masks, results, mask_geometries
+        )
         anomaly_view = np.full_like(frame, 255)
         ai_view = np.zeros_like(frame)
         for area, result in results.items():
-            paste_patch(anomaly_view, result["anomaly_bgr"], masks[area])
-            paste_patch(ai_view, result["reconstructed_bgr"], masks[area])
-        anomaly_view = annotate_full_frame(anomaly_view, masks, results)
-        ai_view = annotate_full_frame(ai_view, masks, results)
+            geometry = mask_geometries.get(area) if mask_geometries else None
+            paste_patch(anomaly_view, result["anomaly_bgr"], masks[area], geometry)
+            paste_patch(ai_view, result["reconstructed_bgr"], masks[area], geometry)
+        anomaly_view = annotate_full_frame(
+            anomaly_view, masks, results, mask_geometries
+        )
+        ai_view = annotate_full_frame(ai_view, masks, results, mask_geometries)
 
     for image, box, background in (
         (input_view, inner_boxes[0], (0, 0, 0)),
@@ -1142,16 +1247,23 @@ class VideoOutput:
 
 def main():
     args = load_settings(parse_args())
-    device = torch.device(
-        "cuda" if torch.cuda.is_available() and not args.cpu else "cpu"
-    )
+    if args.cpu:
+        device = torch.device("cpu")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
     print(f"[device] {device}")
     print(f"[input] {args.input_type}: {args.input}")
     print(f"[checkpoints] {args.checkpoints}")
     print(f"[output mode] {'CSV + videos' if args.save_video else 'scores CSV only'}")
     models = load_models(args, device)
+    profiler = TimingProfiler(args.profile_timing)
     normalize = transforms.Normalize((0.5,) * 3, (0.5,) * 3)
     masks = None
+    mask_geometries = None
     if args.input_type != "cropped":
         masks = parse_masks(args.mask, args.safety_areas, args.config_masks_dir)
 
@@ -1173,11 +1285,13 @@ def main():
                 desc="Offline inference [cropped]", unit="combined frame",
                 dynamic_ncols=True,
             )
+            previous_finished = time.perf_counter()
             for sample_id, crops, source_paths in progress:
+                profiler.record("input_decode", time.perf_counter() - previous_finished)
                 frame_results = OrderedDict()
                 for area, crop in crops.items():
                     result = infer_crop(
-                        crop, area, models[area], normalize, device
+                        crop, area, models[area], normalize, device, profiler
                     )
                     rows.append({
                         "sample_id": source_paths[area],
@@ -1196,17 +1310,24 @@ def main():
                     processing_fps = processed_frames / max(
                         time.perf_counter() - processing_started, 1e-9
                     )
-                    dashboard = make_advis_dashboard(
-                        crops, None, frame_results, sample_id, cropped_area="ALL",
-                        add_score_name=args.add_score_name,
-                        add_fps_details=args.add_fps_details,
-                        processing_fps=processing_fps,
-                        output_fps=args.output_fps,
-                    )
-                    video.write(dashboard)
-                    timeline_video.write(
-                        render_dashboard(None, histories, latest, sample_id, final=True)
-                    )
+                    with profiler.measure("dashboard_render"):
+                        dashboard = make_advis_dashboard(
+                            crops, None, frame_results, sample_id, cropped_area="ALL",
+                            add_score_name=args.add_score_name,
+                            add_fps_details=args.add_fps_details,
+                            processing_fps=processing_fps,
+                            output_fps=args.output_fps,
+                        )
+                    with profiler.measure("detection_video_write"):
+                        video.write(dashboard)
+                    with profiler.measure("timeline_render"):
+                        timeline_frame = render_dashboard(
+                            None, histories, latest, sample_id, final=True
+                        )
+                    with profiler.measure("timeline_video_write"):
+                        timeline_video.write(timeline_frame)
+                profiler.source_frames += 1
+                previous_finished = time.perf_counter()
         else:
             factories = {
                 "frames": iter_frames,
@@ -1218,12 +1339,23 @@ def main():
                 desc=f"Offline inference [{args.input_type}]", unit="frame",
                 dynamic_ncols=True,
             )
+            previous_finished = time.perf_counter()
             for sample_id, frame in progress:
+                profiler.record("input_decode", time.perf_counter() - previous_finished)
+                if mask_geometries is None:
+                    with profiler.measure("mask_prepare_once"):
+                        mask_geometries = OrderedDict(
+                            (area, prepare_mask_geometry(masks[area], frame.shape))
+                            for area in args.safety_areas
+                        )
                 frame_results = OrderedDict()
                 for area in args.safety_areas:
-                    crop = crop_area(frame, masks[area])
+                    with profiler.measure("mask_crop"):
+                        crop = crop_area(
+                            frame, masks[area], mask_geometries[area]
+                        )
                     result = infer_crop(
-                        crop, area, models[area], normalize, device
+                        crop, area, models[area], normalize, device, profiler
                     )
                     rows.append({"sample_id": sample_id, **public_result(result)})
                     histories[area].append(float(result["normalized_score"]))
@@ -1239,18 +1371,26 @@ def main():
                     processing_fps = next_count / max(
                         time.perf_counter() - processing_started, 1e-9
                     )
-                    dashboard = make_advis_dashboard(
-                        frame, masks, frame_results, sample_id,
-                        add_score_name=args.add_score_name,
-                        add_fps_details=args.add_fps_details,
-                        processing_fps=processing_fps,
-                        output_fps=args.output_fps,
-                    )
-                    video.write(dashboard)
-                    timeline_video.write(
-                        render_dashboard(None, histories, latest, sample_id, final=True)
-                    )
+                    with profiler.measure("dashboard_render"):
+                        dashboard = make_advis_dashboard(
+                            frame, masks, frame_results, sample_id,
+                            add_score_name=args.add_score_name,
+                            add_fps_details=args.add_fps_details,
+                            processing_fps=processing_fps,
+                            output_fps=args.output_fps,
+                            mask_geometries=mask_geometries,
+                        )
+                    with profiler.measure("detection_video_write"):
+                        video.write(dashboard)
+                    with profiler.measure("timeline_render"):
+                        timeline_frame = render_dashboard(
+                            None, histories, latest, sample_id, final=True
+                        )
+                    with profiler.measure("timeline_video_write"):
+                        timeline_video.write(timeline_frame)
                 processed_frames += 1
+                profiler.source_frames += 1
+                previous_finished = time.perf_counter()
                 if args.max_frames and processed_frames >= args.max_frames:
                     break
 
@@ -1284,6 +1424,7 @@ def main():
         print(f"[save] detection video -> {args.output_video}")
         print(f"[save] timeline video -> {args.timeline_video}")
         print(f"[save] final timeline -> {args.timeline_png}")
+    profiler.report()
 
 
 if __name__ == "__main__":
