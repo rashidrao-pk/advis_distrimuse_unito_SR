@@ -72,13 +72,21 @@ from sklearn.metrics import (
     f1_score, roc_auc_score, precision_recall_curve
 )
 from torch.utils.data import Dataset, DataLoader
-from torchvision import datasets, transforms
 from PIL import Image
 from tqdm import tqdm
 
 import utils as ut
 import utils_model as utmc
 from utils_model import Encoder, Decoder, Discriminator
+
+try:
+    from tass_cython_distance import (
+        compute_distance_offset as _distance_offset_cython,
+        compute_minimization_offset as _minimization_offset_cython,
+    )
+except ImportError:
+    _distance_offset_cython = None
+    _minimization_offset_cython = None
 
 # ---------------------------------------------------------------------------
 # Stop flag
@@ -135,16 +143,51 @@ def _minimized_residual_np(imgA: np.ndarray, imgB: np.ndarray,
     )
 
 
+def resolve_taas_backend(requested: str, variant: str) -> str:
+    available = (
+        _distance_offset_cython is not None if variant == "canonical"
+        else _minimization_offset_cython is not None
+    )
+    if requested == "auto":
+        return "cython" if available else "numpy"
+    if requested == "cython" and not available:
+        raise RuntimeError(
+            "Cython TAAS backend requested but tass_cython_distance is not built. "
+            "Run: python scripts/setup_taas_cython.py build_ext --inplace"
+        )
+    return requested
+
+
 def score_pair(imgA: np.ndarray, imgB: np.ndarray,
                offset: int, sigma: float, quantile: float,
                taas_variant: str = "canonical",
+               taas_backend: str = "numpy",
                ) -> tuple[float, np.ndarray]:
     """Score a single HWC float32 image pair. Returns (scalar, dist_map)."""
-    dist = (
-        _distance_offset_np(imgA, imgB, offset)
-        if taas_variant == "canonical"
-        else _minimized_residual_np(imgA, imgB, offset)
-    )
+    if taas_variant == "canonical":
+        dist = (
+            _distance_offset_cython(
+                np.ascontiguousarray(imgA, dtype=np.float32),
+                np.ascontiguousarray(imgB, dtype=np.float32), offset,
+            )
+            if taas_backend == "cython"
+            else _distance_offset_np(imgA, imgB, offset)
+        )
+    else:
+        delta = imgA - imgB
+        aligned = np.sqrt(
+            np.einsum("ijk,ijk->ij", delta, delta, optimize=False)
+        ).astype(np.float32)
+        dist = (
+            _minimization_offset_cython(
+                np.ascontiguousarray(aligned), offset
+            )
+            if taas_backend == "cython"
+            else minimum_filter(
+                aligned, size=2 * offset + 1,
+                mode="constant", cval=np.inf,
+            )
+        )
     if sigma > 0:
         dist = gaussian_filter(dist, sigma=sigma)
     return float(np.quantile(dist, quantile)), dist
@@ -159,6 +202,7 @@ def tensor_to_hwc(t: torch.Tensor) -> np.ndarray:
 def score_batch(data_t: torch.Tensor, recon_t: torch.Tensor,
                 offset: int, sigma: float, quantile: float,
                 taas_variant: str = "canonical",
+                taas_backend: str = "numpy",
                 ) -> np.ndarray:
     """Return (B,) anomaly scores for a batch."""
     scores = []
@@ -166,7 +210,9 @@ def score_batch(data_t: torch.Tensor, recon_t: torch.Tensor,
         a = tensor_to_hwc(data_t[i])
         b = tensor_to_hwc(recon_t[i])
         scores.append(
-            score_pair(a, b, offset, sigma, quantile, taas_variant)[0]
+            score_pair(
+                a, b, offset, sigma, quantile, taas_variant, taas_backend
+            )[0]
         )
     return np.array(scores, dtype=np.float64)
 
@@ -175,9 +221,45 @@ def score_batch(data_t: torch.Tensor, recon_t: torch.Tensor,
 # Shared: dataset helpers
 # ---------------------------------------------------------------------------
 
+class ImageFolderDataset(Dataset):
+    """Minimal torchvision-free ImageFolder-compatible dataset."""
+
+    EXTENSIONS = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff"}
+
+    def __init__(self, root: str, transform=None):
+        self.root = Path(root)
+        self.transform = transform
+        class_dirs = sorted(path for path in self.root.iterdir() if path.is_dir())
+        self.classes = [path.name for path in class_dirs]
+        self.class_to_idx = {
+            name: index for index, name in enumerate(self.classes)
+        }
+        self.samples = []
+        for class_dir in class_dirs:
+            class_index = self.class_to_idx[class_dir.name]
+            self.samples.extend(
+                (str(path), class_index)
+                for path in sorted(class_dir.rglob("*"))
+                if path.is_file() and path.suffix.lower() in self.EXTENSIONS
+            )
+        self.imgs = self.samples
+        if not self.samples:
+            raise FileNotFoundError(f"No ImageFolder images found under {self.root}")
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, index):
+        path, label = self.samples[index]
+        with Image.open(path) as image:
+            image = image.convert("RGB")
+            value = self.transform(image) if self.transform else image.copy()
+        return value, label
+
+
 class _SimpleDataset(Dataset):
     def __init__(self, root: str, transform=None):
-        self._ds = datasets.ImageFolder(root=root, transform=transform)
+        self._ds = ImageFolderDataset(root=root, transform=transform)
         self.imgs = self._ds.imgs
         self.classes = self._ds.classes
         self.class_to_idx = self._ds.class_to_idx
@@ -188,15 +270,16 @@ class _SimpleDataset(Dataset):
 
 
 def _val_transform():
-    return transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-    ])
+    def transform(image):
+        array = np.asarray(image, dtype=np.float32) / 255.0
+        tensor = torch.from_numpy(array).permute(2, 0, 1)
+        return (tensor - 0.5) / 0.5
+    return transform
 
 
 def load_val_loader(split_json: str, root: str,
                     batch_size: int, num_workers: int) -> tuple:
-    base = datasets.ImageFolder(root=root)
+    base = ImageFolderDataset(root=root)
     with open(split_json, encoding="utf-8") as f:
         info = json.load(f)
     from torch.utils.data import Subset
@@ -299,13 +382,13 @@ def run_val_mode(area: str, args, device, out_dir: str) -> dict:
     # Score
     records = []
     global_i = 0
-    base_ds = datasets.ImageFolder(root=paths.train_dir_processed_subgroup)
+    base_ds = ImageFolderDataset(root=paths.train_dir_processed_subgroup)
 
     for data_t, _ in tqdm(val_loader, desc=f"Scoring val [{area}]", leave=False):
         recon_t = reconstruct(Enc, Dec, data_t, device)
         scores = score_batch(
             data_t, recon_t, args.offset, args.sigma, args.quantile,
-            args.taas_variant,
+            args.taas_variant, args.taas_backend,
         )
         for b in range(data_t.shape[0]):
             real_idx  = val_indices[global_i]
@@ -363,7 +446,8 @@ def _build_scoring_grid(args) -> list:
                 # capture loop vars
                 def _fn(d, r, _o=offset, _q=quantile, _s=sigma):
                     return score_batch(
-                        d, r, _o, _s, _q, args.taas_variant
+                        d, r, _o, _s, _q, args.taas_variant,
+                        args.taas_backend,
                     )
                 fns.append((name, _fn))
 
@@ -723,6 +807,7 @@ def _build_summary(area, suffix, n_epochs, args, tau, df_scores,
         "sigma":              args.sigma,
         "quantile":           args.quantile,
         "taas_variant":       args.taas_variant,
+        "taas_backend":       args.taas_backend,
         "score_func":         (
             f"{'TAAS' if args.taas_variant == 'canonical' else 'TAAS_RESIDUAL_MIN'}"
             f"_OFF{args.offset}-s_{args.sigma}-q_{args.quantile}"
@@ -807,7 +892,7 @@ def parse_args():
         default=DEFAULT_CONFIG,
         help=f"Training YAML config (default: {DEFAULT_CONFIG}).",
     )
-    p.add_argument("--dataset_version",  default="v2")
+    p.add_argument("--dataset_version",  default="v6")
     p.add_argument(
         "--dataset_type",
         default=None,
@@ -852,6 +937,11 @@ def parse_args():
         choices=("canonical", "minimization"), default="canonical",
         help="TAAS score definition used for calibration (default: canonical).",
     )
+    p.add_argument(
+        "--taas_backend", "--taas-backend",
+        choices=("auto", "cython", "numpy"), default="auto",
+        help="TAAS implementation used while scoring calibration images.",
+    )
 
     # ── Val-mode threshold strategies ─────────────────────────────────────
     p.add_argument("--threshold_strategy",   default="max",
@@ -880,6 +970,9 @@ def parse_args():
 
 
     args = p.parse_args()
+    args.taas_backend = resolve_taas_backend(
+        args.taas_backend, args.taas_variant
+    )
     args.threshold_percentile = 1.0 if args.threshold_strategy == "max" else args.threshold_percentile
     try:
         model_config = load_model_config(args.config)
@@ -903,6 +996,9 @@ def main():
     args   = parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[device] {device}  |  mode={args.mode}")
+    print(
+        f"[TAAS] variant={args.taas_variant} | backend={args.taas_backend}"
+    )
 
     areas = ALL_SAFETY_AREAS if args.safety_area.upper() == "ALL" \
             else [args.safety_area]

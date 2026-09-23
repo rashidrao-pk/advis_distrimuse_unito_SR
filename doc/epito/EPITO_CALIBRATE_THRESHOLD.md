@@ -197,6 +197,7 @@ tmux attach -t shapbpt
 ```bash
 python scripts/calibrate_threshold.py \
   --config configs/cf_dataset_epito.yaml \
+  --dataset_version V6 \
   --mode val \
   --safety_area ALL \
   --threshold_strategy percentile \
@@ -204,5 +205,45 @@ python scripts/calibrate_threshold.py \
   --offset 3 \
   --sigma 1.5 \
   --quantile 0.99 \
+  --taas_backend cython \
   --taas_variant minimization
+```
+
+```bash
+set -euo pipefail
+
+# Build the Cython extension for the active Python environment.
+python scripts/setup_taas_cython.py build_ext --inplace --force
+
+total=18
+current=0
+
+for ooff in 1 2 3; do
+  for ss in 1.0 1.5; do
+    for qq in 0.99 0.98 0.97; do
+      ((current += 1))
+
+      echo "============================================================"
+      echo "Calibration ${current}/${total}"
+      echo "TAAS variant=minimization"
+      echo "Offset=${ooff}, Sigma=${ss}, Quantile=${qq}"
+      echo "============================================================"
+
+      python scripts/calibrate_threshold.py \
+        --config configs/cf_dataset_epito.yaml \
+        --mode val \
+        --safety_area ALL \
+        --dataset_version V6 \
+        --threshold_strategy percentile \
+        --threshold_percentile 99.0 \
+        --offset "$ooff" \
+        --sigma "$ss" \
+        --quantile "$qq" \
+        --taas_backend cython \
+        --taas_variant minimization
+    done
+  done
+done
+
+echo "[COMPLETED] All ${total} minimization TAAS calibrations"
 ```

@@ -133,6 +133,26 @@ def test_minimization_calibration_and_inference_definitions_match():
     assert np.isclose(calibration_score, inference_score)
 
 
+def test_minimization_calibration_cython_matches_numpy_when_available():
+    if minimization_offset_cython is None:
+        return
+    rng = np.random.default_rng(210)
+    original = rng.random((24, 24, 3), dtype=np.float32)
+    reconstruction = rng.random((24, 24, 3), dtype=np.float32)
+
+    numpy_score, numpy_map = score_pair(
+        original, reconstruction, 3, 1.5, 0.99,
+        "minimization", "numpy",
+    )
+    cython_score, cython_map = score_pair(
+        original, reconstruction, 3, 1.5, 0.99,
+        "minimization", "cython",
+    )
+
+    assert np.allclose(cython_map, numpy_map, rtol=1e-6, atol=1e-7)
+    assert np.isclose(cython_score, numpy_score, rtol=1e-6, atol=1e-7)
+
+
 def test_taas_score_is_batch_invariant_and_order_preserving():
     first = torch.zeros(1, 3, 16, 16)
     first_reconstruction = first.clone()
