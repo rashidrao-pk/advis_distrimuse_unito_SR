@@ -10,12 +10,12 @@ import msgpack
 import numpy as np
 import zenoh
 
-ALL_SAFETY_AREAS = ["PLeft", "PRight", "RoboArm", "ConvBelt"]
+ALL_SAFETY_AREAS = ["PRight", "PLeft", "RoboArm", "ConvBelt"]
 AREA_DISPLAY_NAMES = {
-    "PLeft": "Pallet Left",
-    "PRight": "Pallet Right",
-    "RoboArm": "Robo Arm",
-    "ConvBelt": "Conveyor Belt",
+    "PRight": "Pallet Right (A)",
+    "PLeft": "Pallet Left (B)",
+    "RoboArm": "Robo Arm (C)",
+    "ConvBelt": "Conveyor Belt (D)",
 }
 
 
@@ -300,8 +300,8 @@ def draw_text_table(
             f"{corr_stamp['sec']}.{int(corr_stamp['nanosec']):09d}"
         )
         cv2.putText(
-            panel, _fit_text(frame_text, w - 40, 0.50, 1), (20, y),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.50, (30, 30, 30), 1, cv2.LINE_AA,
+            panel, _fit_text(frame_text, w - 40, 0.55, 1), (20, y),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (30, 30, 30), 1, cv2.LINE_AA,
         )
         y += 13
     cv2.line(panel, (15, y), (w - 15, y), (70, 70, 70), 1)
@@ -312,7 +312,7 @@ def draw_text_table(
     col_x = [20, 190, 285, 410, 515]
 
     for i, hdr in enumerate(headers):
-        cv2.putText(panel, hdr, (col_x[i], y), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
+        cv2.putText(panel, hdr, (col_x[i], y), cv2.FONT_HERSHEY_SIMPLEX, 0.59,
                      (30, 30, 30), header_bold[i], cv2.LINE_AA)
 
     y += 9
@@ -342,7 +342,7 @@ def draw_text_table(
                 str(val),
                 (col_x[i], y),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.52,
+                0.56,
                 color if i >= 3 else (30, 30, 30),
                 2 if i >= 3 else 1,
                 cv2.LINE_AA,
@@ -354,7 +354,9 @@ def draw_text_table(
 
     y += 1
     cv2.line(panel, (15, y), (w - 15, y), (70, 70, 70), 1)
-    y += 21
+    # Give the calibration/inference block more visual separation from the
+    # per-area score table.
+    y += 33
     detail_colors = {
         "Calibration": (0, 115, 190),
         "Tau policy": (0, 115, 190),
@@ -367,18 +369,18 @@ def draw_text_table(
             break
         cv2.putText(
             panel, f"{label}:", (20, y), cv2.FONT_HERSHEY_SIMPLEX,
-            0.43, detail_colors.get(label, (40, 40, 40)), 2, cv2.LINE_AA,
+            0.47, detail_colors.get(label, (40, 40, 40)), 2, cv2.LINE_AA,
         )
         label_width = cv2.getTextSize(
-            f"{label}:", cv2.FONT_HERSHEY_SIMPLEX, 0.43, 2
+            f"{label}:", cv2.FONT_HERSHEY_SIMPLEX, 0.47, 2
         )[0][0]
         value_x = 28 + label_width
         cv2.putText(
-            panel, _fit_text(value, w - value_x - 12, 0.43, 1),
-            (value_x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.43,
+            panel, _fit_text(value, w - value_x - 12, 0.47, 1),
+            (value_x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.47,
             (35, 35, 35), 1, cv2.LINE_AA,
         )
-        y += 20
+        y += 22
 
     return panel
 

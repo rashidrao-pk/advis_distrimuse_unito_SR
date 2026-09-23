@@ -1,5 +1,6 @@
 [workspace]
 authors = ["rashid <muhammad.rashid@unito.it>"]
+preview = ["pixi-build"]
 name = "advis_mac"
 version = "0.1.0"
 
@@ -46,6 +47,7 @@ tqdm = ">=4.70.1,<5"
 pandas = ">=3.0.6,<4"
 ros-kilted-rqt-image-view = ">=1.3.3,<2"
 cython = ">=3.3.0,<4"
+ros-kilted-distrimuse-ros2-api = { git = "https://github.com/rashidrao-pk/distrimuse-ros2-api.git", branch = "test_mac" }
 
 [pypi-dependencies]
 msgpack = ">=1.2.2, <2"

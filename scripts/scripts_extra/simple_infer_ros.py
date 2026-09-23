@@ -29,10 +29,10 @@ from distrimuse_ros2_api.msg import RulexAreaScore, RulexDetectionResult
 
 
 AREA_NAME_TO_ENUM = {
-    "RoboArm": RulexAreaScore.AREA_A,
-    "ConvBelt": RulexAreaScore.AREA_B,
-    "PLeft": RulexAreaScore.AREA_C,
-    "PRight": RulexAreaScore.AREA_D,
+    "PRight": RulexAreaScore.AREA_A,
+    "PLeft": RulexAreaScore.AREA_B,
+    "RoboArm": RulexAreaScore.AREA_C,
+    "ConvBelt": RulexAreaScore.AREA_D,
 }
 
 class SimpleRosInfer(Node):

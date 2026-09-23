@@ -163,7 +163,7 @@ def draw_area_card(canvas, area, result, box):
     )
 
 
-def draw_debug_panel(state, width=1500, height=900):
+def draw_debug_panel(state, width=1500, height=650):
     canvas = np.full((height, width, 3), 238, dtype=np.uint8)
     frame_meta = state.get("frame_meta", {})
     stamp = frame_meta.get("stamp", {})
@@ -240,7 +240,7 @@ def main():
     parser.add_argument("--zenoh-endpoint", default="tcp/127.0.0.1:7447")
     parser.add_argument("--zenoh-key", default="advis/vis/debug/state")
     parser.add_argument("--width", type=int, default=1500)
-    parser.add_argument("--height", type=int, default=900)
+    parser.add_argument("--height", type=int, default=650)
     args = parser.parse_args()
 
     zenoh.init_log_from_env_or("error")

@@ -46,6 +46,12 @@ ROS_IMAGE_TYPES = {
     "sensor_msgs/msg/CompressedImage": "compressed",
     "sensor_msgs/msg/Image": "raw",
 }
+RULEX_AREA_ENUM_NAMES = {
+    "PRight": "AREA_A",
+    "PLeft": "AREA_B",
+    "RoboArm": "AREA_C",
+    "ConvBelt": "AREA_D",
+}
 
 
 def parse_args(argv=None):
@@ -61,6 +67,19 @@ def parse_args(argv=None):
     parser.add_argument(
         "--camera_topic", "--camera-topic", "--topic",
         dest="camera_topic", default="/camera/back_view/image_raw",
+    )
+    parser.add_argument(
+        "--source_name", "--source-name", "--rosbag_name", "--rosbag-name",
+        default="live_ros",
+        help=(
+            "Human-readable source or rosbag name included in timeline metadata. "
+            "ROS image messages do not contain the rosbag filename."
+        ),
+    )
+    parser.add_argument(
+        "--scenario_id", "--scenario-id", "--scenario",
+        default="",
+        help="Optional scenario ID displayed by the timeline viewer.",
     )
     parser.add_argument(
         "--message_type", "--message-type",
@@ -391,11 +410,17 @@ def pack_dashboard_state(
     return msgpack.packb(payload, use_bin_type=True)
 
 
-def pack_timeline_state(msgpack, *, msg_id, frame_id, stamp, histories, results):
+def pack_timeline_state(
+    msgpack, *, msg_id, frame_id, stamp, histories, results,
+    history_meta=None, source_meta=None, runtime_meta=None,
+):
     payload = {
         "frame_meta": frame_meta(msg_id, frame_id, stamp),
         "score_history": OrderedDict((area, list(values)) for area, values in histories.items()),
         "latest_results": serializable_results(results),
+        "history_meta": list(history_meta or []),
+        "source_meta": dict(source_meta or {}),
+        "runtime_meta": dict(runtime_meta or {}),
     }
     return msgpack.packb(payload, use_bin_type=True)
 
@@ -439,6 +464,8 @@ class LiveInferenceNode(Node):
         self.histories = OrderedDict(
             (area, deque(maxlen=args.timeline_history)) for area in args.safety_areas
         )
+        self.timeline_samples = deque(maxlen=args.timeline_history)
+        self.first_ros_timestamp = None
 
         self.received_frames = 0
         self.accepted_frames = 0
@@ -670,6 +697,21 @@ class LiveInferenceNode(Node):
             processing_fps = self.processed_frames / max(elapsed, 1e-9)
             source_elapsed = time.monotonic() - self.source_started
             source_fps = self.received_frames / max(source_elapsed, 1e-9)
+            ros_timestamp = (
+                float(msg.header.stamp.sec)
+                + float(msg.header.stamp.nanosec) / 1_000_000_000.0
+            )
+            if self.first_ros_timestamp is None:
+                self.first_ros_timestamp = ros_timestamp
+            ros_elapsed = ros_timestamp - self.first_ros_timestamp
+            self.timeline_samples.append({
+                "processed_frame": self.processed_frames,
+                "source_message_index": msg_id,
+                "ros_timestamp": ros_timestamp,
+                "ros_elapsed_seconds": ros_elapsed,
+                "wall_elapsed_seconds": source_elapsed,
+                "frame_id": str(msg.header.frame_id),
+            })
             payload = detection_payload(
                 msg_id=msg_id,
                 frame_id=msg.header.frame_id,
@@ -761,6 +803,14 @@ class LiveInferenceNode(Node):
                 stamp=source_msg.header.stamp,
                 histories=self.histories,
                 results=results,
+                history_meta=self.timeline_samples,
+                source_meta={
+                    "source_name": self.args.source_name,
+                    "scenario_id": self.args.scenario_id,
+                    "camera_topic": self.args.camera_topic,
+                    "message_type": self.message_type,
+                },
+                runtime_meta=runtime_meta,
             )
             self.zenoh_dashboard_pub.put(dashboard_payload)
             self.zenoh_timeline_pub.put(timeline_payload)
@@ -777,17 +827,11 @@ class LiveInferenceNode(Node):
 
     def publish_rulex(self, source_msg, frame, results):
         area_class = self.rulex_area_cls
-        enum_names = {
-            "RoboArm": "AREA_A",
-            "ConvBelt": "AREA_B",
-            "PLeft": "AREA_C",
-            "PRight": "AREA_D",
-        }
         message = self.rulex_result_cls()
         area_scores = []
         for area, result in results.items():
             area_message = area_class()
-            area_message.area = getattr(area_class, enum_names[area])
+            area_message.area = getattr(area_class, RULEX_AREA_ENUM_NAMES[area])
             area_message.anomaly = bool(result["is_anomalous"])
             area_scores.append(area_message)
         message.area_scores = area_scores

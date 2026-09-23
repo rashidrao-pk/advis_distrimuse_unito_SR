@@ -497,6 +497,8 @@ pixi run python scripts/inference_live.py \
   --taas_variant canonical \
   --rolling mean \
   --rolling_window 5 \
+  --publish_rulex \
+  --rulex_topic /rulex/data \
   --detections_topic /advis/detections \
   --log_every_n 1 \
   --profile_timing \
