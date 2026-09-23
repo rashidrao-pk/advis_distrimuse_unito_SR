@@ -452,6 +452,15 @@ python scripts/infer_offline.py \
   --taas_backend cython
 ```
 
+```bash
+pixi add cython
+pixi run python scripts/setup_taas_cython.py build_ext --inplace
+
+pixi run python -c \
+  "import sys; sys.path.insert(0, 'scripts'); import tass_cython_distance; print(tass_cython_distance.__file__)"
+
+```
+
 #### USING TAAS `MINIMIZATION`
 
 ```bash
@@ -470,4 +479,68 @@ python scripts/infer_offline.py \
   --rolling none \
   --add_score_name \
   --profile_timing
+```
+
+### Inference LIVE:
+
+```bash
+pixi run python scripts/inference_live.py \
+  --config configs/cf_dataset_mac.yaml \
+  --camera_topic /camera/back_view/image_raw \
+  --message_type auto \
+  --safety_areas ALL \
+  --threshold_strategy percentile \
+  --offset 1 \
+  --sigma 1.0 \
+  --quantile 0.99 \
+  --taas_backend auto \
+  --taas_variant canonical \
+  --rolling mean \
+  --rolling_window 5 \
+  --detections_topic /advis/detections \
+  --log_every_n 1 \
+  --profile_timing \
+  --publish_zenoh \
+  --debug_mode \
+  --zenoh_endpoint tcp/127.0.0.1:7447
+
+```
+
+```bash
+cd /Users/rashid/data/PhD/datacloud_data/repos/DistriMuSe/advis_distrimuse_unito_SR
+
+zenohd -c zenoh_dashboard/zenoh.json5
+
+### Verify
+lsof -nP -iTCP:7447 -sTCP:LISTEN
+
+```
+
+## Start Zenoh Router:
+
+```bash
+zenohd -c zenoh_dashboard/zenoh.json5
+```
+
+```bash
+python zenoh_dashboard/dashboard_viewer.py \
+  --zenoh-endpoint tcp/127.0.0.1:7447 \
+  --zenoh-key advis/vis/dashboard/state
+```
+
+#### Scores Only:
+
+```bash
+python zenoh_dashboard/timeline_viewer.py \
+  --zenoh-endpoint tcp/127.0.0.1:7447 \
+  --zenoh-key advis/vis/timeline/state
+```
+
+#### Debug Mode:
+
+```bash
+env -u DISPLAY QT_QPA_PLATFORM=cocoa \
+  pixi run python zenoh_dashboard/debug_viewer.py \
+  --zenoh-endpoint tcp/127.0.0.1:7447 \
+  --zenoh-key advis/vis/debug/state
 ```

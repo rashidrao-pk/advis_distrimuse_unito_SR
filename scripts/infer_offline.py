@@ -119,7 +119,7 @@ def parse_args():
         help="Save only the scores CSV and skip all video/timeline rendering.",
     )
     parser.set_defaults(save_video=None)
-    parser.add_argument("--output_fps", type=float, default=10.0)
+    parser.add_argument("--output_fps", type=float, default=15.0)
     parser.add_argument(
         "--add_score_name", "--add-score-name", action="store_true",
         help=(

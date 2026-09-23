@@ -209,74 +209,115 @@ def unpack_dashboard_state(payload: bytes) -> dict:
         "frame_bgr": frame_bgr,
         "latest_results": obj["latest_results"],
         "area_inputs": area_inputs,
+        "runtime_meta": obj.get("runtime_meta", {}),
     }
 
 
-def draw_text_table(panel, results, frame_id=None, corr_frame_id=None, corr_stamp=None):
+def _summary_value(results, key, fallback_key=None, default="unknown"):
+    """Return one common metadata value, or a compact mixed-value summary."""
+    values = []
+    for area_name in ordered_area_list(results.keys()):
+        result = results[area_name]
+        value = result.get(key)
+        if value is None and fallback_key is not None:
+            value = result.get(fallback_key)
+        if value is not None and str(value) not in values:
+            values.append(str(value))
+    if not values:
+        return str(default)
+    if len(values) == 1:
+        return values[0]
+    return "mixed[" + ", ".join(values[:2]) + (", ...]" if len(values) > 2 else "]")
+
+
+def dashboard_detail_lines(results, runtime_meta=None):
+    """Build calibration/inference descriptions for the dashboard panel."""
+    if not results:
+        return []
+    calibration_variant = _summary_value(
+        results, "calibration_taas_variant", "taas_variant", "legacy-unspecified"
+    )
+    inference_variant = _summary_value(
+        results, "inference_taas_variant", "taas_variant", "legacy-unspecified"
+    )
+    calibration_score = _summary_value(
+        results, "calibration_score_func", "score_func"
+    )
+    inference_score = _summary_value(
+        results, "inference_score_func", "score_func"
+    )
+    strategy = _summary_value(results, "threshold_strategy")
+    offset = _summary_value(results, "offset", default="-")
+    sigma = _summary_value(results, "sigma", default="-")
+    quantile = _summary_value(results, "quantile", default="-")
+    rolling = _summary_value(results, "rolling_policy", default="none")
+    rolling_window = _summary_value(results, "rolling_window", default="1")
+
+    lines = [
+        ("Calibration", f"{calibration_variant} | {calibration_score}"),
+        ("Tau policy", f"{strategy} | offset={offset}, sigma={sigma}, q={quantile}"),
+        ("Inference", f"{inference_variant} | {inference_score}"),
+        ("Temporal", f"{rolling} | window={rolling_window}"),
+    ]
+    runtime_meta = runtime_meta or {}
+    if runtime_meta:
+        processing_fps = runtime_meta.get("processing_fps")
+        source_fps = runtime_meta.get("source_fps")
+        dropped = runtime_meta.get("dropped_frames", 0)
+        processing_text = "-" if processing_fps is None else f"{float(processing_fps):.2f}"
+        source_text = "-" if source_fps is None else f"{float(source_fps):.2f}"
+        lines.append((
+            "Runtime",
+            f"inference={processing_text} fps | source={source_text} fps | dropped={dropped}",
+        ))
+    return lines
+
+
+def _fit_text(text, max_width, font_scale, thickness):
+    """Truncate an OpenCV label to the available pixel width."""
+    text = str(text)
+    if cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)[0][0] <= max_width:
+        return text
+    suffix = "..."
+    while text and cv2.getTextSize(
+        text + suffix, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness
+    )[0][0] > max_width:
+        text = text[:-1]
+    return text + suffix
+
+
+def draw_text_table(
+    panel, results, frame_id=None, corr_frame_id=None, corr_stamp=None,
+    runtime_meta=None,
+):
     h, w = panel.shape[:2]
     panel[:] = (245, 245, 245)
 
-    title_y = 10
-    # cv2.putText(panel, "Details", (w // 2 - 50, title_y), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (20, 20, 20), 2, cv2.LINE_AA)
-
-    y = 30
-    cv2.line(panel, (20, y), (w - 20, y), (40, 40, 40), 2)
-    y += 35
-
-    # if frame_id is not None and corr_stamp is not None:
-    #     cv2.putText(
-    #         panel,
-    #         f"Frame: {frame_id} CFID: {corr_frame_id} @ {corr_stamp['sec']}.{corr_stamp['nanosec']}",
-    #         (30, y),
-    #         cv2.FONT_HERSHEY_SIMPLEX,
-    #         0.8,
-    #         (20, 20, 20),
-    #         2,
-    #         cv2.LINE_AA,
-    #     )
-    #     y += 20
-    #     cv2.line(panel, (20, y), (w - 20, y), (40, 40, 40), 1)
-    #     y += 35
+    y = 18
     if frame_id is not None and corr_stamp is not None:
-        # Line 1 → Frame ID
-        cv2.putText(
-            panel,
-            f"Frame: {frame_id}",
-            (30, y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            (20, 20, 20),
-            2,
-            cv2.LINE_AA,
+        frame_text = (
+            f"Frame {frame_id} | {corr_frame_id} | "
+            f"{corr_stamp['sec']}.{int(corr_stamp['nanosec']):09d}"
         )
-        y += 25
-
-        # Line 2 → camera + timestamp
         cv2.putText(
-            panel,
-            f"{corr_frame_id} @ {corr_stamp['sec']}.{corr_stamp['nanosec']}",
-            (30, y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.75,
-            (40, 40, 40),
-            2,
-            cv2.LINE_AA,
+            panel, _fit_text(frame_text, w - 40, 0.50, 1), (20, y),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.50, (30, 30, 30), 1, cv2.LINE_AA,
         )
-        y += 40
+        y += 13
+    cv2.line(panel, (15, y), (w - 15, y), (70, 70, 70), 1)
+    y += 24
 
-    
     headers = ["Safety Area", "RawVal", "Threshold", "Score", "Status"]
-    header_bold = [2,1,1,2,2]
-    
-    col_x = [30, 200, 300, 440, 540]
+    header_bold = [2, 1, 1, 2, 2]
+    col_x = [20, 190, 285, 410, 515]
 
     for i, hdr in enumerate(headers):
-        cv2.putText(panel, hdr, (col_x[i], y), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+        cv2.putText(panel, hdr, (col_x[i], y), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
                      (30, 30, 30), header_bold[i], cv2.LINE_AA)
 
-    y += 20
-    cv2.line(panel, (20, y), (w - 20, y), (40, 40, 40), 1)
-    y += 35
+    y += 9
+    cv2.line(panel, (15, y), (w - 15, y), (70, 70, 70), 1)
+    y += 23
 
     for area_name in ordered_area_list(results.keys()):
         r = results[area_name]
@@ -301,20 +342,51 @@ def draw_text_table(panel, results, frame_id=None, corr_frame_id=None, corr_stam
                 str(val),
                 (col_x[i], y),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
+                0.52,
                 color if i >= 3 else (30, 30, 30),
-                header_bold[i],
+                2 if i >= 3 else 1,
                 cv2.LINE_AA,
             )
 
+        y += 8
+        cv2.line(panel, (15, y), (w - 15, y), (165, 165, 165), 1)
+        y += 23
+
+    y += 1
+    cv2.line(panel, (15, y), (w - 15, y), (70, 70, 70), 1)
+    y += 21
+    detail_colors = {
+        "Calibration": (0, 115, 190),
+        "Tau policy": (0, 115, 190),
+        "Inference": (175, 75, 0),
+        "Temporal": (120, 60, 120),
+        "Runtime": (50, 120, 50),
+    }
+    for label, value in dashboard_detail_lines(results, runtime_meta):
+        if y > h - 7:
+            break
+        cv2.putText(
+            panel, f"{label}:", (20, y), cv2.FONT_HERSHEY_SIMPLEX,
+            0.43, detail_colors.get(label, (40, 40, 40)), 2, cv2.LINE_AA,
+        )
+        label_width = cv2.getTextSize(
+            f"{label}:", cv2.FONT_HERSHEY_SIMPLEX, 0.43, 2
+        )[0][0]
+        value_x = 28 + label_width
+        cv2.putText(
+            panel, _fit_text(value, w - value_x - 12, 0.43, 1),
+            (value_x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.43,
+            (35, 35, 35), 1, cv2.LINE_AA,
+        )
         y += 20
-        cv2.line(panel, (20, y), (w - 20, y), (120, 120, 120), 1)
-        y += 35
 
     return panel
 
 
-def draw_dashboard_panel(frame_bgr, area_inputs, latest_results, frame_id=None, width=1600, height=1000, corr_frame_id=None, corr_stamp=None):
+def draw_dashboard_panel(
+    frame_bgr, area_inputs, latest_results, frame_id=None, width=1600,
+    height=1000, corr_frame_id=None, corr_stamp=None, runtime_meta=None,
+):
     canvas = np.full((height, width, 3), 235, dtype=np.uint8)
 
     pad = 16
@@ -486,7 +558,11 @@ def draw_dashboard_panel(frame_bgr, area_inputs, latest_results, frame_id=None, 
             cv2.drawContours(canvas, scaled, -1, color, 2)
 
     details_panel = np.full((br_in[3] - br_in[1], br_in[2] - br_in[0], 3), 245, dtype=np.uint8)
-    details_panel = draw_text_table(details_panel, latest_results, frame_id=frame_id, corr_frame_id=corr_frame_id, corr_stamp=corr_stamp)
+    details_panel = draw_text_table(
+        details_panel, latest_results, frame_id=frame_id,
+        corr_frame_id=corr_frame_id, corr_stamp=corr_stamp,
+        runtime_meta=runtime_meta,
+    )
     canvas[br_in[1]:br_in[3], br_in[0]:br_in[2]] = details_panel
     return canvas
 
@@ -516,6 +592,7 @@ def render_from_payload(raw: bytes, width: int, height: int) -> None:
         height=height,
         corr_frame_id=meta["corr_frame_id"],
         corr_stamp=meta["stamp"],
+        runtime_meta=state.get("runtime_meta", {}),
     )
     cv2.imshow("ADVIS Dashboard", image)
     cv2.waitKey(1)

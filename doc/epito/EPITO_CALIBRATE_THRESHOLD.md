@@ -194,6 +194,9 @@ tmux attach -t shapbpt
 
 ## After New TAAS Variant:
 
+- `--taas_backend` `numpy` | `cython`
+- `--taas_variant` `canonical` | `minimization`
+
 ```bash
 python scripts/calibrate_threshold.py \
   --config configs/cf_dataset_epito.yaml \
@@ -225,7 +228,7 @@ for ooff in 1 2 3; do
 
       echo "============================================================"
       echo "Calibration ${current}/${total}"
-      echo "TAAS variant=minimization"
+      echo "TAAS variant=canonical"
       echo "Offset=${ooff}, Sigma=${ss}, Quantile=${qq}"
       echo "============================================================"
 
@@ -240,10 +243,9 @@ for ooff in 1 2 3; do
         --sigma "$ss" \
         --quantile "$qq" \
         --taas_backend cython \
-        --taas_variant minimization
+        --taas_variant canonical
     done
   done
 done
-
-echo "[COMPLETED] All ${total} minimization TAAS calibrations"
+echo "[COMPLETED] All ${total} canonical TAAS calibrations"
 ```
