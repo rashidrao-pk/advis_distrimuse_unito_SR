@@ -20,6 +20,7 @@ from infer_offline import (  # noqa: E402
     resolve_taas_backend,
     resolve_video_scenario,
     rolling_variant_tag,
+    taas_variant_tag,
     threshold_variant_tag,
 )
 
@@ -69,6 +70,14 @@ def test_timing_profile_can_be_enabled(monkeypatch):
 
 def test_taas_backend_defaults_to_auto(monkeypatch):
     assert parse(monkeypatch).taas_backend == "auto"
+
+
+def test_taas_variant_is_selectable(monkeypatch):
+    assert parse(monkeypatch).taas_variant == "canonical"
+    assert (
+        parse(monkeypatch, "--taas_variant", "minimization").taas_variant
+        == "minimization"
+    )
 
 
 def test_numpy_taas_backend_is_always_available():
@@ -197,6 +206,33 @@ def test_threshold_parameters_must_match_requested_variant(tmp_path):
         load_threshold(tmp_path, "PLeft", "percentile", 99.0, 2, 1.5, 0.98)
 
 
+def test_minimization_variant_loads_only_matching_threshold(tmp_path):
+    import json
+
+    area_dir = tmp_path / "PLeft"
+    area_dir.mkdir()
+    threshold = area_dir / (
+        "threshold_PLeft_percentile99.0_off3_sig1.5_q0.99"
+        "_taas-minimization.json"
+    )
+    threshold.write_text(json.dumps({
+        "threshold": 0.12,
+        "threshold_strategy": "percentile",
+        "offset": 3,
+        "sigma": 1.5,
+        "quantile": 0.99,
+        "taas_variant": "minimization",
+    }))
+
+    loaded = load_threshold(
+        tmp_path, "PLeft", "percentile", 99.0, 3, 1.5, 0.99,
+        "minimization",
+    )
+
+    assert loaded["path"] == threshold
+    assert loaded["taas_variant"] == "minimization"
+
+
 def test_public_result_contains_threshold_provenance():
     result = {
         "safety_area": "PLeft",
@@ -234,6 +270,11 @@ def test_threshold_variant_tag_matches_calibration_filename_convention():
 def test_rolling_variant_tag_only_changes_active_rolling_outputs():
     assert rolling_variant_tag("none", 5) == ""
     assert rolling_variant_tag("mean", 5) == "_rollmean_w5"
+
+
+def test_taas_variant_tag_preserves_legacy_canonical_filenames():
+    assert taas_variant_tag("canonical") == ""
+    assert taas_variant_tag("minimization") == "_taas-minimization"
 
 
 @pytest.mark.parametrize(

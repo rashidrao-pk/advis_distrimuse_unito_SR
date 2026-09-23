@@ -332,7 +332,7 @@ def load_threshold_metadata(data: pd.DataFrame, threshold_dir: Path) -> list[dic
         for key in (
             "score_func", "reconstruction_mode", "offset", "sigma", "quantile",
             "threshold_strategy", "inference_score_backend", "rolling_policy",
-            "rolling_window",
+            "rolling_window", "taas_variant",
         ):
             if key in group.columns and pd.notna(first.get(key)):
                 csv_metadata[key] = first[key]
@@ -353,7 +353,7 @@ def load_threshold_metadata(data: pd.DataFrame, threshold_dir: Path) -> list[dic
             # percentile99.0, while the JSON/score CSV records "percentile".
             candidates.extend(sorted(area_dir.glob(
                 f"threshold_{area}_{strategy}*_off{csv_metadata['offset']}"
-                f"_sig{csv_metadata['sigma']}_q{csv_metadata['quantile']}.json"
+                f"_sig{csv_metadata['sigma']}_q{csv_metadata['quantile']}*.json"
             )))
         candidates.extend((
             area_dir / f"threshold_{area}_{strategy}.json",
@@ -582,7 +582,7 @@ def write_evaluation_json(
                         "threshold_strategy", "score_func", "reconstruction_mode",
                         "offset", "sigma", "quantile", "threshold",
                         "inference_score_backend", "rolling_policy",
-                        "rolling_window",
+                        "rolling_window", "taas_variant",
                     ) if key in area_group.columns
                 },
             }
@@ -652,6 +652,7 @@ def write_report(output: Path, data: pd.DataFrame, annotation_csv: Path,
             record.get("score_func", "metadata unavailable"),
             record.get("reconstruction_mode", "legacy-unspecified"),
             record.get("inference_score_backend", "—"),
+            record.get("taas_variant", "canonical"),
             record.get("rolling_policy", "none"),
             record.get("rolling_window", 1),
             record.get("offset", "—"), record.get("sigma", "—"),
@@ -719,7 +720,7 @@ details>summary{{cursor:pointer;font-size:1.35rem;font-weight:700;padding:4px 0}
 <section class="legend"><span style="background:#dcfce7">TN: safe, correct</span><span style="background:#ffedd5">TP: anomaly, correct</span><span style="background:#dbeafe">FP: normal, flagged</span><span style="background:#fee2e2">FN: anomaly, missed</span><span style="background:#e2e8f0">Verify: excluded</span><span>Dashed line = detection threshold (1.0×)</span><p>Hover a score to preview its frames. Click to lock the preview; click another point to replace it; use Close to unlock.</p></section>
 <section><details><summary>Threshold calibration and anomaly-score configuration</summary>
 <p><b>TAAS offset</b> controls spatial tolerance, <b>sigma</b> controls Gaussian smoothing of the residual map, and <b>quantile</b> selects the residual-map tail used as the frame score. These are anomaly-score parameters. The <b>threshold strategy</b> is a separate operation that converts validation-frame scores into the final decision boundary.</p>
-<div class="scroll"><table><thead><tr><th>Strategy</th><th>Area</th><th>Score function</th><th>Reconstruction mode</th><th>Inference backend</th><th>Rolling policy</th><th>Rolling window</th><th>TAAS offset</th><th>TAAS sigma</th><th>TAAS quantile</th><th>Threshold</th><th>Calibration strategy</th><th>Calibration images</th><th>Model epochs</th><th>Computed at</th><th>Matches score CSV</th><th>Metadata file</th></tr></thead><tbody>{threshold_rows}</tbody></table></div></details></section>
+<div class="scroll"><table><thead><tr><th>Strategy</th><th>Area</th><th>Score function</th><th>Reconstruction mode</th><th>Inference backend</th><th>TAAS variant</th><th>Rolling policy</th><th>Rolling window</th><th>TAAS offset</th><th>TAAS sigma</th><th>TAAS quantile</th><th>Threshold</th><th>Calibration strategy</th><th>Calibration images</th><th>Model epochs</th><th>Computed at</th><th>Matches score CSV</th><th>Metadata file</th></tr></thead><tbody>{threshold_rows}</tbody></table></div></details></section>
 <section><h2>Cumulative confusion matrix</h2><p>All evaluated safety-area rows combined for each threshold strategy. Verify and Unlabeled rows are excluded.</p><div class="cm-grid">{cumulative_cards}</div></section>
 <section><h2>Confusion matrices by safety area</h2><p>Rows are ground truth; columns are model predictions.</p><div class="cm-grid">{confusion_cards}</div></section>
 <section><h2>Metrics by threshold strategy and safety area</h2><table><thead><tr><th>Strategy</th><th>Area</th><th>Evaluated</th><th>Verify excluded</th><th>TP</th><th>TN</th><th>FP</th><th>FN</th><th>Precision</th><th>Recall</th><th>Specificity</th><th>F1</th><th>Accuracy</th><th>Balanced accuracy</th></tr></thead><tbody>{metric_rows}</tbody></table></section>

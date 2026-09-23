@@ -15,7 +15,7 @@ import numpy as np
 import torch
 import yaml
 from matplotlib import colormaps
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import gaussian_filter, minimum_filter
 from tqdm import tqdm
 
 import utils_model as utmc
@@ -144,6 +144,15 @@ def parse_args():
         help=(
             "TAAS offset backend. 'auto' uses the compiled Cython extension when "
             "available and otherwise falls back to NumPy (default: auto)."
+        ),
+    )
+    parser.add_argument(
+        "--taas_variant", "--taas-variant",
+        choices=("canonical", "minimization"), default="canonical",
+        help=(
+            "TAAS definition: canonical compares each input pixel with nearby "
+            "reconstruction pixels; minimization applies a local minimum filter "
+            "to the aligned residual map (default: canonical)."
         ),
     )
     parser.add_argument(
@@ -347,6 +356,10 @@ def threshold_variant_tag(strategy, offset, sigma, quantile):
     return f"{strategy}_off{offset}_sig{sigma}_q{quantile}"
 
 
+def taas_variant_tag(variant):
+    return "" if variant == "canonical" else f"_taas-{variant}"
+
+
 def rolling_variant_tag(policy, window):
     """Return a filename suffix only when temporal stabilization is active."""
     return "" if policy == "none" else f"_roll{policy}_w{window}"
@@ -410,6 +423,7 @@ def load_settings(args):
     variant_tag = threshold_variant_tag(
         args.threshold_strategy, args.offset, args.sigma, args.quantile
     )
+    variant_tag += taas_variant_tag(args.taas_variant)
     variant_tag += rolling_variant_tag(args.rolling, args.rolling_window)
     args.output_csv = (
         args.output_csv.expanduser().resolve()
@@ -479,16 +493,22 @@ def parse_masks(values, areas, masks_dir=None):
     return masks
 
 
-def load_threshold(threshold_dir, area, strategy='percentile',threshold_percentiles=99.0, offset=1, sigma=1.0, quantile=0.99):
+def load_threshold(
+    threshold_dir, area, strategy="percentile", threshold_percentiles=99.0,
+    offset=1, sigma=1.0, quantile=0.99, taas_variant="canonical",
+):
     area_dir = threshold_dir / area
+    variant_suffix = taas_variant_tag(taas_variant)
     variant_name = (
-        f"threshold_{area}_{strategy}{threshold_percentiles}_off{offset}_sig{sigma}_q{quantile}.json"
+        f"threshold_{area}_{strategy}{threshold_percentiles}_off{offset}"
+        f"_sig{sigma}_q{quantile}{variant_suffix}.json"
     )
-    candidates = (
-        area_dir / variant_name,
-        area_dir / f"threshold_{area}_{strategy}.json",
-        area_dir / f"threshold_{area}.json",
-    )
+    candidates = [area_dir / variant_name]
+    if taas_variant == "canonical":
+        candidates.extend((
+            area_dir / f"threshold_{area}_{strategy}.json",
+            area_dir / f"threshold_{area}.json",
+        ))
     path = next((candidate for candidate in candidates if candidate.is_file()), None)
     if path is None:
         available = ", ".join(
@@ -506,6 +526,12 @@ def load_threshold(threshold_dir, area, strategy='percentile',threshold_percenti
         raise ValueError(
             f"Requested threshold strategy {strategy!r}, but {path} contains "
             f"{configured_strategy!r}"
+        )
+    configured_variant = config.get("taas_variant", "canonical")
+    if configured_variant != taas_variant:
+        raise ValueError(
+            f"Requested TAAS variant {taas_variant!r}, but {path} contains "
+            f"{configured_variant!r}"
         )
     requested = {"offset": int(offset), "sigma": float(sigma), "quantile": float(quantile)}
     actual = {
@@ -530,6 +556,7 @@ def load_threshold(threshold_dir, area, strategy='percentile',threshold_percenti
         "quantile": float(config["quantile"]),
         "strategy": configured_strategy or strategy,
         "score_func": config.get("score_func", "unknown"),
+        "taas_variant": configured_variant,
         "reconstruction_mode": config.get("reconstruction_mode", "legacy-unspecified"),
         "path": path,
     }
@@ -564,6 +591,7 @@ def load_models(args, device):
             args.offset,
             args.sigma,
             args.quantile,
+            args.taas_variant,
         )
         models[area] = {
             "encoder": encoder,
@@ -633,7 +661,27 @@ def tensor_to_hwc(tensor):
     )
 
 
-def distance_offset(image_a, image_b, offset, backend="numpy"):
+def distance_offset(
+    image_a, image_b, offset, backend="numpy", variant="canonical"
+):
+    if variant == "minimization":
+        delta = image_a - image_b
+        aligned_distance = np.sqrt(
+            np.einsum("ijk,ijk->ij", delta, delta, optimize=False)
+        ).astype(np.float32)
+        if backend == "cython":
+            if minimization_offset_cython is None:
+                raise RuntimeError(
+                    "TAAS minimization requires the tass_cython_distance extension; "
+                    "rebuild it with setup_taas_cython.py"
+                )
+            return minimization_offset_cython(
+                np.ascontiguousarray(aligned_distance), offset
+            )
+        return minimum_filter(
+            aligned_distance, size=2 * offset + 1,
+            mode="constant", cval=np.inf,
+        )
     if backend == "cython":
         return distance_offset_cython(
             np.ascontiguousarray(image_a, dtype=np.float32),
@@ -682,7 +730,8 @@ def infer_crop(
     threshold_config = model["threshold"]
     with profiler.measure("taas_offset_distance"):
         distance = distance_offset(
-            original, reconstructed, threshold_config["offset"], taas_backend
+            original, reconstructed, threshold_config["offset"], taas_backend,
+            threshold_config["taas_variant"],
         )
     with profiler.measure("taas_gaussian_filter"):
         if threshold_config["sigma"] > 0:
@@ -690,8 +739,12 @@ def infer_crop(
     with profiler.measure("taas_quantile"):
         score = float(np.quantile(distance, threshold_config["quantile"]))
     threshold = threshold_config["threshold"]
+    score_prefix = (
+        "TAAS" if threshold_config["taas_variant"] == "canonical"
+        else "TAAS_RESIDUAL_MIN"
+    )
     inference_score_func = (
-        f"TAAS_OFF{threshold_config['offset']}-s_{threshold_config['sigma']}"
+        f"{score_prefix}_OFF{threshold_config['offset']}-s_{threshold_config['sigma']}"
         f"-q_{threshold_config['quantile']}"
     )
     normalized = score / threshold
@@ -722,6 +775,7 @@ def infer_crop(
         "offset": threshold_config["offset"],
         "sigma": threshold_config["sigma"],
         "quantile": threshold_config["quantile"],
+        "taas_variant": threshold_config["taas_variant"],
         # "threshold_file": threshold_config["path"].name,
         "original_bgr": original_bgr,
         "reconstructed_bgr": reconstructed_bgr,
@@ -1076,6 +1130,7 @@ def public_result(result):
     public["inference_score_backend"] = result.get(
         "inference_score_backend", "numpy"
     )
+    public["taas_variant"] = result.get("taas_variant", "canonical")
     public["instantaneous_anomaly_score"] = result.get(
         "instantaneous_anomaly_score", result["anomaly_score"]
     )
@@ -1389,6 +1444,7 @@ def main():
         f" ({CYTHON_TAAS_MODULE})" if args.taas_backend == "cython" else ""
     )
     print(f"[TAAS backend] {args.taas_backend}{backend_details}")
+    print(f"[TAAS variant] {args.taas_variant}")
     print(
         f"[rolling] policy={args.rolling} | "
         f"window={args.rolling_window if args.rolling != 'none' else 1}"
@@ -1564,7 +1620,7 @@ def main():
         "rolling_policy", "rolling_window", "rolling_count",
         "threshold_strategy", "score_func", "calibration_score_func",
         "inference_score_func", "inference_score_backend", "reconstruction_mode",
-        "offset", "sigma", "quantile",
+        "offset", "sigma", "quantile", "taas_variant",
     )
     with args.output_csv.open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=fieldnames)

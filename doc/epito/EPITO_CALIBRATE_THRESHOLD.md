@@ -47,7 +47,7 @@ cd /beegfs/home/mrashid/repos/advis_distrimuse_unito_SR
 
 ---
 
-## Threshold with Max Value in Validation Data
+## Threshold with Quantile Value in Validation Data
 
 ```bash
 # -------------------------------------
@@ -169,6 +169,7 @@ python scripts/ablate_validation_thresholds.py \
 =======
 --max_images 200
 
+```bash
 for SafetyArea in PLeft PRight ConvBelt RoboArm; do
 python scripts/ablate_validation_thresholds.py \
  --config configs/cf_dataset_epito.yaml \
@@ -176,8 +177,7 @@ python scripts/ablate_validation_thresholds.py \
  --dataset_version V6
 done
 
-````
-
+```
 
 ## Reconnect:
 
@@ -188,6 +188,21 @@ squeue -u mrashid
 srun --jobid=419800 --overlap --pty /bin/bash --noprofile --norc
 tmux ls
 tmux attach -t shapbpt
-````
+```
 
 > > > > > > > Stashed changes
+
+## After New TAAS Variant:
+
+```bash
+python scripts/calibrate_threshold.py \
+  --config configs/cf_dataset_epito.yaml \
+  --mode val \
+  --safety_area ALL \
+  --threshold_strategy percentile \
+  --threshold_percentile 99.0 \
+  --offset 3 \
+  --sigma 1.5 \
+  --quantile 0.99 \
+  --taas_variant minimization
+```

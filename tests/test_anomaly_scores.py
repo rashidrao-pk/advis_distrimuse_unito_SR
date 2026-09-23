@@ -5,13 +5,18 @@ import sys
 
 import numpy as np
 import torch
+from scipy.ndimage import gaussian_filter
 
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 from calibrate_threshold import score_batch, score_pair  # noqa: E402
-from infer_offline import distance_offset, distance_offset_cython  # noqa: E402
+from infer_offline import (  # noqa: E402
+    distance_offset,
+    distance_offset_cython,
+    minimization_offset_cython,
+)
 from test_model_inference import image_metrics  # noqa: E402
 from utils import ComputeDifferences, get_anomaly_score_ravi  # noqa: E402
 
@@ -76,6 +81,56 @@ def test_cython_taas_matches_numpy_when_extension_is_available():
     cython_distance = distance_offset(original, reconstruction, 3, "cython")
 
     assert np.allclose(cython_distance, numpy_distance, rtol=1e-6, atol=1e-7)
+
+
+def test_minimization_variant_cython_matches_numpy_when_available():
+    if minimization_offset_cython is None:
+        return
+    rng = np.random.default_rng(84)
+    original = rng.random((32, 32, 3), dtype=np.float32)
+    reconstruction = rng.random((32, 32, 3), dtype=np.float32)
+
+    numpy_distance = distance_offset(
+        original, reconstruction, 3, "numpy", "minimization"
+    )
+    cython_distance = distance_offset(
+        original, reconstruction, 3, "cython", "minimization"
+    )
+
+    assert np.allclose(cython_distance, numpy_distance, rtol=1e-6, atol=1e-7)
+
+
+def test_minimization_is_a_distinct_taas_variant():
+    rng = np.random.default_rng(126)
+    original = rng.random((16, 16, 3), dtype=np.float32)
+    reconstruction = rng.random((16, 16, 3), dtype=np.float32)
+
+    canonical = distance_offset(original, reconstruction, 2, "numpy", "canonical")
+    minimized = distance_offset(
+        original, reconstruction, 2, "numpy", "minimization"
+    )
+
+    assert not np.allclose(canonical, minimized)
+
+
+def test_minimization_calibration_and_inference_definitions_match():
+    rng = np.random.default_rng(168)
+    original = rng.random((24, 24, 3), dtype=np.float32)
+    reconstruction = rng.random((24, 24, 3), dtype=np.float32)
+
+    calibration_score, calibration_map = score_pair(
+        original, reconstruction, offset=2, sigma=1.5, quantile=0.99,
+        taas_variant="minimization",
+    )
+    inference_map = distance_offset(
+        original, reconstruction, 2, "numpy", "minimization"
+    )
+    inference_score = float(
+        np.quantile(gaussian_filter(inference_map, sigma=1.5), 0.99)
+    )
+
+    assert np.allclose(calibration_map, gaussian_filter(inference_map, sigma=1.5))
+    assert np.isclose(calibration_score, inference_score)
 
 
 def test_taas_score_is_batch_invariant_and_order_preserving():

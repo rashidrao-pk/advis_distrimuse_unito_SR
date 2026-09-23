@@ -66,7 +66,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib.lines import Line2D
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import gaussian_filter, minimum_filter
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score,
     f1_score, roc_auc_score, precision_recall_curve
@@ -97,6 +97,10 @@ ALL_SAFETY_AREAS = ["PRight","PLeft", "RoboArm","ConvBelt"]
 
 DEFAULT_CONFIG = Path(__file__).resolve().parent.parent / "configs" / "cf_dataset_epito.yaml"
 
+
+def taas_variant_tag(variant: str) -> str:
+    return "" if variant == "canonical" else f"_taas-{variant}"
+
 # ---------------------------------------------------------------------------
 # Shared: anomaly scoring (pure-NumPy, matches Cython version in notebooks)
 # ---------------------------------------------------------------------------
@@ -119,11 +123,28 @@ def _distance_offset_np(imgA: np.ndarray, imgB: np.ndarray,
     return dist
 
 
+def _minimized_residual_np(imgA: np.ndarray, imgB: np.ndarray,
+                           offset: int) -> np.ndarray:
+    """Local minimum filter over the aligned RGB reconstruction residual."""
+    delta = imgA - imgB
+    distance = np.sqrt(
+        np.einsum("ijk,ijk->ij", delta, delta, optimize=False)
+    ).astype(np.float32)
+    return minimum_filter(
+        distance, size=2 * offset + 1, mode="constant", cval=np.inf
+    )
+
+
 def score_pair(imgA: np.ndarray, imgB: np.ndarray,
-               offset: int, sigma: float, quantile: float
+               offset: int, sigma: float, quantile: float,
+               taas_variant: str = "canonical",
                ) -> tuple[float, np.ndarray]:
     """Score a single HWC float32 image pair. Returns (scalar, dist_map)."""
-    dist = _distance_offset_np(imgA, imgB, offset)
+    dist = (
+        _distance_offset_np(imgA, imgB, offset)
+        if taas_variant == "canonical"
+        else _minimized_residual_np(imgA, imgB, offset)
+    )
     if sigma > 0:
         dist = gaussian_filter(dist, sigma=sigma)
     return float(np.quantile(dist, quantile)), dist
@@ -136,14 +157,17 @@ def tensor_to_hwc(t: torch.Tensor) -> np.ndarray:
 
 
 def score_batch(data_t: torch.Tensor, recon_t: torch.Tensor,
-                offset: int, sigma: float, quantile: float
+                offset: int, sigma: float, quantile: float,
+                taas_variant: str = "canonical",
                 ) -> np.ndarray:
     """Return (B,) anomaly scores for a batch."""
     scores = []
     for i in range(data_t.shape[0]):
         a = tensor_to_hwc(data_t[i])
         b = tensor_to_hwc(recon_t[i])
-        scores.append(score_pair(a, b, offset, sigma, quantile)[0])
+        scores.append(
+            score_pair(a, b, offset, sigma, quantile, taas_variant)[0]
+        )
     return np.array(scores, dtype=np.float64)
 
 
@@ -279,7 +303,10 @@ def run_val_mode(area: str, args, device, out_dir: str) -> dict:
 
     for data_t, _ in tqdm(val_loader, desc=f"Scoring val [{area}]", leave=False):
         recon_t = reconstruct(Enc, Dec, data_t, device)
-        scores  = score_batch(data_t, recon_t, args.offset, args.sigma, args.quantile)
+        scores = score_batch(
+            data_t, recon_t, args.offset, args.sigma, args.quantile,
+            args.taas_variant,
+        )
         for b in range(data_t.shape[0]):
             real_idx  = val_indices[global_i]
             img_path  = base_ds.imgs[real_idx][0]
@@ -294,7 +321,9 @@ def run_val_mode(area: str, args, device, out_dir: str) -> dict:
     df = pd.DataFrame(records)
     score_csv = os.path.join(
         out_dir, area,
-        f"val_scores_{area}_{args.threshold_strategy}{args.threshold_percentile}_off{args.offset}_sig{args.sigma}_q{args.quantile}.csv"
+        f"val_scores_{area}_{args.threshold_strategy}{args.threshold_percentile}"
+        f"_off{args.offset}_sig{args.sigma}_q{args.quantile}"
+        f"{taas_variant_tag(args.taas_variant)}.csv"
     )
     os.makedirs(os.path.dirname(score_csv), exist_ok=True)
     df.to_csv(score_csv, index=False)
@@ -333,7 +362,9 @@ def _build_scoring_grid(args) -> list:
                 name = f"OFF-o{offset}-q{quantile}-s{sigma}"
                 # capture loop vars
                 def _fn(d, r, _o=offset, _q=quantile, _s=sigma):
-                    return score_batch(d, r, _o, _s, _q)
+                    return score_batch(
+                        d, r, _o, _s, _q, args.taas_variant
+                    )
                 fns.append((name, _fn))
 
     return fns
@@ -691,7 +722,11 @@ def _build_summary(area, suffix, n_epochs, args, tau, df_scores,
         "offset":             args.offset,
         "sigma":              args.sigma,
         "quantile":           args.quantile,
-        "score_func":         f'TAAS_OFF{args.offset}-s_{args.sigma}-q_{args.quantile}',  
+        "taas_variant":       args.taas_variant,
+        "score_func":         (
+            f"{'TAAS' if args.taas_variant == 'canonical' else 'TAAS_RESIDUAL_MIN'}"
+            f"_OFF{args.offset}-s_{args.sigma}-q_{args.quantile}"
+        ),
         "reconstruction_mode": "posterior_mean",
         "score_max":          float(df_scores.anomaly_score.max()),
         "score_mean":         float(df_scores.anomaly_score.mean()),
@@ -708,7 +743,12 @@ def _build_summary(area, suffix, n_epochs, args, tau, df_scores,
 def _save_threshold_json(out_dir: str, area: str, summary: dict, args):
     area_dir = os.path.join(out_dir, area)
     os.makedirs(area_dir, exist_ok=True)
-    json_path = os.path.join(area_dir, f"threshold_{area}_{args.threshold_strategy}{args.threshold_percentile}_off{args.offset}_sig{args.sigma}_q{args.quantile}.json")
+    json_path = os.path.join(
+        area_dir,
+        f"threshold_{area}_{args.threshold_strategy}{args.threshold_percentile}"
+        f"_off{args.offset}_sig{args.sigma}_q{args.quantile}"
+        f"{taas_variant_tag(args.taas_variant)}.json",
+    )
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
     print(f"[save] Threshold JSON → {json_path}")
@@ -807,6 +847,11 @@ def parse_args():
     p.add_argument("--offset",   default=1,   type=int) # 1
     p.add_argument("--sigma",    default=1.0, type=float)
     p.add_argument("--quantile", default=0.99, type=float) #0.99
+    p.add_argument(
+        "--taas_variant", "--taas-variant",
+        choices=("canonical", "minimization"), default="canonical",
+        help="TAAS score definition used for calibration (default: canonical).",
+    )
 
     # ── Val-mode threshold strategies ─────────────────────────────────────
     p.add_argument("--threshold_strategy",   default="max",
@@ -899,7 +944,12 @@ def main():
 
     # ── Combined summary CSV ──────────────────────────────────────────────
     if all_summaries:
-        summary_csv = os.path.join(out_dir, f"thresholds_summary_{args.mode}_{args.threshold_strategy}{args.threshold_percentile}_off{args.offset}_sig{args.sigma}_q{args.quantile}.csv")
+        summary_csv = os.path.join(
+            out_dir,
+            f"thresholds_summary_{args.mode}_{args.threshold_strategy}"
+            f"{args.threshold_percentile}_off{args.offset}_sig{args.sigma}"
+            f"_q{args.quantile}{taas_variant_tag(args.taas_variant)}.csv",
+        )
         pd.DataFrame(all_summaries).to_csv(summary_csv, index=False)
         print(f"\n[save] Summary CSV → {summary_csv}")
 
