@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import os
+import threading
+import tempfile
 import time
 from collections import OrderedDict
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import cv2
@@ -17,6 +21,160 @@ AREA_DISPLAY_NAMES = {
     "RoboArm": "Robo Arm (C)",
     "ConvBelt": "Conveyor Belt (D)",
 }
+
+STATUS_COLORS = {
+    "running": (35, 150, 35),
+    "waiting": (0, 150, 220),
+    "inference_stopped": (0, 140, 255),
+    "camera_offline": (0, 0, 210),
+    "camera_unknown": (100, 100, 100),
+}
+
+
+def connection_status(
+    now: float,
+    inference_last_received: Optional[float],
+    camera_last_received: Optional[float],
+    started_at: float,
+    inference_timeout: float,
+    camera_timeout: float,
+    camera_monitor_available: bool = True,
+) -> Tuple[str, str, str]:
+    """Return status key, title, and explanation for the dashboard banner."""
+    inference_fresh = (
+        inference_last_received is not None
+        and now - inference_last_received <= inference_timeout
+    )
+    camera_fresh = (
+        camera_last_received is not None
+        and now - camera_last_received <= camera_timeout
+    )
+
+    if inference_fresh:
+        return "running", "INFERENCE RUNNING", "Camera stream and detections are live"
+    if camera_fresh:
+        return (
+            "inference_stopped",
+            "CAMERA LIVE - INFERENCE STOPPED",
+            "Camera frames continue, but no new ADVIS detection was received",
+        )
+    if now - started_at <= max(inference_timeout, camera_timeout):
+        return "waiting", "WAITING FOR DATA", "Waiting for camera and inference messages"
+    if camera_monitor_available:
+        return (
+            "camera_offline",
+            "CAMERA OFFLINE",
+            "No camera frames are being published; inference results are stale",
+        )
+    return (
+        "camera_unknown",
+        "INFERENCE STOPPED - CAMERA STATUS UNKNOWN",
+        "No detections received and the ROS camera monitor is unavailable",
+    )
+
+
+class ROSCameraMonitor:
+    """Monitor camera-message freshness independently from ADVIS inference."""
+
+    TYPE_NAMES = {
+        "raw": "sensor_msgs/msg/Image",
+        "compressed": "sensor_msgs/msg/CompressedImage",
+    }
+
+    def __init__(self, topic: str, message_type: str = "auto"):
+        self.topic = topic
+        self.requested_type = message_type
+        self.last_received = None
+        self.available = False
+        self.error = None
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def close(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=2.0)
+
+    def _run(self) -> None:
+        try:
+            # rclpy's default ~/.ros/log location may live on a slow or
+            # unavailable mounted home directory.  A logging failure prevents
+            # the camera monitor from starting even though DDS itself is fine.
+            ros_log_dir = Path(tempfile.gettempdir()) / "advis_dashboard_ros_logs"
+            ros_log_dir.mkdir(parents=True, exist_ok=True)
+            os.environ.setdefault("ROS_LOG_DIR", str(ros_log_dir))
+
+            import rclpy
+            from rclpy.context import Context
+            from rclpy.executors import SingleThreadedExecutor
+            from rclpy.node import Node
+            from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
+            from sensor_msgs.msg import CompressedImage, Image
+
+            context = Context()
+            rclpy.init(args=None, context=context)
+            node = Node("advis_dashboard_camera_monitor", context=context)
+            executor = SingleThreadedExecutor(context=context)
+            executor.add_node(node)
+            qos = QoSProfile(
+                reliability=ReliabilityPolicy.BEST_EFFORT,
+                history=HistoryPolicy.KEEP_LAST,
+                depth=1,
+            )
+            classes = {"raw": Image, "compressed": CompressedImage}
+            subscription = None
+            subscribed_type = None
+            next_discovery = 0.0
+            first_frame_reported = False
+            self.available = True
+
+            def on_frame(_message) -> None:
+                nonlocal first_frame_reported
+                self.last_received = time.monotonic()
+                if not first_frame_reported:
+                    print(f"[camera monitor] first frame received on {self.topic}")
+                    first_frame_reported = True
+
+            while not self._stop.is_set() and context.ok():
+                now = time.monotonic()
+                if now >= next_discovery:
+                    discovered = set()
+                    for info in node.get_publishers_info_by_topic(self.topic):
+                        for kind, type_name in self.TYPE_NAMES.items():
+                            if info.topic_type == type_name:
+                                discovered.add(kind)
+                    desired = self.requested_type
+                    if desired == "auto":
+                        desired = (
+                            "compressed" if "compressed" in discovered
+                            else "raw" if "raw" in discovered else None
+                        )
+                    if desired is not None and desired != subscribed_type:
+                        if subscription is not None:
+                            node.destroy_subscription(subscription)
+                        subscription = node.create_subscription(
+                            classes[desired], self.topic, on_frame, qos
+                        )
+                        subscribed_type = desired
+                        print(
+                            f"[camera monitor] subscribed to {self.topic} "
+                            f"({desired})"
+                        )
+                    next_discovery = now + 0.5
+                executor.spin_once(timeout_sec=0.1)
+
+            if subscription is not None:
+                node.destroy_subscription(subscription)
+            executor.remove_node(node)
+            executor.shutdown()
+            node.destroy_node()
+            context.shutdown()
+        except Exception as exc:
+            self.available = False
+            self.error = str(exc)
+            print(f"[camera monitor] unavailable: {exc}")
 
 
 def ordered_area_list(areas: Iterable[str]) -> List[str]:
@@ -466,13 +624,24 @@ def draw_dashboard_panel(
             label = f"{rr.get('status', '')}: {rr.get('norm_score', 0):.2f}"
 
             x_text = int(pt[0])
+            y_text = max(20, int(pt[1]) - 8)
             if area_name == "PLeft":
                 x_text -= 30   # try -30, -40, or -50
+            elif area_name == "ConvBelt":
+                text_width = cv2.getTextSize(
+                    label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2
+                )[0][0]
+                contour_points = np.concatenate(scaled, axis=0).reshape(-1, 2)
+                x_text = max(tl_in[0] + 4, int(contour_points[:, 0].max()) - text_width - 6)
+                y_text = max(
+                    tl_in[1] + 18,
+                    min(tl_in[3] - 6, int(contour_points[:, 1].max()) - 6),
+                )
 
             cv2.putText(
                 canvas,
                 label,
-                (x_text, max(20, int(pt[1]) - 8)),
+                (x_text, y_text),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.6,
                 color,
@@ -526,13 +695,24 @@ def draw_dashboard_panel(
             label = f"{rr.get('status', '')}: {rr.get('norm_score', 0):.2f}" if "norm_score" in rr else area_name
 
             x_text = int(pt[0])
+            y_text = int(pt[1]) - 5
             if area_name == "PLeft":
                 x_text -= 40
+            elif area_name == "ConvBelt":
+                text_width = cv2.getTextSize(
+                    label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2
+                )[0][0]
+                contour_points = np.concatenate(scaled, axis=0).reshape(-1, 2)
+                x_text = max(tr_in[0] + 4, int(contour_points[:, 0].max()) - text_width - 6)
+                y_text = max(
+                    tr_in[1] + 18,
+                    min(tr_in[3] - 6, int(contour_points[:, 1].max()) - 6),
+                )
 
             cv2.putText(
                 canvas,
                 label,
-                (x_text, int(pt[1]) - 5),
+                (x_text, y_text),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.6,
                 color,
@@ -582,10 +762,10 @@ def make_config(endpoint: str) -> zenoh.Config:
     )
 
 
-def render_from_payload(raw: bytes, width: int, height: int) -> None:
+def render_from_payload(raw: bytes, width: int, height: int) -> np.ndarray:
     state = unpack_dashboard_state(raw)
     meta = state["frame_meta"]
-    image = draw_dashboard_panel(
+    return draw_dashboard_panel(
         state["frame_bgr"],
         state["area_inputs"],
         state["latest_results"],
@@ -596,8 +776,76 @@ def render_from_payload(raw: bytes, width: int, height: int) -> None:
         corr_stamp=meta["stamp"],
         runtime_meta=state.get("runtime_meta", {}),
     )
-    cv2.imshow("ADVIS Dashboard", image)
-    cv2.waitKey(1)
+
+
+def draw_connection_banner(
+    dashboard: np.ndarray,
+    status_key: str,
+    title: str,
+    explanation: str,
+    stale: bool,
+) -> np.ndarray:
+    """Draw a compact live indicator or a prominent stale-state banner."""
+    output = dashboard.copy()
+    h, w = output.shape[:2]
+    color = STATUS_COLORS[status_key]
+
+    if status_key == "running":
+        border = max(8, min(h, w) // 120)
+        cv2.rectangle(
+            output, (border // 2, border // 2),
+            (w - 1 - border // 2, h - 1 - border // 2),
+            color, border,
+        )
+
+        # Put the healthy-state text in the title row of the Details subplot.
+        pad = 16
+        panel_w = (w - 3 * pad) // 2
+        panel_h = (h - 3 * pad) // 2
+        details_x1 = 2 * pad + panel_w
+        details_y1 = 2 * pad + panel_h
+        status_x = details_x1 + 145
+        status_y = details_y1 + 28
+        status_text = "CAMERA ALIVE | INFERENCE RUNNING"
+        available_width = max(1, w - pad - status_x - 12)
+        cv2.putText(
+            output, _fit_text(status_text, available_width, 0.58, 2),
+            (status_x, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.58,
+            color, 2, cv2.LINE_AA,
+        )
+        return output
+
+    if stale:
+        output = cv2.addWeighted(output, 0.42, np.zeros_like(output), 0.58, 0)
+
+    banner_h = max(76, int(h * 0.09))
+    overlay = output.copy()
+    cv2.rectangle(overlay, (0, 0), (w, banner_h), color, -1)
+    output = cv2.addWeighted(overlay, 0.90, output, 0.10, 0)
+
+    title_scale = max(0.75, min(1.25, w / 1500.0))
+    cv2.putText(
+        output, title, (24, int(banner_h * 0.48)),
+        cv2.FONT_HERSHEY_SIMPLEX, title_scale, (255, 255, 255), 3,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        output, _fit_text(explanation, w - 48, 0.58, 1),
+        (24, banner_h - 14), cv2.FONT_HERSHEY_SIMPLEX, 0.58,
+        (255, 255, 255), 1, cv2.LINE_AA,
+    )
+    return output
+
+
+def empty_dashboard(width: int, height: int) -> np.ndarray:
+    image = np.full((height, width, 3), 32, dtype=np.uint8)
+    text = "ADVIS Dashboard - no inference frame received"
+    size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)[0]
+    cv2.putText(
+        image, text, ((width - size[0]) // 2, height // 2),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (210, 210, 210), 2, cv2.LINE_AA,
+    )
+    return image
 
 
 def main() -> None:
@@ -606,35 +854,110 @@ def main() -> None:
     parser.add_argument("--zenoh-key", default="advis/vis/dashboard/state")
     parser.add_argument("--width", type=int, default=1600)
     parser.add_argument("--height", type=int, default=1000)
+    parser.add_argument("--camera-topic", default="/camera/back_view/image_raw")
+    parser.add_argument(
+        "--camera-message-type", choices=("auto", "raw", "compressed"),
+        default="auto",
+    )
+    parser.add_argument(
+        "--camera-timeout", type=float, default=2.0,
+        help="Seconds without a ROS camera frame before showing CAMERA OFFLINE.",
+    )
+    parser.add_argument(
+        "--inference-timeout", type=float, default=3.0,
+        help="Seconds without a Zenoh detection before showing inference stopped.",
+    )
+    parser.add_argument(
+        "--no-camera-monitor", action="store_true",
+        help="Disable direct ROS camera monitoring (camera state becomes unknown).",
+    )
     args = parser.parse_args()
+    if args.camera_timeout <= 0 or args.inference_timeout <= 0:
+        parser.error("--camera-timeout and --inference-timeout must be positive")
 
     zenoh.init_log_from_env_or("error")
     config = make_config(args.zenoh_endpoint)
+    started_at = time.monotonic()
+    camera_monitor = None
+    if not args.no_camera_monitor:
+        camera_monitor = ROSCameraMonitor(
+            args.camera_topic, args.camera_message_type
+        )
+        camera_monitor.start()
 
-    with zenoh.open(config) as session:
-        got_any = False
-        for reply in session.get(args.zenoh_key):
-            if getattr(reply, "ok", None) is None:
-                continue
-            try:
-                render_from_payload(reply.ok.payload.to_bytes(), args.width, args.height)
-                got_any = True
-            except Exception as exc:
-                print(f"Skipping invalid stored dashboard payload: {exc}")
+    shared = {
+        "raw": None,
+        "generation": 0,
+        "inference_last_received": None,
+    }
 
-        if not got_any:
-            print("No stored dashboard state yet.")
+    def on_dashboard_sample(sample) -> None:
+        try:
+            shared["raw"] = sample.payload.to_bytes()
+            shared["generation"] += 1
+            shared["inference_last_received"] = time.monotonic()
+        except Exception as exc:
+            print(f"Dashboard receive error: {exc}")
 
-        with session.declare_subscriber(args.zenoh_key) as subscriber:
-            while True:
+    try:
+        with zenoh.open(config) as session:
+            got_any = False
+            for reply in session.get(args.zenoh_key):
+                if getattr(reply, "ok", None) is None:
+                    continue
                 try:
-                    sample = subscriber.recv()
-                    render_from_payload(sample.payload.to_bytes(), args.width, args.height)
+                    # Stored state supplies the last image, but is deliberately
+                    # not considered a fresh inference heartbeat.
+                    shared["raw"] = reply.ok.payload.to_bytes()
+                    shared["generation"] += 1
+                    got_any = True
                 except Exception as exc:
-                    print(f"Dashboard render error: {exc}")
-                if (cv2.waitKey(1) & 0xFF) == 27:
-                    break
-                time.sleep(0.001)
+                    print(f"Skipping invalid stored dashboard payload: {exc}")
+
+            if not got_any:
+                print("No stored dashboard state yet.")
+
+            rendered = empty_dashboard(args.width, args.height)
+            rendered_generation = -1
+            with session.declare_subscriber(args.zenoh_key, on_dashboard_sample):
+                while True:
+                    if shared["generation"] != rendered_generation:
+                        try:
+                            rendered = render_from_payload(
+                                shared["raw"], args.width, args.height
+                            )
+                            rendered_generation = shared["generation"]
+                        except Exception as exc:
+                            print(f"Dashboard render error: {exc}")
+                            rendered_generation = shared["generation"]
+
+                    now = time.monotonic()
+                    camera_last = (
+                        camera_monitor.last_received
+                        if camera_monitor is not None else None
+                    )
+                    monitor_available = (
+                        camera_monitor is not None and camera_monitor.available
+                    )
+                    status_key, title, explanation = connection_status(
+                        now,
+                        shared["inference_last_received"],
+                        camera_last,
+                        started_at,
+                        args.inference_timeout,
+                        args.camera_timeout,
+                        monitor_available,
+                    )
+                    display = draw_connection_banner(
+                        rendered, status_key, title, explanation,
+                        stale=status_key != "running",
+                    )
+                    cv2.imshow("ADVIS Dashboard", display)
+                    if (cv2.waitKey(50) & 0xFF) == 27:
+                        break
+    finally:
+        if camera_monitor is not None:
+            camera_monitor.close()
 
     cv2.destroyAllWindows()
 

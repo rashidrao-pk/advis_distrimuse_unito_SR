@@ -11,7 +11,6 @@
   <img src="https://img.shields.io/badge/Model-VAE--GAN-7A3EFF?style=for-the-badge" />
 </p>
 
-
 <p align="center">
   <img src="doc/header.png" width="100%" alt="DistriMuSe UC3 anomaly-detection pipeline - UniTo, Muhammad Rashid Rao">
 </p>
@@ -42,24 +41,24 @@ Anomaly score and calibrated threshold
 
 The four supported safety areas are:
 
-| Area | Monitored region |
-| --- | --- |
-| `PLeft` | Left pallet area |
-| `PRight` | Right pallet area |
-| `RoboArm` | Robot operating area |
-| `ConvBelt` | Conveyor-belt area |
+| Area       | Monitored region     |
+| ---------- | -------------------- |
+| `PLeft`    | Left pallet area     |
+| `PRight`   | Right pallet area    |
+| `RoboArm`  | Robot operating area |
+| `ConvBelt` | Conveyor-belt area   |
 
 ## Main entry points
 
-| Script | Purpose |
-| --- | --- |
-| `scripts/train.py` | Train or resume an area-specific VAE-GAN |
-| `scripts/calibrate_threshold.py` | Calculate validation or supervised test thresholds |
-| `scripts/plot_validation_timelines.py` | Plot validation-score timelines and thresholds |
-| `scripts/infer_offline.py` | Run inference on cropped data, frames, MP4, or MCAP rosbag input |
-| `scripts/infer_ros_live_zenoh.py` | Run live ROS 2 inference and publish visualization data |
-| `scripts/process_rosbags_to_dataset.py` | Build datasets from ROS bag recordings |
-| `scripts/scripts_extra/preprocess_saved_frames.py` | Generate safety-area crops from saved frames |
+| Script                                             | Purpose                                                          |
+| -------------------------------------------------- | ---------------------------------------------------------------- |
+| `scripts/train.py`                                 | Train or resume an area-specific VAE-GAN                         |
+| `scripts/calibrate_threshold.py`                   | Calculate validation or supervised test thresholds               |
+| `scripts/plot_validation_timelines.py`             | Plot validation-score timelines and thresholds                   |
+| `scripts/infer_offline.py`                         | Run inference on cropped data, frames, MP4, or MCAP rosbag input |
+| `scripts/infer_ros_live_zenoh.py`                  | Run live ROS 2 inference and publish visualization data          |
+| `scripts/process_rosbags_to_dataset.py`            | Build datasets from ROS bag recordings                           |
+| `scripts/scripts_extra/preprocess_saved_frames.py` | Generate safety-area crops from saved frames                     |
 
 ## Installation
 
@@ -143,7 +142,7 @@ preprocessing workflow.
 
 ### 2. Train the models
 
-Train one safety area with the Epito dataset configuration:
+Train one safety area with the Epito dataset configuration ([details here](/doc/epito/EPITO_TRAIN.md)):
 
 ```bash
 python scripts/train.py \
@@ -170,9 +169,17 @@ Training resumes from a matching checkpoint when one is present. See
 [Training on Epito](doc/TRAIN_on_epito.md) for Slurm, `tmux`, and GPU-monitoring
 commands.
 
+#### 2.1 Load Pretrained Models:
+
+[Available here on Gitlab](https://gitlab.di.unito.it/rashid/dm_checkpoints_demo33)
+
+```bash
+git clone https://gitlab.di.unito.it/rashid/dm_checkpoints_demo33
+```
+
 ### 3. Calibrate thresholds
 
-Calibrate one area from its normal validation split:
+Calibrate one area from its normal validation split ([details here](/doc/epito/EPITO_CALIBRATE_THRESHOLD.md)):
 
 ```bash
 python scripts/calibrate_threshold.py \
@@ -199,7 +206,7 @@ thresholds/
 For calibration strategies and supervised test mode, see
 [Threshold calibration](doc/CALIBRATE_THRESHOLD.md).
 
-### 4. Plot validation timelines
+#### 4. Plot validation timelines
 
 Generate a combined timeline for all safety areas:
 
@@ -220,7 +227,7 @@ The combined plot is saved as
 
 ### 5. Run offline inference
 
-Use configured cropped training data (no masks required). Each output frame combines all selected safety areas in the Input, Unexpected Situations, and AI views:
+Use configured cropped training data (no masks required). Each output frame combines all selected safety areas in the Input, Unexpected Situations, and AI views ([details here](/doc/epito/EPITO_INFERENCE.md)):
 
 ```bash
 python scripts/infer_offline.py \
@@ -325,12 +332,11 @@ This work was developed at the University of Torino within the
 partners including the University of Granada (ValeriaLab), Smart Robotics, and
 Rulex Innovation Labs.
 
-
 ## License
 
 See [LICENSE](LICENSE).
 
-# 👥 Contributing
+<!-- # 👥 Contributing
 
 We welcome contributions! Check out our [Contributing Guide](CONTRIBUTING.md) to get started.
 
@@ -338,8 +344,8 @@ We welcome contributions! Check out our [Contributing Guide](CONTRIBUTING.md) to
   <a href="https://github.com/rashidrao-pk/advis_distrimuse_unito_SR/graphs/contributors">
     <img src="https://contrib.rocks/image?repo=rashidrao-pk/advis_distrimuse_unito_SR" alt="Contributors to advis_distrimuse_unito_SR" />
   </a>
-</p>
+</p> -->
 
-<p align="center">
+<!-- <p align="center">
   <b>Thank you to all our contributors!</b>
-</p>
+</p> -->

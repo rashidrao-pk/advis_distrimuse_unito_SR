@@ -6,6 +6,7 @@ sinfo -N -p mirri,gracehopper,cascadelake,epito \
 squeue -p mirri,gracehopper,cascadelake,epito \
   -o "%.12i %.12u %.18P %.18j %.8T %.15N %.12b %.20R"
 
+ssh epito-mercurio
 srun -p epito --gres=gpu:a100:1 -J "ADVIS Threshold Calibration" --pty bash
 tmux new -s AD_SR_Cal
 source /beegfs/home/mrashid/pt_312/bin/activate
@@ -418,6 +419,17 @@ chmod +x scripts/bash/run_evaluation.sh
 
 ## Run on Winning without RollingMin
 
+```bash
+python scripts/compare_annotations_detection.py \
+  --annotations /Users/rashid/data/PhD/datacloud_data/repos/DistriMuSe/advis_distrimuse_unito_SR/reports/safety_area_annotations/saved_annotation/scenario_8_16_back_view_annotations.csv \
+  --scores results/V6/offline_inference/video_8_16_percentile_off3_sig1.5_q0.99_scores.csv
+
+python scripts/compare_annotations_detection.py \
+  --annotations /Users/rashid/data/PhD/datacloud_data/repos/DistriMuSe/advis_distrimuse_unito_SR/reports/safety_area_annotations/saved_annotation/scenario_8_16_back_view_annotations.csv \
+  --scores results/V6/offline_inference/video_8_16_percentile_off3_sig1.5_q0.99_taas-minimization_scores.csv
+
+```
+
 New params added:
 
 - `--add_score_name`
@@ -427,6 +439,8 @@ New params added:
 - `--rolling` --> `mean` | `min` | `max` or `none`
 - `--taas_backend` `numpy` | `cython`
 - `--taas_variant` `canonical` | `minimization`
+
+## Run on Winning with RollingMin
 
 #### Rolling:
 
@@ -449,7 +463,9 @@ python scripts/infer_offline.py \
   --add_fps_details \
   --rolling mean \
   --rolling_window 5 \
-  --taas_backend cython
+  --taas_backend cython \
+  --add_score_name \
+  --profile_timing
 ```
 
 ```bash

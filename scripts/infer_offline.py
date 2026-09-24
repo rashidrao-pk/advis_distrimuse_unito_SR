@@ -1473,6 +1473,7 @@ def main():
     )
     try:
         if args.input_type == "cropped":
+            print('-'*80)
             progress = tqdm(
                 iter_cropped_groups(args), total=input_progress_total(args),
                 desc="Offline inference [cropped]", unit="combined frame",
@@ -1533,6 +1534,7 @@ def main():
                 "video": iter_video,
                 "rosbag": iter_rosbag,
             }
+            print('-'*80)
             progress = tqdm(
                 factories[args.input_type](args), total=input_progress_total(args),
                 desc=f"Offline inference [{args.input_type}]", unit="frame",
