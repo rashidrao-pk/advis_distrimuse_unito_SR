@@ -2,14 +2,31 @@
 
 ```bash
 cd /Users/rashid/data/PhD/datacloud_data/repos/my_git/distrimuse-image-broadcaster
+
 pixi run replay_formatted --scenario 13_1  --loop --no-display
+
+# or
+pixi run env \
+  -u CYCLONEDDS_URI \
+  RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
+  ROS_LOCALHOST_ONLY=1 \
+  python -m cam_recorder.replay_formatted --scenario 13_1 --loop --no-display
 ```
 
 ## Terminal 2: Run `Zenoh` service
 
 ```bash
 cd /Users/rashid/data/PhD/datacloud_data/repos/DistriMuSe/advis_distrimuse_unito_SR
-zenohd -c zenoh_dashboard/zenoh.json5
+# zenohd -c zenoh_dashboard/zenoh.json5
+zenohd --config zenoh_dashboard/zenoh.json5 --cfg='listen/endpoints:["tcp/0.0.0.0:7447"]'
+ipconfig getifaddr en0
+
+## CHeck from another Machine
+nc -vz 172.16.97.241 7447
+
+# pixi run python zenoh_dashboard/dashboard_viewer.py \
+#   --zenoh-endpoint tcp/172.16.97.241:7447 \
+#   --no-camera-monitor
 ```
 
 ## Terminal 3: Run Inference Live (Publishes scores and details)
