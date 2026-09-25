@@ -122,15 +122,18 @@ def test_test_discovery_accepts_normal_only_safety_area(tmp_path):
     assert metadata["anomalous"] == 0
 
 
-def test_test_discovery_rejects_area_without_normal_samples(tmp_path):
+def test_test_discovery_reports_anomalous_only_safety_area(tmp_path):
     test_root, annotation = make_annotated_test_tree(tmp_path)
     normal = test_root / "13_0" / "PRight" / "normal"
     next(normal.iterdir()).unlink()
 
-    with pytest.raises(ValueError, match="requires normal frames"):
-        discover_annotated_test_samples(
-            test_root, "PRight", [annotation], requested_scenarios=["13_0"]
-        )
+    samples, metadata = discover_annotated_test_samples(
+        test_root, "PRight", [annotation], requested_scenarios=["13_0"]
+    )
+
+    assert [label for _, label in samples] == [1]
+    assert metadata["normal"] == 0
+    assert metadata["anomalous"] == 1
 
 
 def test_f1c_selects_an_observed_score_threshold():
@@ -244,8 +247,8 @@ def test_normal_only_test_calibration_uses_distribution_threshold(
         calibration,
         "_compute_scores_for_loader",
         lambda *unused: (
-            np.array([0.1, 0.2, 0.3]),
-            np.array([0, 0, 0]),
+            [0.1, 0.2, 0.3],
+            [0, 0, 0],
             ["a.png", "b.png", "c.png"],
         ),
     )
@@ -287,3 +290,33 @@ def test_normal_only_test_calibration_uses_distribution_threshold(
         area_out / "anomaly_metrics_PRight_scenario-13_0.csv"
     )
     assert metrics.loc[0, "Status"] == "not_applicable_no_anomalous_samples"
+
+
+def test_anomalous_only_area_is_skipped_without_overwriting_threshold(tmp_path):
+    area_out = tmp_path / "PLeft"
+    area_out.mkdir()
+    existing_threshold = area_out / "threshold_PLeft_f1c_off1_sig1.0_q0.99.json"
+    existing_threshold.write_text('{"threshold": 0.42}', encoding="utf-8")
+    metadata = {
+        "scenarios": ["13_1"],
+        "source_scenarios": [{
+            "scenario_id": "13_1", "description": "operator falls"
+        }],
+        "annotation_csvs": ["scenario_13_1_back_view_annotations.csv"],
+        "test_root": "/data/test",
+        "normal": 0,
+        "anomalous": 215,
+        "verify_excluded": 401,
+    }
+
+    summary = calibration._skip_test_calibration_without_normal(
+        "PLeft", metadata, str(area_out), "_scenario-13_1"
+    )
+
+    assert summary["status"] == "skipped"
+    assert summary["threshold"] is None
+    assert summary["threshold_written"] is False
+    assert existing_threshold.read_text(encoding="utf-8") == '{"threshold": 0.42}'
+    assert (
+        area_out / "calibration_skipped_PLeft_scenario-13_1_no-normal.json"
+    ).is_file()

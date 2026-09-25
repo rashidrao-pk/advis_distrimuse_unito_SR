@@ -10,6 +10,7 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 from infer_offline import (  # noqa: E402
+    amplify_threshold_config,
     apply_rolling_policy,
     camera_name_from_topic,
     compact_sample_name,
@@ -18,10 +19,12 @@ from infer_offline import (  # noqa: E402
     parse_args,
     public_result,
     resolve_taas_backend,
+    resolve_threshold_amplifications,
     resolve_video_scenario,
     rolling_variant_tag,
     taas_variant_tag,
     threshold_variant_tag,
+    threshold_amplification_variant_tag,
 )
 
 
@@ -103,6 +106,43 @@ def test_rolling_policy_accepts_case_insensitive_none(monkeypatch):
 def test_rolling_window_must_be_positive(monkeypatch):
     with pytest.raises(SystemExit):
         parse(monkeypatch, "--rolling_window", "0")
+
+
+def test_one_threshold_amplification_is_broadcast(monkeypatch):
+    args = parse(monkeypatch, "--threshold_amplification", "1.1")
+    assert list(args.threshold_amplification_by_area.items()) == [
+        ("PLeft", 1.1), ("PRight", 1.1),
+        ("RoboArm", 1.1), ("ConvBelt", 1.1),
+    ]
+
+
+def test_threshold_amplification_list_follows_selected_area_order(monkeypatch):
+    args = parse(
+        monkeypatch,
+        "--safety_areas", "PRight", "PLeft", "RoboArm", "ConvBelt",
+        "--threshold_amplification", "1.1", "1.2", "1.3", "1.4",
+    )
+    assert list(args.threshold_amplification_by_area.items()) == [
+        ("PRight", 1.1), ("PLeft", 1.2),
+        ("RoboArm", 1.3), ("ConvBelt", 1.4),
+    ]
+
+
+def test_threshold_amplification_count_and_values_are_validated(monkeypatch):
+    with pytest.raises(SystemExit):
+        parse(monkeypatch, "--threshold_amplification", "1.1", "1.2")
+    with pytest.raises(SystemExit):
+        parse(monkeypatch, "--threshold_amplification", "0")
+
+
+def test_amplified_threshold_preserves_calibrated_value():
+    config = amplify_threshold_config({"threshold": 0.5}, 1.2)
+    assert config["calibrated_threshold"] == pytest.approx(0.5)
+    assert config["threshold_amplification"] == pytest.approx(1.2)
+    assert config["threshold"] == pytest.approx(0.6)
+    assert threshold_amplification_variant_tag(
+        resolve_threshold_amplifications([1.1, 1.2], ["PLeft", "PRight"])
+    ) == "_amp-1.1-1.2"
 
 
 def test_sample_display_does_not_include_full_path():
@@ -300,6 +340,8 @@ def test_public_result_contains_threshold_provenance():
     assert row["offset"] == 2
     assert row["sigma"] == 1.5
     assert row["quantile"] == 0.98
+    assert row["calibrated_threshold"] == pytest.approx(0.2)
+    assert row["threshold_amplification"] == pytest.approx(1.0)
     assert row["threshold_file"].endswith("_off2_sig1.5_q0.98.json")
     assert "original_bgr" not in row
 

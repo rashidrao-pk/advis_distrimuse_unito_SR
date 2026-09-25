@@ -57,6 +57,7 @@ def test_live_cli_accepts_current_inference_controls():
         "--taas_variant", "minimization",
         "--rolling", "mean",
         "--rolling_window", "5",
+        "--threshold_amplification", "1.1", "1.2",
     ])
 
     assert args.message_type == "compressed"
@@ -66,6 +67,9 @@ def test_live_cli_accepts_current_inference_controls():
     assert args.taas_backend == "cython"
     assert args.taas_variant == "minimization"
     assert (args.rolling, args.rolling_window) == ("mean", 5)
+    assert list(args.threshold_amplification_by_area.items()) == [
+        ("PLeft", 1.1), ("RoboArm", 1.2)
+    ]
 
 
 def test_debug_media_requires_and_accepts_zenoh():

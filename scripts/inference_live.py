@@ -111,6 +111,15 @@ def parse_args(argv=None):
         "--threshold_percentile", "--threshold-percentile",
         type=float, default=99.0,
     )
+    parser.add_argument(
+        "--threshold_amplification", "--threshold-amplification",
+        "--threshold_amplification_factor", "--threshold-amplification-factor",
+        nargs="+", type=float, default=[1.0],
+        help=(
+            "One positive threshold multiplier for all selected areas, or one "
+            "per area in --safety_areas order."
+        ),
+    )
     parser.add_argument("--offset", type=int, default=1)
     parser.add_argument("--sigma", type=float, default=1.0)
     parser.add_argument("--quantile", type=float, default=0.99)
@@ -195,6 +204,14 @@ def parse_args(argv=None):
     unknown = sorted(set(args.safety_areas).difference(offline.ALL_AREAS))
     if unknown:
         parser.error(f"Unknown safety area(s): {', '.join(unknown)}")
+    try:
+        args.threshold_amplification_by_area = (
+            offline.resolve_threshold_amplifications(
+                args.threshold_amplification, args.safety_areas
+            )
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.frame_stride < 1 or args.rolling_window < 1 or args.log_every_n < 1:
         parser.error("--frame_stride, --rolling_window, and --log_every_n must be at least 1")
     if args.max_frames is not None and args.max_frames < 1:
@@ -453,6 +470,14 @@ class LiveInferenceNode(Node):
             1,
             f"[TAAS] variant={args.taas_variant}, backend={self.backend}, "
             f"offset={args.offset}, sigma={args.sigma}, quantile={args.quantile}",
+        )
+        self.log(
+            1,
+            "[threshold amplification] "
+            + ", ".join(
+                f"{area}={factor:.3f}x"
+                for area, factor in args.threshold_amplification_by_area.items()
+            ),
         )
         self.masks = load_live_masks(args)
         self.models = offline.load_models(args, self.device)

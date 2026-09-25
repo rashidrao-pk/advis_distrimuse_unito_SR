@@ -85,6 +85,16 @@ def parse_args():
                         default="percentile",
                         help="Calibration strategy to load (default: max).")
     parser.add_argument("--threshold_percentile", default=99.0, type=float)
+    parser.add_argument(
+        "--threshold_amplification", "--threshold-amplification",
+        "--threshold_amplification_factor", "--threshold-amplification-factor",
+        nargs="+", type=float, default=[1.0],
+        help=(
+            "Multiply calibrated thresholds before detection. Provide one "
+            "positive factor for all selected areas, or one factor per area "
+            "in --safety_areas order (ALL order: PLeft PRight RoboArm ConvBelt)."
+        ),
+    )
     parser.add_argument("--offset", type=int, default=3,
                         help="TAAS neighborhood offset used during threshold calibration (default: 3).")
     parser.add_argument("--sigma", type=float, default=1.5,
@@ -186,6 +196,12 @@ def parse_args():
     unknown = sorted(set(args.safety_areas).difference(ALL_AREAS))
     if unknown:
         parser.error(f"Unknown safety area(s): {', '.join(unknown)}")
+    try:
+        args.threshold_amplification_by_area = resolve_threshold_amplifications(
+            args.threshold_amplification, args.safety_areas
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
     explicit_video_path = any((args.output_video, args.timeline_video, args.timeline_png))
     if args.save_video is False and explicit_video_path:
         parser.error(
@@ -195,6 +211,22 @@ def parse_args():
     if args.save_video is None:
         args.save_video = True
     return args
+
+
+def resolve_threshold_amplifications(values, safety_areas):
+    """Map one shared or one-per-area threshold factor to selected areas."""
+    factors = [float(value) for value in values]
+    areas = list(safety_areas)
+    if len(factors) == 1:
+        factors *= len(areas)
+    elif len(factors) != len(areas):
+        raise ValueError(
+            "--threshold_amplification requires either one value or exactly "
+            f"{len(areas)} values for: {', '.join(areas)}"
+        )
+    if any(not np.isfinite(value) or value <= 0 for value in factors):
+        raise ValueError("--threshold_amplification values must be finite and positive")
+    return OrderedDict(zip(areas, factors))
 
 
 class TimingProfiler:
@@ -358,6 +390,14 @@ def rolling_variant_tag(policy, window):
     return "" if policy == "none" else f"_roll{policy}_w{window}"
 
 
+def threshold_amplification_variant_tag(mapping):
+    """Return a filename suffix when any effective threshold is amplified."""
+    factors = list(mapping.values())
+    if not factors or all(np.isclose(value, 1.0) for value in factors):
+        return ""
+    return "_amp-" + "-".join(f"{value:g}" for value in factors)
+
+
 def load_settings(args):
     repository_root = Path(__file__).resolve().parent.parent
     config_path = args.config.expanduser().resolve()
@@ -418,6 +458,9 @@ def load_settings(args):
     )
     variant_tag += taas_variant_tag(args.taas_variant)
     variant_tag += rolling_variant_tag(args.rolling, args.rolling_window)
+    variant_tag += threshold_amplification_variant_tag(
+        args.threshold_amplification_by_area
+    )
     args.output_csv = (
         args.output_csv.expanduser().resolve()
         if args.output_csv
@@ -559,6 +602,19 @@ def load_threshold(
     }
 
 
+def amplify_threshold_config(threshold_config, factor):
+    """Return threshold metadata with calibrated and effective values."""
+    factor = float(factor)
+    if not np.isfinite(factor) or factor <= 0:
+        raise ValueError("Threshold amplification factor must be finite and positive")
+    config = dict(threshold_config)
+    calibrated = float(config.get("calibrated_threshold", config["threshold"]))
+    config["calibrated_threshold"] = calibrated
+    config["threshold_amplification"] = factor
+    config["threshold"] = calibrated * factor
+    return config
+
+
 def load_models(args, device):
     models = OrderedDict()
     for area in args.safety_areas:
@@ -590,6 +646,8 @@ def load_models(args, device):
             args.quantile,
             args.taas_variant,
         )
+        factor = getattr(args, "threshold_amplification_by_area", {}).get(area, 1.0)
+        threshold_config = amplify_threshold_config(threshold_config, factor)
         models[area] = {
             "encoder": encoder,
             "decoder": decoder,
@@ -597,7 +655,10 @@ def load_models(args, device):
         }
         print(f"[loaded] {area}: model_{suffix}.pt")
         print(
-            f"[threshold] {area}: {threshold_config['threshold']:.6f} | "
+            f"[threshold] {area}: calibrated="
+            f"{threshold_config['calibrated_threshold']:.6f} × "
+            f"{threshold_config['threshold_amplification']:.3f} = "
+            f"effective={threshold_config['threshold']:.6f} | "
             f"strategy={threshold_config['strategy']} | "
             f"score={threshold_config['score_func']} | "
             f"reconstruction={threshold_config['reconstruction_mode']} | "
@@ -757,6 +818,12 @@ def infer_crop(
         "safety_area": area,
         "anomaly_score": score,
         "threshold": threshold,
+        "calibrated_threshold": threshold_config.get(
+            "calibrated_threshold", threshold
+        ),
+        "threshold_amplification": threshold_config.get(
+            "threshold_amplification", 1.0
+        ),
         "normalized_score": normalized,
         "is_anomalous": normalized > 1.0,
         "threshold_strategy": threshold_config["strategy"],
@@ -1118,6 +1185,12 @@ def public_result(result):
             "offset", "sigma", "quantile",
         )
     }
+    public["calibrated_threshold"] = result.get(
+        "calibrated_threshold", result["threshold"]
+    )
+    public["threshold_amplification"] = result.get(
+        "threshold_amplification", 1.0
+    )
     public["calibration_score_func"] = result.get(
         "calibration_score_func", result["score_func"]
     )
@@ -1341,6 +1414,15 @@ def make_advis_dashboard(
                 f"window={first_result.get('rolling_window', 1)}, "
                 f"available={first_result.get('rolling_count', 1)}"
             )
+        if any(
+            not np.isclose(result.get("threshold_amplification", 1.0), 1.0)
+            for result in results.values()
+        ):
+            amplification = ", ".join(
+                f"{area} {result.get('threshold_amplification', 1.0):.2f}x"
+                for area, result in results.items()
+            )
+            footer_lines.append(f"Threshold amplification: {amplification}")
     if footer_lines:
         footer_y = details.shape[0] - 20 * len(footer_lines) - 8
         for line in footer_lines:
@@ -1614,6 +1696,7 @@ def main():
     args.output_csv.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = (
         "sample_id", "safety_area", "anomaly_score", "threshold",
+        "calibrated_threshold", "threshold_amplification",
         "normalized_score", "is_anomalous",
         "instantaneous_anomaly_score", "instantaneous_normalized_score",
         "rolling_policy", "rolling_window", "rolling_count",

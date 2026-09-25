@@ -217,12 +217,12 @@ set -euo pipefail
 # Build the Cython extension for the active Python environment.
 python scripts/setup_taas_cython.py build_ext --inplace --force
 
-total=18
+total=36
 current=0
 
 for ooff in 1 2 3; do
-  for ss in 1.0 1.5; do
-    for qq in 0.99 0.98 0.97; do
+  for ss in 1.0 1.5 2.0; do
+    for qq in 0.999 0.99 0.98 0.97; do
       ((current += 1))
 
       echo "============================================================"

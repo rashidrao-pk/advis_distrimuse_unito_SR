@@ -510,13 +510,6 @@ def discover_annotated_test_samples(
         "anomalous": sum(label == 1 for _, label in samples),
         "verify_excluded": int(verify_count),
     }
-    if counts["normal"] == 0:
-        raise ValueError(
-            f"Threshold calibration for {area} requires normal frames; "
-            f"found normal={counts['normal']}, "
-            f"anomalous={counts['anomalous']}, verify(excluded)={verify_count}. "
-            "Select a scenario containing normal examples."
-        )
     metadata = {
         "test_root": str(Path(test_root).expanduser().resolve()),
         "scenarios": sorted(scenario_dirs),
@@ -655,7 +648,7 @@ def run_val_mode(area: str, args, device, out_dir: str) -> dict:
     df = pd.DataFrame(records)
     score_csv = os.path.join(
         out_dir, area,
-        f"val_scores_{area}_{args.threshold_strategy}{args.threshold_percentile}"
+        f"{args.mode}_scores_{area}_{args.threshold_strategy}{args.threshold_percentile}"
         f"_off{args.offset}_sig{args.sigma}_q{args.quantile}"
         f"{taas_variant_tag(args.taas_variant)}.csv"
     )
@@ -875,6 +868,63 @@ def _save_calibration_plots(name, scores, labels, threshold, params,
         plt.close(fig)
 
 
+def _skip_test_calibration_without_normal(
+    area, test_metadata, area_out, scenario_tag,
+):
+    """Record an unsafe anomalous-only area without replacing its threshold."""
+    summary = {
+        "safety_area": area,
+        "mode": "test",
+        "status": "skipped",
+        "calibration_mode": "anomalous_only_skipped",
+        "skip_reason": "no_normal_samples_for_safety_area",
+        "threshold": None,
+        "threshold_written": False,
+        "supervised_metrics_available": False,
+        "n_images": int(test_metadata["anomalous"]),
+        "n_normal": 0,
+        "n_anomalous": int(test_metadata["anomalous"]),
+        "n_verify_excluded": int(test_metadata["verify_excluded"]),
+        "calibration_scenarios": list(test_metadata["scenarios"]),
+        "calibration_source_scenarios": list(
+            test_metadata["source_scenarios"]
+        ),
+        "calibration_data": test_metadata,
+        "computed_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    os.makedirs(area_out, exist_ok=True)
+    report_path = os.path.join(
+        area_out,
+        f"calibration_skipped_{area}{scenario_tag}_no-normal.json",
+    )
+    with open(report_path, "w", encoding="utf-8") as stream:
+        json.dump(summary, stream, indent=2)
+
+    metrics_path = os.path.join(
+        area_out, f"anomaly_metrics_{area}{scenario_tag}.csv"
+    )
+    pd.DataFrame([{
+        "Method": None,
+        "Accuracy": None,
+        "Precision": None,
+        "Recall": None,
+        "F1": None,
+        "AUC": None,
+        "Threshold": None,
+        "binormal_AUC": None,
+        "Status": "skipped_no_normal_samples",
+    }]).to_csv(metrics_path, index=False)
+
+    print(
+        f"[skip] {area}: normal=0, anomalous={test_metadata['anomalous']}, "
+        f"verify={test_metadata['verify_excluded']}. A safe threshold cannot "
+        "be calibrated from anomalous samples alone."
+    )
+    print(f"[skip] Existing threshold files were not modified.")
+    print(f"[skip] Report → {report_path}")
+    return summary
+
+
 def _run_normal_only_test_calibration(
     area, args, device, test_loader, test_ds, test_metadata, Enc, Dec,
     suffix, n_epochs, area_out, out_dir, scenario_tag,
@@ -898,6 +948,11 @@ def _run_normal_only_test_calibration(
     scores, labels, filenames = _compute_scores_for_loader(
         test_loader, test_ds, Enc, Dec, score_fn, device
     )
+    # The scoring helper returns Python lists during real DataLoader runs.
+    # Convert before vector comparisons and before using distribution methods
+    # such as ndarray.max() in the normal-only threshold strategies.
+    scores = np.asarray(scores, dtype=float)
+    labels = np.asarray(labels, dtype=int)
     if np.any(labels != 0):
         raise RuntimeError(
             f"Normal-only fallback for {area} received non-normal labels"
@@ -994,6 +1049,13 @@ def run_test_mode(area: str, args, device, out_dir: str) -> dict:
         description = source["description"] or "description unavailable"
         print(f"[test] source scenario {source['scenario_id']}: {description}")
 
+    area_out = os.path.join(out_dir, area)
+    scenario_tag = _scenario_artifact_tag(test_metadata["scenarios"])
+    if test_metadata["normal"] == 0:
+        return _skip_test_calibration_without_normal(
+            area, test_metadata, area_out, scenario_tag
+        )
+
     # ── Setup model ───────────────────────────────────────────────────────
     params, paths = _setup_params_paths(area, args)
     paths.path_models      = os.path.join(os.getcwd(), args.checkpoints)
@@ -1001,12 +1063,10 @@ def run_test_mode(area: str, args, device, out_dir: str) -> dict:
     Enc, Dec, suffix, n_epochs = load_model_for_area(area, params, paths, args, device)
 
     # ── Output dirs ───────────────────────────────────────────────────────
-    area_out = os.path.join(out_dir, area)
     plot_dir = os.path.join(area_out, "calibration_plots")
     os.makedirs(area_out, exist_ok=True)
     os.makedirs(plot_dir, exist_ok=True)
 
-    scenario_tag = _scenario_artifact_tag(test_metadata["scenarios"])
     if test_metadata["anomalous"] == 0:
         print(
             f"[fallback] {area} has no anomalous samples; calibrating from "
@@ -1273,7 +1333,7 @@ def _save_threshold_json(out_dir: str, area: str, summary: dict, args):
     )
     json_path = os.path.join(
         area_dir,
-        f"threshold_{area}_{strategy_tag}"
+        f"threshold_{args.mode}_{area}_{strategy_tag}"
         f"{filename_tail}",
     )
     with open(json_path, "w", encoding="utf-8") as f:
