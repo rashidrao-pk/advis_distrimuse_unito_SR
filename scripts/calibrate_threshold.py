@@ -1003,18 +1003,69 @@ def _save_test_combination_results(records, calibration_plot_dir, scenario_tag,
 def _save_normal_only_calibration_plot(
     name, scenario_tag, scores, threshold, area, save_dir,
 ):
-    """Save a score-distribution plot for a normal-only test calibration."""
+    """Save the standard scatter + KDE layout for normal-only calibration."""
     scores = np.asarray(scores, dtype=float)
-    fig, ax = plt.subplots(figsize=(8, 4))
-    ax.hist(scores, bins=min(50, max(10, len(scores) // 10)),
-            color="steelblue", alpha=0.8)
-    ax.axvline(threshold, color="red", linestyle="--", linewidth=2,
-               label=f"threshold = {threshold:.6f}")
-    ax.set_title(f"{name} | {area} | normal-only calibration")
-    ax.set_xlabel("Anomaly score")
-    ax.set_ylabel("Frames")
-    ax.grid(True, alpha=0.25)
-    ax.legend()
+    predictions = scores >= threshold
+    normal_indices = np.where(~predictions)[0]
+    false_positive_indices = np.where(predictions)[0]
+
+    fig, (ax1, ax2) = plt.subplots(
+        1, 2, figsize=(12, 4), gridspec_kw={"width_ratios": [3, 2]}
+    )
+    if len(normal_indices):
+        ax1.scatter(
+            normal_indices, scores[normal_indices],
+            label=f"True Negatives ({len(normal_indices)})",
+            alpha=0.6, color="blue", s=12,
+        )
+    if len(false_positive_indices):
+        ax1.scatter(
+            false_positive_indices, scores[false_positive_indices],
+            label=f"False Positives ({len(false_positive_indices)})",
+            alpha=0.6, color="red", s=12,
+        )
+    ax1.axhline(
+        threshold, color="gray", linestyle="--",
+        label=f"tau = {threshold:.4f}",
+    )
+    ax1.set_title(f"{name} | {area}\nNormal-only calibration")
+    ax1.set_xlabel("Index")
+    ax1.set_ylabel("Anomaly Score")
+    ax1.legend(fontsize=7)
+    ax1.grid(True)
+
+    # Keep the same density view used by supervised calibration. There is no
+    # TP distribution in a normal-only area, so this panel contains all normal
+    # scores and marks their mean and the selected operating threshold.
+    kde_drawn = False
+    if sns is not None and len(scores) > 1 and np.std(scores) > 0:
+        try:
+            sns.kdeplot(
+                x=scores, fill=True, color="skyblue", alpha=0.55,
+                label="Normal scores", ax=ax2,
+            )
+            kde_drawn = True
+        except (TypeError, ValueError, np.linalg.LinAlgError):
+            kde_drawn = False
+    if not kde_drawn:
+        ax2.hist(
+            scores, bins=min(50, max(10, len(scores) // 10)),
+            density=True, alpha=0.45, color="skyblue",
+            label="Normal scores",
+        )
+    if len(scores):
+        ax2.axvline(
+            scores.mean(), color="blue", linestyle="--",
+            label=f"Normal mean={scores.mean():.3f}",
+        )
+    ax2.axvline(
+        threshold, color="gray", linestyle="--",
+        label=f"tau={threshold:.4f}",
+    )
+    ax2.set_title("KDE: normal-score distribution")
+    ax2.set_xlabel("Anomaly Score")
+    ax2.legend(fontsize=7)
+    ax2.grid(True, alpha=0.25)
     fig.tight_layout()
 
     plots_dir = Path(save_dir) / scenario_tag.lstrip("_") / "plots"
