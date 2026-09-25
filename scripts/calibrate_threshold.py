@@ -37,12 +37,12 @@ Usage
 
   # test mode (needs labelled test set)
   python calibrate_threshold.py --mode test --safety_area RoboArm \\
-      --test_dir /data/test/RoboArm \\
-      --gt_csv   /data/annotations/anom_metadata.csv
+      --test_folder /data/test --test_scenarios 13_0 \\
+      --gt_csv /data/annotations/scenario_13_0_back_view_annotations.csv
 
   python calibrate_threshold.py --mode test --safety_area ALL \\
-      --test_dir /data/test \\
-      --gt_csv   /data/annotations/anom_metadata.csv
+      --test_folder /data/test \\
+      --annotations_dir /data/annotations
 """
 
 import os
@@ -64,7 +64,10 @@ import torch.optim as optim
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import seaborn as sns
+try:
+    import seaborn as sns
+except ImportError:
+    sns = None
 from matplotlib.lines import Line2D
 from scipy.ndimage import gaussian_filter, minimum_filter
 from sklearn.metrics import (
@@ -269,6 +272,25 @@ class _SimpleDataset(Dataset):
     def __getitem__(self, i): return self._ds[i]
 
 
+class AnnotatedTestDataset(Dataset):
+    """Normal/anomalous safety-area crops with explicit binary labels."""
+
+    def __init__(self, samples, transform=None):
+        self.samples = [(str(path), int(label)) for path, label in samples]
+        self.imgs = self.samples
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, index):
+        path, label = self.samples[index]
+        with Image.open(path) as image:
+            image = image.convert("RGB")
+            value = self.transform(image) if self.transform else image.copy()
+        return value, label
+
+
 def _val_transform():
     def transform(image):
         array = np.asarray(image, dtype=np.float32) / 255.0
@@ -290,9 +312,177 @@ def load_val_loader(split_json: str, root: str,
     return loader, sub_ds, info["val_indices"]
 
 
-def load_test_loader(test_dir: str, batch_size: int,
-                     num_workers: int) -> tuple:
-    ds = _SimpleDataset(test_dir, _val_transform())
+def _normalise_annotation_label(value):
+    label = str(value or "").strip().lower().replace("-", "_")
+    aliases = {
+        "normal": "normal",
+        "anomalous": "anomalous",
+        "anomaly": "anomalous",
+        "verify": "verify",
+        "intermediate": "verify",
+    }
+    return aliases.get(label)
+
+
+def load_annotation_index(annotation_paths, camera, selected_scenarios=None):
+    """Load the current safety-area annotation CSV schema."""
+    required = {"scenario_id", "camera", "safety_area", "filename", "label"}
+    index = {}
+    used_paths = []
+    for csv_path in annotation_paths:
+        csv_path = Path(csv_path).expanduser().resolve()
+        if not csv_path.is_file():
+            raise FileNotFoundError(f"Annotation CSV not found: {csv_path}")
+        frame = pd.read_csv(csv_path, dtype=str, keep_default_na=False)
+        missing = required.difference(frame.columns)
+        if missing:
+            raise ValueError(
+                f"Unsupported annotation schema in {csv_path}; missing: "
+                + ", ".join(sorted(missing))
+            )
+        used = False
+        for row in frame.to_dict("records"):
+            scenario = str(row["scenario_id"]).strip()
+            if str(row["camera"]).strip() != camera:
+                continue
+            if selected_scenarios and scenario not in selected_scenarios:
+                continue
+            area = str(row["safety_area"]).strip()
+            filename = Path(str(row["filename"]).strip()).name
+            label = _normalise_annotation_label(row["label"])
+            if label is None:
+                raise ValueError(
+                    f"Unsupported label {row['label']!r} in {csv_path}"
+                )
+            key = (scenario, area, filename)
+            previous = index.get(key)
+            if previous is not None and previous != label:
+                raise ValueError(
+                    f"Conflicting labels for {scenario}/{area}/{filename}: "
+                    f"{previous} versus {label}"
+                )
+            index[key] = label
+            used = True
+        if used:
+            used_paths.append(csv_path)
+    return index, used_paths
+
+
+def _resolve_test_scenario_dirs(test_root, requested_scenarios, areas):
+    test_root = Path(test_root).expanduser().resolve()
+    if not test_root.is_dir():
+        raise FileNotFoundError(f"Test root not found: {test_root}")
+
+    # A scenario root was supplied directly: test/13_0.
+    if any((test_root / area).is_dir() for area in areas):
+        scenario_dirs = {test_root.name: test_root}
+    else:
+        scenario_dirs = {
+            path.name: path
+            for path in test_root.iterdir()
+            if path.is_dir() and any((path / area).is_dir() for area in areas)
+        }
+    if requested_scenarios:
+        missing = sorted(set(requested_scenarios).difference(scenario_dirs))
+        if missing:
+            raise ValueError(
+                "Requested test scenario(s) not found: " + ", ".join(missing)
+            )
+        scenario_dirs = {
+            scenario: scenario_dirs[scenario] for scenario in requested_scenarios
+        }
+    if not scenario_dirs:
+        raise ValueError(
+            f"No test/<scenario>/<safety-area> directories found under {test_root}"
+        )
+    return scenario_dirs
+
+
+def discover_annotated_test_samples(
+    test_root, area, annotation_paths, camera="back_view",
+    requested_scenarios=None,
+):
+    """Discover labelled crops and verify them against saved annotations."""
+    requested_scenarios = list(requested_scenarios or [])
+    scenario_dirs = _resolve_test_scenario_dirs(
+        test_root, requested_scenarios, ALL_SAFETY_AREAS
+    )
+    selected = set(scenario_dirs)
+    annotation_index, used_annotations = load_annotation_index(
+        annotation_paths, camera, selected
+    )
+    if not used_annotations:
+        raise ValueError(
+            f"No {camera} annotations matched scenarios: "
+            + ", ".join(sorted(selected))
+        )
+
+    samples = []
+    verify_count = 0
+    missing_annotations = []
+    mismatched_labels = []
+    extensions = ImageFolderDataset.EXTENSIONS
+    for scenario, scenario_dir in sorted(scenario_dirs.items()):
+        area_dir = scenario_dir / area
+        if not area_dir.is_dir():
+            continue
+        for label, binary_label in (("normal", 0), ("anomalous", 1)):
+            class_dir = area_dir / label
+            if not class_dir.is_dir():
+                continue
+            for image_path in sorted(class_dir.rglob("*")):
+                if not image_path.is_file() or image_path.suffix.lower() not in extensions:
+                    continue
+                key = (scenario, area, image_path.name)
+                annotation_label = annotation_index.get(key)
+                if annotation_label is None:
+                    missing_annotations.append(image_path)
+                elif annotation_label != label:
+                    mismatched_labels.append((image_path, annotation_label, label))
+                else:
+                    samples.append((image_path, binary_label))
+        verify_dir = area_dir / "verify"
+        if verify_dir.is_dir():
+            verify_count += sum(
+                path.is_file() and path.suffix.lower() in extensions
+                for path in verify_dir.rglob("*")
+            )
+
+    if missing_annotations:
+        raise ValueError(
+            f"{len(missing_annotations)} {area} test image(s) have no matching "
+            f"annotation; first: {missing_annotations[0]}"
+        )
+    if mismatched_labels:
+        path, annotation_label, folder_label = mismatched_labels[0]
+        raise ValueError(
+            f"Annotation/folder label mismatch for {path}: annotation="
+            f"{annotation_label}, folder={folder_label}"
+        )
+
+    counts = {
+        "normal": sum(label == 0 for _, label in samples),
+        "anomalous": sum(label == 1 for _, label in samples),
+        "verify_excluded": int(verify_count),
+    }
+    if counts["normal"] == 0 or counts["anomalous"] == 0:
+        raise ValueError(
+            f"Supervised test calibration for {area} requires both normal and "
+            f"anomalous frames; found normal={counts['normal']}, "
+            f"anomalous={counts['anomalous']}, verify(excluded)={verify_count}. "
+            "Select additional scenarios with --test_scenarios."
+        )
+    metadata = {
+        "test_root": str(Path(test_root).expanduser().resolve()),
+        "scenarios": sorted(scenario_dirs),
+        "annotation_csvs": [str(path) for path in used_annotations],
+        **counts,
+    }
+    return samples, metadata
+
+
+def load_test_loader(samples, batch_size: int, num_workers: int) -> tuple:
+    ds = AnnotatedTestDataset(samples, _val_transform())
     loader = DataLoader(ds, batch_size=batch_size, shuffle=False,
                         num_workers=num_workers, drop_last=False)
     return loader, ds
@@ -429,7 +619,7 @@ def run_val_mode(area: str, args, device, out_dir: str) -> dict:
 
 def _build_scoring_grid(args) -> list:
     """
-    Build the list of (name, score_fn) tuples to sweep.
+    Build the list of (name, score_fn, parameters) tuples to sweep.
     Each score_fn takes (data_tensor_BCHW, recon_tensor_BCHW) → np.ndarray (B,).
     """
     fns = []
@@ -442,25 +632,32 @@ def _build_scoring_grid(args) -> list:
     for offset in offset_ls:
         for quantile in quantile_ls:
             for sigma in sigma_ls:
-                name = f"OFF-o{offset}-q{quantile}-s{sigma}"
+                prefix = (
+                    "TAAS" if args.taas_variant == "canonical"
+                    else "TAAS_RESIDUAL_MIN"
+                )
+                name = f"{prefix}_OFF{offset}-s_{sigma}-q_{quantile}"
                 # capture loop vars
                 def _fn(d, r, _o=offset, _q=quantile, _s=sigma):
                     return score_batch(
                         d, r, _o, _s, _q, args.taas_variant,
                         args.taas_backend,
                     )
-                fns.append((name, _fn))
+                fns.append((name, _fn, {
+                    "offset": offset,
+                    "sigma": sigma,
+                    "quantile": quantile,
+                    "taas_variant": args.taas_variant,
+                }))
 
     return fns
 
 
 def _compute_scores_for_loader(loader, dataset, Enc, Dec, score_fn,
-                                good_classname: str, gt_frame_set: set,
                                 device) -> tuple[list, list, list]:
     """
     Returns (scores, binary_labels, file_names).
     binary_labels: 1 = anomalous, 0 = normal.
-    gt_frame_set: set of frame keys that are anomalous (from GT CSV).
     """
     scores, labels, fnames = [], [], []
     global_i = 0
@@ -470,11 +667,11 @@ def _compute_scores_for_loader(loader, dataset, Enc, Dec, score_fn,
         batch_s = score_fn(data_t, recon_t)
 
         for b in range(data_t.shape[0]):
-            img_path   = dataset.imgs[global_i][0]
-            frame_key  = f"fronttop_{Path(img_path).stem.split('_')[1]}"
-            is_anomalous = (frame_key in gt_frame_set)
+            img_path = dataset.imgs[global_i][0]
+            frame_key = Path(img_path).name
+            is_anomalous = int(lbl_t[b].item())
             scores.append(float(batch_s[b]))
-            labels.append(int(is_anomalous))
+            labels.append(is_anomalous)
             fnames.append(frame_key)
             global_i += 1
         torch.cuda.empty_cache()
@@ -485,13 +682,18 @@ def _compute_scores_for_loader(loader, dataset, Enc, Dec, score_fn,
 def _compute_threshold_f1c(labels, scores) -> float:
     """F1-optimal threshold via precision-recall curve."""
     prec, rec, thr = precision_recall_curve(labels, scores)
-    pr_product = np.multiply(prec, rec)
-    idx = pr_product.argmax()
-    if idx == 0:
-        return float(thr[0]) if len(thr) else 0.5
-    if idx >= len(thr):
-        return float(thr[-1]) if len(thr) else 0.5
-    return float(0.5 * (thr[idx] + thr[idx - 1]))
+    if not len(thr):
+        return 0.5
+    f1 = np.divide(
+        2.0 * prec * rec,
+        prec + rec,
+        out=np.zeros_like(prec, dtype=float),
+        where=(prec + rec) > 0,
+    )
+    # precision_recall_curve returns one extra terminal precision/recall point
+    # that has no corresponding threshold.
+    idx = min(int(np.nanargmax(f1)), len(thr) - 1)
+    return float(thr[idx])
 
 
 def _binormal_auc(tnv, tpv) -> float:
@@ -582,10 +784,17 @@ def _save_calibration_plots(name, scores, labels, threshold, params,
         "value": np.concatenate([tnv, tpv]),
         "group": ["TN"] * len(tnv) + ["TP"] * len(tpv),
     })
-    if len(df_kde):
+    if len(df_kde) and sns is not None:
         sns.kdeplot(data=df_kde, x="value", hue="group", fill=True,
                     common_norm=False, ax=ax2,
                     palette={"TN": "skyblue", "TP": "lightgreen"})
+    elif len(df_kde):
+        if len(tnv):
+            ax2.hist(tnv, bins=30, density=True, alpha=0.45,
+                     color="skyblue", label="TN")
+        if len(tpv):
+            ax2.hist(tpv, bins=30, density=True, alpha=0.45,
+                     color="lightgreen", label="TP")
     if len(tnv): ax2.axvline(tnv.mean(), color="blue",  ls="--",
                               label=f"TN mean={tnv.mean():.3f}")
     if len(tpv): ax2.axvline(tpv.mean(), color="green", ls="--",
@@ -609,39 +818,30 @@ def run_test_mode(area: str, args, device, out_dir: str) -> dict:
     """
     Score labelled test set, sweep scoring functions, pick best threshold.
     """
-    # ── Setup ─────────────────────────────────────────────────────────────
+    # ── Dataset and annotation preflight ──────────────────────────────────
+    samples, test_metadata = discover_annotated_test_samples(
+        args.test_dir,
+        area,
+        args.annotation_paths,
+        camera=args.camera,
+        requested_scenarios=args.test_scenarios,
+    )
+    test_loader, test_ds = load_test_loader(
+        samples, args.batch_size, args.num_workers
+    )
+    print(
+        f"[test] {len(test_ds)} usable images for {area} | "
+        f"normal={test_metadata['normal']} | "
+        f"anomalous={test_metadata['anomalous']} | "
+        f"verify excluded={test_metadata['verify_excluded']}"
+    )
+    print(f"[test] scenarios: {', '.join(test_metadata['scenarios'])}")
+
+    # ── Setup model ───────────────────────────────────────────────────────
     params, paths = _setup_params_paths(area, args)
     paths.path_models      = os.path.join(os.getcwd(), args.checkpoints)
 
     Enc, Dec, suffix, n_epochs = load_model_for_area(area, params, paths, args, device)
-
-    # ── Ground-truth CSV ──────────────────────────────────────────────────
-    if not args.gt_csv_path or not os.path.exists(args.gt_csv_path):
-        raise FileNotFoundError(
-            f"--gt_csv is required for test mode and must exist.\n"
-            f"Given: {args.gt_csv_path}"
-        )
-    df_gt    = pd.read_csv(args.gt_csv_path)
-    # Build set of anomalous frame keys for this area
-    gt_anom  = df_gt[
-        (df_gt["component"] == area) &
-        (df_gt["component_anomaly"] == "ANOMALOUS")
-    ]
-    gt_frame_set = set(f"fronttop_{fn}" for fn in gt_anom["frame_no"].astype(str))
-    print(f"[gt]  {len(gt_frame_set)} anomalous frames for {area}")
-
-    # ── Test loader ───────────────────────────────────────────────────────
-    test_dir = args.test_dir
-    if not test_dir:
-        raise ValueError("--test_dir must be provided for test mode.")
-    # Accept either a per-area subdirectory or a shared root
-    area_test_dir = os.path.join(test_dir, area)
-    if not os.path.isdir(area_test_dir):
-        area_test_dir = test_dir
-    test_loader, test_ds = load_test_loader(area_test_dir, args.batch_size,
-                                             args.num_workers)
-    good_classname = test_ds.classes[0]
-    print(f"[test] {len(test_ds)} images | good class: '{good_classname}'")
 
     # ── Output dirs ───────────────────────────────────────────────────────
     area_out = os.path.join(out_dir, area)
@@ -661,6 +861,7 @@ def run_test_mode(area: str, args, device, out_dir: str) -> dict:
     best_idx        = 0
     best_threshold  = None
     best_name       = None
+    best_parameters = None
     all_metrics     = []
 
     with open(csv_metrics, "w", newline="") as f_csv:
@@ -669,14 +870,13 @@ def run_test_mode(area: str, args, device, out_dir: str) -> dict:
 
     params.epochs_loaded = n_epochs
 
-    for fn_idx, (name, score_fn) in enumerate(
+    for fn_idx, (name, score_fn, score_parameters) in enumerate(
             tqdm(scoring_grid, desc=f"Calibrating [{area}]", position=1)):
         if _STOP:
             break
 
         scores, labels, fnames = _compute_scores_for_loader(
-            test_loader, test_ds, Enc, Dec, score_fn,
-            good_classname, gt_frame_set, device
+            test_loader, test_ds, Enc, Dec, score_fn, device
         )
 
         if len(np.unique(labels)) < 2:
@@ -697,6 +897,7 @@ def run_test_mode(area: str, args, device, out_dir: str) -> dict:
             best_idx       = fn_idx
             best_threshold = threshold
             best_name      = name
+            best_parameters = score_parameters
 
         all_metrics.append(metrics)
 
@@ -721,8 +922,7 @@ def run_test_mode(area: str, args, device, out_dir: str) -> dict:
     # ── Save raw test scores for the best method ──────────────────────────
     best_fn   = scoring_grid[best_idx][1]
     scores_b, labels_b, fnames_b = _compute_scores_for_loader(
-        test_loader, test_ds, Enc, Dec, best_fn,
-        good_classname, gt_frame_set, device
+        test_loader, test_ds, Enc, Dec, best_fn, device
     )
     df_scores = pd.DataFrame({"file_name": fnames_b,
                                "anomaly_score": scores_b,
@@ -752,12 +952,21 @@ def run_test_mode(area: str, args, device, out_dir: str) -> dict:
     print(f"  F1        : {df_best.F1:.3f}")
     print(f"  binAUC    : {df_best.binormal_AUC:.3f}")
 
-    summary = _build_summary(area, suffix, n_epochs, args, best_threshold,
-                              df_scores, score_csv, "test",
-                              best_method=best_name,
-                              best_binormal_auc=float(df_best.binormal_AUC),
-                              best_recall=float(df_best.Recall),
-                              best_f1=float(df_best.F1))
+    summary = _build_summary(
+        area, suffix, n_epochs, args, best_threshold,
+        df_scores, score_csv, "test",
+        score_parameters=best_parameters,
+        best_method=best_name,
+        best_binormal_auc=float(df_best.binormal_AUC),
+        best_recall=float(df_best.Recall),
+        best_f1=float(df_best.F1),
+        threshold_selection=args.threshold_method,
+        selection_metric=args.monitor_score,
+        calibration_data=test_metadata,
+        n_normal=test_metadata["normal"],
+        n_anomalous=test_metadata["anomalous"],
+        n_verify_excluded=test_metadata["verify_excluded"],
+    )
     _save_threshold_json(out_dir, area, summary, args)
     return summary
 
@@ -769,6 +978,16 @@ def run_test_mode(area: str, args, device, out_dir: str) -> dict:
 def _setup_params_paths(area: str, args):
     params, paths = ut.get_params_paths()
     paths         = ut.get_paths(paths, verbose=False)
+
+    # ``utils.get_paths`` only initialises path_datasets_main for a small set
+    # of legacy host names.  Config-driven runs (notably macOS hosts) must not
+    # depend on that machine-name lookup.  Seed the value required by
+    # get_dataset_version, then replace its derived paths below with the
+    # explicit YAML paths.
+    dataset_base = Path(args.dataset_base).expanduser().resolve()
+    if not hasattr(paths, "path_datasets_main"):
+        paths.path_datasets_main = str(dataset_base.parent)
+
     params.subgroup      = area
     params.latent_dims   = args.latent_dims
     params.exp_type      = args.exp_type
@@ -782,6 +1001,24 @@ def _setup_params_paths(area: str, args):
         subgroup        = area,
         verbose         = False,
     )
+
+    paths.path_datasets = str(dataset_base)
+    paths.path_dataset_selected = str(dataset_base)
+    if args.training_dir:
+        training_dir = Path(args.training_dir).expanduser().resolve()
+        paths.train_dir = str(training_dir)
+        paths.train_dir_processed = str(training_dir)
+        paths.train_dir_subgroup = str(training_dir / area)
+        paths.train_dir_processed_subgroup = str(training_dir / area)
+    if args.testing_dir:
+        testing_dir = Path(args.testing_dir).expanduser().resolve()
+        paths.test_dir = str(testing_dir)
+        paths.test_dir_processed = str(testing_dir)
+        paths.test_dir_subgroup = str(testing_dir / area)
+        paths.test_dir_processed_subgroup = str(testing_dir / area)
+    if args.masks_dir:
+        paths.mask_dir = str(Path(args.masks_dir).expanduser().resolve())
+
     params = ut.get_parameters_by_experiment(params, verbose=False)
     paths.path_codes_cloud = paths.path_codes
     paths.path_codes_main  = os.path.join(paths.path_codes, "scripts")
@@ -794,7 +1031,18 @@ def _setup_params_paths(area: str, args):
 
 
 def _build_summary(area, suffix, n_epochs, args, tau, df_scores,
-                   score_csv, mode, **extra) -> dict:
+                   score_csv, mode, score_parameters=None, **extra) -> dict:
+    score_parameters = score_parameters or {
+        "offset": args.offset,
+        "sigma": args.sigma,
+        "quantile": args.quantile,
+        "taas_variant": args.taas_variant,
+    }
+    offset = int(score_parameters["offset"])
+    sigma = float(score_parameters["sigma"])
+    quantile = float(score_parameters["quantile"])
+    taas_variant = score_parameters.get("taas_variant", args.taas_variant)
+    score_prefix = "TAAS" if taas_variant == "canonical" else "TAAS_RESIDUAL_MIN"
     s = {
         "safety_area":        area,
         "mode":               mode,
@@ -802,16 +1050,16 @@ def _build_summary(area, suffix, n_epochs, args, tau, df_scores,
         "epochs_trained":     n_epochs,
         "threshold":          float(tau),
         "threshold_strategy": args.threshold_strategy if mode == "val" else args.threshold_method,
-        "threshold_percentile": 1.0 if args.threshold_strategy == "max" else args.threshold_percentile,
-        "offset":             args.offset,
-        "sigma":              args.sigma,
-        "quantile":           args.quantile,
-        "taas_variant":       args.taas_variant,
-        "taas_backend":       args.taas_backend,
-        "score_func":         (
-            f"{'TAAS' if args.taas_variant == 'canonical' else 'TAAS_RESIDUAL_MIN'}"
-            f"_OFF{args.offset}-s_{args.sigma}-q_{args.quantile}"
+        "threshold_percentile": (
+            1.0 if mode == "val" and args.threshold_strategy == "max"
+            else args.threshold_percentile if mode == "val" else None
         ),
+        "offset":             offset,
+        "sigma":              sigma,
+        "quantile":           quantile,
+        "taas_variant":       taas_variant,
+        "taas_backend":       args.taas_backend,
+        "score_func":         f"{score_prefix}_OFF{offset}-s_{sigma}-q_{quantile}",
         "reconstruction_mode": "posterior_mean",
         "score_max":          float(df_scores.anomaly_score.max()),
         "score_mean":         float(df_scores.anomaly_score.mean()),
@@ -828,15 +1076,22 @@ def _build_summary(area, suffix, n_epochs, args, tau, df_scores,
 def _save_threshold_json(out_dir: str, area: str, summary: dict, args):
     area_dir = os.path.join(out_dir, area)
     os.makedirs(area_dir, exist_ok=True)
+    strategy = summary["threshold_strategy"]
+    strategy_tag = (
+        strategy
+        if summary.get("threshold_percentile") is None
+        else f"{strategy}{summary['threshold_percentile']}"
+    )
     json_path = os.path.join(
         area_dir,
-        f"threshold_{area}_{args.threshold_strategy}{args.threshold_percentile}"
-        f"_off{args.offset}_sig{args.sigma}_q{args.quantile}"
-        f"{taas_variant_tag(args.taas_variant)}.json",
+        f"threshold_{area}_{strategy_tag}"
+        f"_off{summary['offset']}_sig{summary['sigma']}_q{summary['quantile']}"
+        f"{taas_variant_tag(summary['taas_variant'])}.json",
     )
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
     print(f"[save] Threshold JSON → {json_path}")
+    return json_path
 
 
 def _print_summary(s: dict):
@@ -915,18 +1170,37 @@ def parse_args():
     p.add_argument("--save_figures", action="store_true", default=False,
                    help="Save per-frame detection PNG figures.")
     # ── Test-mode inputs ──────────────────────────────────────────────────
-    p.add_argument("--test_folder", default=r'v2/ camera1_20251210_151444_fallen_operator/test/operator_fall',
-                   help="[test mode] Root of labelled test ImageFolder.\n"
-                        "May contain per-area sub-dirs or be a flat folder.")
+    p.add_argument(
+        "--test_folder", "--test-folder", default=None,
+        help=(
+            "[test mode] Test root using test/<scenario>/<area>/<class>. "
+            "Defaults to data.testing from --config. It may also point "
+            "directly to one scenario directory."
+        ),
+    )
+    p.add_argument(
+        "--test_scenarios", "--test-scenarios", nargs="+",
+        help="[test mode] Scenario IDs to combine. Default: all under the test root.",
+    )
+    p.add_argument("--camera", default="back_view")
+    p.add_argument(
+        "--annotations_dir", "--annotations-dir", type=Path,
+        default=Path("reports/safety_area_annotations/saved_annotation"),
+        help="Directory containing scenario annotation CSV files.",
+    )
     p.add_argument(
         "--checkpoints",
         default=None,
         help="Checkpoint directory; overrides models.checkpoints from --config.",
     )
-    p.add_argument("--gt_csv",   default="scripts/data/annotations/anom_metadata_operator_fall.csv",
-                   help="[test mode] Ground-truth CSV with columns:\n"
-                        "  frame_no, component, component_anomaly\n"
-                        "  (component_anomaly ∈ {ANOMALOUS, NORMAL})")
+    p.add_argument(
+        "--gt_csv", "--annotation-csv", default=None,
+        help=(
+            "[test mode] Optional single annotation CSV using the current "
+            "scenario_id/camera/safety_area/filename/label schema. When omitted, "
+            "all matching CSVs in --annotations_dir are used."
+        ),
+    )
 
     # ── Anomaly score params (both modes) ─────────────────────────────────
     p.add_argument("--offset",   default=1,   type=int) # 1
@@ -976,6 +1250,8 @@ def parse_args():
     args.threshold_percentile = 1.0 if args.threshold_strategy == "max" else args.threshold_percentile
     try:
         model_config = load_model_config(args.config)
+        with args.config.expanduser().resolve().open("r", encoding="utf-8") as stream:
+            full_config = yaml.safe_load(stream) or {}
     except (OSError, ValueError, yaml.YAMLError) as exc:
         p.error(str(exc))
 
@@ -985,6 +1261,13 @@ def parse_args():
     if not checkpoint_path.is_absolute():
         checkpoint_path = Path(__file__).resolve().parent.parent / checkpoint_path
     args.checkpoints = str(checkpoint_path.resolve())
+    data_config = full_config.get("data") or {}
+    args.dataset_base = Path(data_config.get("dataset_base", ".")).expanduser()
+    args.training_dir = data_config.get("training")
+    args.testing_dir = data_config.get("testing")
+    args.masks_dir = data_config.get("masks")
+    if args.test_folder is None:
+        args.test_folder = args.testing_dir or str(args.dataset_base / "test")
     return args
 
 
@@ -1012,14 +1295,37 @@ def main():
     out_dir = args.output_dir or os.path.join(
         paths.path_codes, "results",args.dataset_version, "thresholds"
     )
-    args.test_dir = os.path.join(paths.path_datasets_main, args.test_folder)
-    args.gt_csv_path = os.path.join(os.getcwd(), args.gt_csv)
+    test_path = Path(args.test_folder).expanduser()
+    if not test_path.is_absolute():
+        test_path = args.dataset_base / test_path
+    args.test_dir = str(test_path.resolve())
+
+    if args.gt_csv:
+        annotation_path = Path(args.gt_csv).expanduser()
+        if not annotation_path.is_absolute():
+            annotation_path = Path.cwd() / annotation_path
+        args.annotation_paths = [annotation_path.resolve()]
+    else:
+        annotation_dir = args.annotations_dir.expanduser()
+        if not annotation_dir.is_absolute():
+            annotation_dir = Path(__file__).resolve().parent.parent / annotation_dir
+        if not annotation_dir.is_dir():
+            raise FileNotFoundError(
+                f"Annotation directory not found: {annotation_dir.resolve()}"
+            )
+        args.annotation_paths = sorted(
+            annotation_dir.resolve().glob("scenario_*_annotations.csv")
+        )
+        if not args.annotation_paths:
+            raise FileNotFoundError(
+                f"No scenario annotation CSVs found in {annotation_dir.resolve()}"
+            )
     
     if args.verbose_level>1:
         print('-'*100)
         print(f'PATHS - \npath_datasets_main:{paths.path_datasets_main} \ntest_folder:{args.test_folder} \ntest_dir: {paths.test_dir}')
         print(f'TEst Folder FILE WILL BE LOADED FROM \t {os.path.exists(args.test_dir)} - {args.test_dir}')
-        print(f'CSV FILE WILL BE LOADED FROM \t{os.path.exists(args.gt_csv_path)} - {args.gt_csv_path}')
+        print(f'ANNOTATION CSV FILES \t{len(args.annotation_paths)}')
         print('-'*100)
 
     os.makedirs(out_dir, exist_ok=True)
@@ -1042,9 +1348,13 @@ def main():
     if all_summaries:
         summary_csv = os.path.join(
             out_dir,
-            f"thresholds_summary_{args.mode}_{args.threshold_strategy}"
-            f"{args.threshold_percentile}_off{args.offset}_sig{args.sigma}"
-            f"_q{args.quantile}{taas_variant_tag(args.taas_variant)}.csv",
+            (
+                f"thresholds_summary_{args.mode}_{args.threshold_strategy}"
+                f"{args.threshold_percentile}_off{args.offset}_sig{args.sigma}"
+                f"_q{args.quantile}{taas_variant_tag(args.taas_variant)}.csv"
+                # if args.mode == "val"
+                # else f"thresholds_summary_test_{args.threshold_method}.csv"
+            ),
         )
         pd.DataFrame(all_summaries).to_csv(summary_csv, index=False)
         print(f"\n[save] Summary CSV → {summary_csv}")

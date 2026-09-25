@@ -105,7 +105,7 @@ def parse_args(argv=None):
     parser.add_argument("--threshold_dir", "--threshold-dir", type=Path)
     parser.add_argument(
         "--threshold_strategy", "--threshold-strategy",
-        choices=("max", "percentile", "mean_std"), default="max",
+        choices=("max", "percentile", "mean_std", "f1c"), default="max",
     )
     parser.add_argument(
         "--threshold_percentile", "--threshold-percentile",

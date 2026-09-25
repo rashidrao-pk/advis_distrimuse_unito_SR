@@ -90,3 +90,19 @@ do
   echo "========================================="
 done
 ```
+
+## PROCESS DATA
+
+- Create normal and anomalous frames based on
+
+```bash
+pixi run python scripts/annotation_to_test_data.py --dry-run
+
+pixi run python scripts/annotation_to_test_data.py \
+  --scenarios 13_0 \
+  --progress --dry-run
+
+pixi run python scripts/annotation_to_test_data.py \
+  --config configs/cf_dataset_mac.yaml \
+  --progress
+```

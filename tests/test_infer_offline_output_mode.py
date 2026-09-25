@@ -188,6 +188,28 @@ def test_threshold_ablation_variant_is_selected(tmp_path):
     assert loaded["threshold"] == 0.42
 
 
+def test_supervised_f1c_threshold_is_loadable(tmp_path):
+    import json
+
+    area_dir = tmp_path / "PRight"
+    area_dir.mkdir()
+    threshold = area_dir / "threshold_PRight_f1c_off3_sig1.5_q0.98.json"
+    threshold.write_text(json.dumps({
+        "threshold": 0.42,
+        "threshold_strategy": "f1c",
+        "offset": 3,
+        "sigma": 1.5,
+        "quantile": 0.98,
+    }))
+
+    loaded = load_threshold(
+        tmp_path, "PRight", "f1c", 99.0, 3, 1.5, 0.98
+    )
+
+    assert loaded["path"] == threshold
+    assert loaded["strategy"] == "f1c"
+
+
 def test_threshold_parameters_must_match_requested_variant(tmp_path):
     import json
 

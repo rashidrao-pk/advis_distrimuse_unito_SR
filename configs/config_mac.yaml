@@ -1,2 +1,24 @@
 data:
-  masks: /Users/rashid/data/DS/SR/v4/masks
+  dataset_base: /Users/rashid/data/DS/SR/v6/Jul27/V6
+  masks: /Users/rashid/data/DS/SR/v6/Jul27/V6/masks
+  mask_types:
+    PLeft: /Users/rashid/data/DS/SR/v6/Jul27/V6/masks/Mask_Generation_v6_PLeft.png
+    PRight: /Users/rashid/data/DS/SR/v6/Jul27/V6/masks/Mask_Generation_v6_PRight.png
+    RoboArm: /Users/rashid/data/DS/SR/v6/Jul27/V6/masks/Mask_Generation_v6_RoboArm.png
+    ConvBelt: /Users/rashid/data/DS/SR/v6/Jul27/V6/masks/Mask_Generation_v6_ConvBelt.png
+  training: /Users/rashid/data/DS/SR/v6/Jul27/train
+  testing: /Users/rashid/data/DS/SR/v6/Jul27/test
+training:
+  epochs: 200
+  batch_size: 128
+  safety_area: PLeft
+  augmentation_type: custom
+  save_figures: True
+  num_workers: 4
+  pin_memory: True
+  val_every: 5
+  val_offset: 4
+
+models:
+  checkpoints: results/V6/train/models
+  latent_dims: 64

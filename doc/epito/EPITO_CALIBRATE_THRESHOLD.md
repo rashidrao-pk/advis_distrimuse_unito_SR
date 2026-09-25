@@ -208,8 +208,7 @@ python scripts/calibrate_threshold.py \
   --offset 3 \
   --sigma 1.5 \
   --quantile 0.99 \
-  --taas_backend cython \
-  --taas_variant minimization
+  --taas_backend cython
 ```
 
 ```bash
@@ -248,4 +247,40 @@ for ooff in 1 2 3; do
   done
 done
 echo "[COMPLETED] All ${total} canonical TAAS calibrations"
+```
+
+## Threshold with TEST DATA:
+
+```bash
+# -------------------------------------
+cd /beegfs/home/mrashid/repos/advis_distrimuse_unito_SR
+
+python scripts/calibrate_threshold.py \
+  --mode test \
+  --safety_area ALL \
+
+
+# python scripts/calibrate_threshold.py --mode val --safety_area PRight --dataset_version V6
+
+# python scripts/calibrate_threshold.py --config configs/cf_dataset_epito.yaml --mode val --safety_area ALL --gt_csv scripts/data/annotations.csv
+python scripts/calibrate_threshold.py \
+  --config configs/cf_dataset_epito.yaml \
+  --mode test \
+  --dataset_version V6 \
+  --safety_area PRight \
+  --test_folder /Users/rashid/data/DS/SR/v6/Jul27/test \
+  --test_scenarios 13_0 \
+  --gt_csv reports/safety_area_annotations/saved_annotation/scenario_13_0_back_view_annotations.csv \
+  --camera back_view \
+  --threshold_method f1c \
+  --offset_ls 1,2,3 \
+  --sigma_ls 1.0,1.5 \
+  --quantile_ls 0.97,0.98,0.99 \
+  --taas_backend auto
+
+
+#  Plot Validation Timeline
+python scripts/plot_validation_timelines.py \
+  --dataset_version V6 \
+  --threshold_strategy percentile
 ```

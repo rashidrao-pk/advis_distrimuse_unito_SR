@@ -78,30 +78,23 @@ def parse_args():
         ),
     )
     parser.add_argument("--checkpoints", type=Path)
+    #------------------------------------------------------------------------------------------
+    # Threshold calibration options. These must match the values used during training.
     parser.add_argument("--threshold_dir", type=Path)
-    parser.add_argument(
-        "--threshold_strategy", choices=("max", "percentile", "mean_std"),
-        default="max",
-        help="Calibration strategy to load (default: max).",
-    )
+    parser.add_argument("--threshold_strategy", choices=("max", "percentile", "mean_std", "f1c"),
+                        default="percentile",
+                        help="Calibration strategy to load (default: max).")
     parser.add_argument("--threshold_percentile", default=99.0, type=float)
-    parser.add_argument(
-        "--offset", type=int, default=1,
-        help="TAAS neighborhood offset used during threshold calibration (default: 1).",
-    )
-    parser.add_argument(
-        "--sigma", type=float, default=1.0,
-        help="TAAS Gaussian smoothing sigma used during calibration (default: 1.0).",
-    )
-    parser.add_argument(
-        "--quantile", type=float, default=0.99,
-        help="TAAS spatial score quantile used during calibration (default: 0.99).",
-    )
+    parser.add_argument("--offset", type=int, default=3,
+                        help="TAAS neighborhood offset used during threshold calibration (default: 3).")
+    parser.add_argument("--sigma", type=float, default=1.5,
+                        help="TAAS Gaussian smoothing sigma used during calibration (default: 1.5).")
+    parser.add_argument("--quantile", type=float, default=0.99,
+                        help="TAAS spatial score quantile used during calibration (default: 0.99).")
+    #------------------------------------------------------------------------------------------
     parser.add_argument("--latent_dims", type=int)
     parser.add_argument("--frame_stride", type=int, default=1)
-    parser.add_argument(
-        "--skip-first", "--skip_first", dest="skip_first", type=int, default=0
-    )
+    parser.add_argument("--skip-first", "--skip_first", dest="skip_first", type=int, default=0)
     parser.add_argument("--max_frames", type=int)
     parser.add_argument("--cpu", action="store_true")
     parser.add_argument("--model_variant", choices=("old", "new"), default="old")
@@ -499,8 +492,12 @@ def load_threshold(
 ):
     area_dir = threshold_dir / area
     variant_suffix = taas_variant_tag(taas_variant)
+    strategy_tag = (
+        strategy if strategy == "f1c"
+        else f"{strategy}{threshold_percentiles}"
+    )
     variant_name = (
-        f"threshold_{area}_{strategy}{threshold_percentiles}_off{offset}"
+        f"threshold_{area}_{strategy_tag}_off{offset}"
         f"_sig{sigma}_q{quantile}{variant_suffix}.json"
     )
     candidates = [area_dir / variant_name]
