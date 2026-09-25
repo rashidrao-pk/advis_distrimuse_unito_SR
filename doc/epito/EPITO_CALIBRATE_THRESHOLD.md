@@ -267,20 +267,39 @@ python scripts/calibrate_threshold.py \
   --config configs/cf_dataset_epito.yaml \
   --mode test \
   --dataset_version V6 \
-  --safety_area PRight \
+  --safety_area ALL \
   --test_folder /Users/rashid/data/DS/SR/v6/Jul27/test \
   --test_scenarios 13_0 \
   --gt_csv reports/safety_area_annotations/saved_annotation/scenario_13_0_back_view_annotations.csv \
   --camera back_view \
   --threshold_method f1c \
-  --offset_ls 1,2,3 \
-  --sigma_ls 1.0,1.5 \
-  --quantile_ls 0.97,0.98,0.99 \
-  --taas_backend auto
+  --threshold_strategy percentile \
+  --threshold_percentile 99.0 \
+  --offset 3 \
+  --sigma 1.5 \
+  --quantile 0.99 \
+  --taas_backend cython
 
+# --offset_ls 1,2,3 \
+# --sigma_ls 1.0,1.5 \
+# --quantile_ls 0.97,0.98,0.99 \
 
 #  Plot Validation Timeline
 python scripts/plot_validation_timelines.py \
   --dataset_version V6 \
   --threshold_strategy percentile
+```
+
+```bash
+python scripts/calibrate_threshold.py \
+  --config configs/cf_dataset_epito.yaml \
+  --mode test \
+  --dataset_version V6 \
+  --safety_area ALL \
+  --test_folder /beegfs/home/mrashid/datasets/AD/SR/V6/test \
+  --test_scenarios 8_16 \
+  --gt_csv reports/safety_area_annotations/saved_annotation/scenario_8_16_back_view_annotations.csv \
+  --camera back_view \
+  --threshold_method f1c \
+  --taas_backend auto
 ```

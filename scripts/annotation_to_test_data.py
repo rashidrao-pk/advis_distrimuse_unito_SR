@@ -12,6 +12,7 @@ import argparse
 import csv
 from dataclasses import dataclass
 from pathlib import Path
+import re
 import shutil
 import sys
 from typing import Iterable
@@ -45,10 +46,12 @@ REQUIRED_COLUMNS = {
 @dataclass(frozen=True)
 class TestFrame:
     scenario_id: str
+    source_scenario_id: str
     scenario_description: str
     camera: str
     safety_area: str
     frame_id: str
+    source_frame_id: str
     label: str
     note: str
     source: Path
@@ -87,14 +90,23 @@ def annotation_files(annotation_dir: Path) -> list[Path]:
     return sorted(annotation_dir.glob("scenario_*_annotations.csv"))
 
 
-def resolve_source(row: dict[str, str], extracted_root: Path) -> Path:
+def infer_scenario_id_from_annotation(path: Path, camera: str) -> str | None:
+    match = re.fullmatch(
+        rf"scenario_(.+)_{re.escape(camera)}_annotations\.csv", path.name
+    )
+    return match.group(1) if match else None
+
+
+def resolve_source(
+    row: dict[str, str], extracted_root: Path, source_scenario_id: str
+) -> Path:
     annotated = Path((row.get("processed_image_path") or "").strip()).expanduser()
     if annotated.is_file():
         return annotated.resolve()
 
     return (
         extracted_root
-        / row["scenario_id"].strip()
+        / source_scenario_id
         / row["camera"].strip()
         / "processed"
         / row["safety_area"].strip()
@@ -108,6 +120,7 @@ def read_annotations(
     camera: str,
     scenarios: set[str] | None,
     safety_areas: set[str] | None,
+    cumulative_scenario_id: str | None = None,
 ) -> tuple[list[TestFrame], dict[str, int]]:
     records: list[TestFrame] = []
     stats = {
@@ -122,6 +135,7 @@ def read_annotations(
     seen: dict[tuple[str, str, str, str], TestFrame] = {}
 
     for csv_path in files:
+        inferred_scenario_id = infer_scenario_id_from_annotation(csv_path, camera)
         with csv_path.open("r", encoding="utf-8-sig", newline="") as stream:
             reader = csv.DictReader(stream)
             missing_columns = REQUIRED_COLUMNS.difference(reader.fieldnames or ())
@@ -138,7 +152,24 @@ def read_annotations(
                     stats["other_camera"] += 1
                     continue
 
-                scenario_id = safe_component(row["scenario_id"], "scenario_id")
+                annotated_scenario_id = str(row["scenario_id"]).strip()
+                is_unified = annotated_scenario_id.lower() in {
+                    "unified", "cumulative", "combined"
+                }
+                scenario_id = (
+                    cumulative_scenario_id
+                    or (inferred_scenario_id if is_unified else annotated_scenario_id)
+                )
+                if not scenario_id:
+                    raise ValueError(
+                        f"Cannot determine cumulative scenario ID for {csv_path}. "
+                        "Use --cumulative-scenario-id."
+                    )
+                scenario_id = safe_component(scenario_id, "scenario_id")
+                source_scenario_id = safe_component(
+                    row.get("source_scenario_id") or annotated_scenario_id,
+                    "source_scenario_id",
+                )
                 safety_area = safe_component(row["safety_area"], "safety_area")
                 if scenarios is not None and scenario_id not in scenarios:
                     stats["unselected"] += 1
@@ -156,7 +187,7 @@ def read_annotations(
                     stats["unsupported_label"] += 1
                     continue
 
-                source = resolve_source(row, extracted_root)
+                source = resolve_source(row, extracted_root, source_scenario_id)
                 if not source.is_file():
                     stats["missing_source"] += 1
                     continue
@@ -165,10 +196,12 @@ def read_annotations(
                 frame_id = (row.get("frame_id") or Path(filename).stem).strip()
                 record = TestFrame(
                     scenario_id=scenario_id,
+                    source_scenario_id=source_scenario_id,
                     scenario_description=(row.get("scenario_description") or "").strip(),
                     camera=row_camera,
                     safety_area=safety_area,
                     frame_id=frame_id,
+                    source_frame_id=(row.get("source_frame_id") or frame_id).strip(),
                     label=label,
                     note=(row.get("note") or "").strip(),
                     source=source,
@@ -211,10 +244,12 @@ def transfer(source: Path, destination: Path, mode: str) -> None:
 def write_manifest(path: Path, rows: list[dict[str, str]]) -> None:
     columns = [
         "scenario_id",
+        "source_scenario_id",
         "scenario_description",
         "camera",
         "safety_area",
         "frame_id",
+        "source_frame_id",
         "label",
         "note",
         "source_path",
@@ -236,6 +271,13 @@ def parse_args(argv=None):
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--annotations-dir", type=Path, default=DEFAULT_ANNOTATIONS)
     parser.add_argument(
+        "--annotation-csv", type=Path,
+        help=(
+            "Use one annotation CSV instead of scanning --annotations-dir. "
+            "This is recommended for a cumulative unified annotation."
+        ),
+    )
+    parser.add_argument(
         "--extracted-root", type=Path,
         help="Default: <config data.dataset_base>/extracted_frames.",
     )
@@ -245,6 +287,13 @@ def parse_args(argv=None):
     )
     parser.add_argument("--camera", default="back_view")
     parser.add_argument("--scenarios", nargs="+", help="Default: all annotated scenarios.")
+    parser.add_argument(
+        "--cumulative-scenario-id",
+        help=(
+            "Output scenario ID for a unified annotation. By default it is "
+            "inferred from names such as scenario_8_16_back_view_annotations.csv."
+        ),
+    )
     parser.add_argument("--safety-areas", nargs="+", help="Default: all annotated areas.")
     parser.add_argument(
         "--mode", choices=("copy", "hardlink", "symlink"), default="copy",
@@ -266,14 +315,19 @@ def main(argv=None) -> int:
     output_root = (args.output_dir or config_output).expanduser().resolve()
     annotation_dir = args.annotations_dir.expanduser().resolve()
 
-    if not annotation_dir.is_dir():
-        raise FileNotFoundError(f"Annotation directory not found: {annotation_dir}")
+    if args.annotation_csv:
+        selected_csv = args.annotation_csv.expanduser().resolve()
+        if not selected_csv.is_file():
+            raise FileNotFoundError(f"Annotation CSV not found: {selected_csv}")
+        files = [selected_csv]
+    else:
+        if not annotation_dir.is_dir():
+            raise FileNotFoundError(f"Annotation directory not found: {annotation_dir}")
+        files = annotation_files(annotation_dir)
+        if not files:
+            raise FileNotFoundError(f"No annotation CSV files found in {annotation_dir}")
     if not extracted_root.is_dir():
         raise FileNotFoundError(f"Extracted-frame directory not found: {extracted_root}")
-
-    files = annotation_files(annotation_dir)
-    if not files:
-        raise FileNotFoundError(f"No annotation CSV files found in {annotation_dir}")
 
     requested_scenarios = set(args.scenarios) if args.scenarios else None
     requested_areas = set(args.safety_areas) if args.safety_areas else None
@@ -283,6 +337,7 @@ def main(argv=None) -> int:
         args.camera,
         requested_scenarios,
         requested_areas,
+        args.cumulative_scenario_id,
     )
     if read_stats["missing_source"] and not args.skip_missing:
         raise FileNotFoundError(
@@ -345,10 +400,12 @@ def main(argv=None) -> int:
 
         manifest_rows.append({
             "scenario_id": record.scenario_id,
+            "source_scenario_id": record.source_scenario_id,
             "scenario_description": record.scenario_description,
             "camera": record.camera,
             "safety_area": record.safety_area,
             "frame_id": record.frame_id,
+            "source_frame_id": record.source_frame_id,
             "label": record.label,
             "note": record.note,
             "source_path": str(record.source),
@@ -356,12 +413,15 @@ def main(argv=None) -> int:
             "annotation_csv": str(record.annotation_csv),
         })
 
-    manifest_path = output_root / "test_manifest.csv"
+    manifest_path = output_root / f"test_manifest_{record.scenario_id}.csv"
     if not args.dry_run:
         output_root.mkdir(parents=True, exist_ok=True)
         write_manifest(manifest_path, manifest_rows)
 
-    print(f"Annotations: {annotation_dir}")
+    print(
+        "Annotations: "
+        + (str(files[0]) if args.annotation_csv else str(annotation_dir))
+    )
     print(f"Extracted crops: {extracted_root}")
     print(f"Test output: {output_root}")
     print(f"Camera: {args.camera}")

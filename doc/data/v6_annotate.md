@@ -98,11 +98,36 @@ done
 ```bash
 pixi run python scripts/annotation_to_test_data.py --dry-run
 
-pixi run python scripts/annotation_to_test_data.py \
-  --scenarios 13_0 \
-  --progress --dry-run
+for sid in \
+  8_0 8_1 8_2 8_3 8_4 \
+  9_0 \
+  10_0 10_1 \
+  11_0 11_1 \
+  12_0 12_1 \
+  13_0 13_1 \
+  14_0 14_1 \
+  15_0 \
+  16_0 16_1
+do
+
+  pixi run python scripts/annotation_to_test_data.py \
+    --scenarios "$sid" \
+    --progress
+done
 
 pixi run python scripts/annotation_to_test_data.py \
   --config configs/cf_dataset_mac.yaml \
+  --progress
+```
+
+### Create Test Data from Annotation (`All Scenarios togther`):
+
+```bash
+pixi run python scripts/annotation_to_test_data.py \
+  --config configs/cf_dataset_mac.yaml \
+  --annotation-csv reports/safety_area_annotations/saved_annotation/scenario_8_16_back_view_annotations.csv \
+  --camera back_view \
+  --safety-areas PLeft PRight RoboArm ConvBelt \
+  --mode copy \
   --progress
 ```

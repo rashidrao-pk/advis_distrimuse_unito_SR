@@ -324,6 +324,19 @@ def _normalise_annotation_label(value):
     return aliases.get(label)
 
 
+def _annotation_scenario_id(csv_path, camera, row_scenario):
+    """Resolve ordinary and unified annotation rows to a dataset scenario ID."""
+    scenario = str(row_scenario).strip()
+    if scenario.lower() not in {"unified", "cumulative", "combined"}:
+        return scenario
+    csv_path = Path(csv_path)
+    prefix = "scenario_"
+    suffix = f"_{camera}_annotations.csv"
+    if csv_path.name.startswith(prefix) and csv_path.name.endswith(suffix):
+        return csv_path.name[len(prefix):-len(suffix)]
+    raise ValueError(f"Cannot determine cumulative scenario ID for {csv_path}")
+
+
 def load_annotation_index(annotation_paths, camera, selected_scenarios=None):
     """Load the current safety-area annotation CSV schema."""
     required = {"scenario_id", "camera", "safety_area", "filename", "label"}
@@ -342,7 +355,9 @@ def load_annotation_index(annotation_paths, camera, selected_scenarios=None):
             )
         used = False
         for row in frame.to_dict("records"):
-            scenario = str(row["scenario_id"]).strip()
+            scenario = _annotation_scenario_id(
+                csv_path, camera, row["scenario_id"]
+            )
             if str(row["camera"]).strip() != camera:
                 continue
             if selected_scenarios and scenario not in selected_scenarios:
@@ -366,6 +381,36 @@ def load_annotation_index(annotation_paths, camera, selected_scenarios=None):
         if used:
             used_paths.append(csv_path)
     return index, used_paths
+
+
+def load_calibration_scenario_details(annotation_paths, camera, selected_scenarios):
+    """Return source scenario descriptions represented by calibration rows."""
+    descriptions = {}
+    for csv_path in annotation_paths:
+        csv_path = Path(csv_path).expanduser().resolve()
+        frame = pd.read_csv(csv_path, dtype=str, keep_default_na=False)
+        for row in frame.to_dict("records"):
+            if str(row.get("camera", "")).strip() != camera:
+                continue
+            scenario = _annotation_scenario_id(
+                csv_path, camera, row.get("scenario_id", "")
+            )
+            if selected_scenarios and scenario not in selected_scenarios:
+                continue
+            source_id = str(row.get("source_scenario_id") or scenario).strip()
+            description = str(row.get("scenario_description") or "").strip()
+            if source_id and (source_id not in descriptions or description):
+                descriptions[source_id] = description
+    return [
+        {"scenario_id": scenario, "description": descriptions[scenario]}
+        for scenario in sorted(
+            descriptions,
+            key=lambda value: tuple(
+                int(part) if part.isdigit() else part
+                for part in value.split("_")
+            ),
+        )
+    ]
 
 
 def _resolve_test_scenario_dirs(test_root, requested_scenarios, areas):
@@ -475,6 +520,9 @@ def discover_annotated_test_samples(
     metadata = {
         "test_root": str(Path(test_root).expanduser().resolve()),
         "scenarios": sorted(scenario_dirs),
+        "source_scenarios": load_calibration_scenario_details(
+            used_annotations, camera, selected
+        ),
         "annotation_csvs": [str(path) for path in used_annotations],
         **counts,
     }
@@ -486,6 +534,19 @@ def load_test_loader(samples, batch_size: int, num_workers: int) -> tuple:
     loader = DataLoader(ds, batch_size=batch_size, shuffle=False,
                         num_workers=num_workers, drop_last=False)
     return loader, ds
+
+
+def _scenario_artifact_tag(scenarios) -> str:
+    values = [str(value).strip() for value in scenarios if str(value).strip()]
+    if not values:
+        return ""
+    safe_values = [
+        "".join(char if char.isalnum() or char in "_-" else "-" for char in value)
+        for value in values
+    ]
+    if len(safe_values) <= 3:
+        return "_scenario-" + "+".join(safe_values)
+    return f"_scenarios-{len(safe_values)}"
 
 
 # ---------------------------------------------------------------------------
@@ -836,6 +897,9 @@ def run_test_mode(area: str, args, device, out_dir: str) -> dict:
         f"verify excluded={test_metadata['verify_excluded']}"
     )
     print(f"[test] scenarios: {', '.join(test_metadata['scenarios'])}")
+    for source in test_metadata["source_scenarios"]:
+        description = source["description"] or "description unavailable"
+        print(f"[test] source scenario {source['scenario_id']}: {description}")
 
     # ── Setup model ───────────────────────────────────────────────────────
     params, paths = _setup_params_paths(area, args)
@@ -849,7 +913,10 @@ def run_test_mode(area: str, args, device, out_dir: str) -> dict:
     os.makedirs(area_out, exist_ok=True)
     os.makedirs(plot_dir, exist_ok=True)
 
-    csv_metrics = os.path.join(area_out, f"anomaly_metrics_{area}.csv")
+    scenario_tag = _scenario_artifact_tag(test_metadata["scenarios"])
+    csv_metrics = os.path.join(
+        area_out, f"anomaly_metrics_{area}{scenario_tag}.csv"
+    )
     csv_header  = ["Method", "Accuracy", "Precision", "Recall",
                    "F1", "AUC", "Threshold", "binormal_AUC"]
 
@@ -928,7 +995,7 @@ def run_test_mode(area: str, args, device, out_dir: str) -> dict:
                                "anomaly_score": scores_b,
                                "label": labels_b})
     score_csv = os.path.join(area_out,
-        f"test_scores_{area}_{best_name.replace(' ','_')}.csv")
+        f"test_scores_{area}{scenario_tag}_{best_name.replace(' ','_')}.csv")
     df_scores.to_csv(score_csv, index=False)
 
     # ── Metrics table ─────────────────────────────────────────────────────
@@ -941,6 +1008,7 @@ def run_test_mode(area: str, args, device, out_dir: str) -> dict:
     print(f"[result] Best method   : {best_name}")
     print(f"[result] Threshold     : {best_threshold:.6f}")
     print(f"[result] Safety area   : {area}")
+    print(f"[result] Test scenario : {', '.join(test_metadata['scenarios'])}")
     print(f"[result] Epochs trained: {n_epochs}")
     print(f"[result] Monitor score : {args.monitor_score}")
     print(f"{'='*70}")
@@ -1070,6 +1138,14 @@ def _build_summary(area, suffix, n_epochs, args, tau, df_scores,
         "computed_at":        datetime.now().isoformat(timespec="seconds"),
     }
     s.update(extra)
+    calibration_data = s.get("calibration_data") or {}
+    if mode == "test":
+        s["calibration_scenarios"] = list(
+            calibration_data.get("scenarios") or []
+        )
+        s["calibration_source_scenarios"] = list(
+            calibration_data.get("source_scenarios") or []
+        )
     return s
 
 
@@ -1082,15 +1158,33 @@ def _save_threshold_json(out_dir: str, area: str, summary: dict, args):
         if summary.get("threshold_percentile") is None
         else f"{strategy}{summary['threshold_percentile']}"
     )
+    filename_tail = (
+        f"_off{summary['offset']}_sig{summary['sigma']}_q{summary['quantile']}"
+        f"{taas_variant_tag(summary['taas_variant'])}.json"
+    )
     json_path = os.path.join(
         area_dir,
         f"threshold_{area}_{strategy_tag}"
-        f"_off{summary['offset']}_sig{summary['sigma']}_q{summary['quantile']}"
-        f"{taas_variant_tag(summary['taas_variant'])}.json",
+        f"{filename_tail}",
     )
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
     print(f"[save] Threshold JSON → {json_path}")
+
+    # Keep the conventional name above as the active inference-compatible
+    # threshold.  Test calibration also gets an immutable, traceable copy.
+    scenario_tag = _scenario_artifact_tag(
+        summary.get("calibration_scenarios") or []
+    )
+    if summary.get("mode") == "test" and scenario_tag:
+        archived_path = os.path.join(
+            area_dir,
+            f"threshold_{area}_{strategy_tag}{scenario_tag}{filename_tail}",
+        )
+        with open(archived_path, "w", encoding="utf-8") as f:
+            json.dump(summary, f, indent=2)
+        print(f"[save] Scenario threshold archive → {archived_path}")
+        return archived_path
     return json_path
 
 
@@ -1227,9 +1321,9 @@ def parse_args():
     # ── Test-mode scoring grid & selection ────────────────────────────────
     p.add_argument("--offset_ls",   default="1,2,3",
                    help="[test mode] Comma-separated offsets to sweep.")
-    p.add_argument("--quantile_ls", default="1.0,0.999,0.99",
+    p.add_argument("--quantile_ls", default="1.0,0.999,0.99,0.98",
                    help="[test mode] Comma-separated quantiles to sweep.")
-    p.add_argument("--sigma_ls",    default="0,0.5,1.0,1.5",
+    p.add_argument("--sigma_ls",    default="0.5,1.0,1.5",
                    help="[test mode] Comma-separated sigmas to sweep.")
     p.add_argument("--threshold_method", default="f1c",
                    choices=["f1c"],

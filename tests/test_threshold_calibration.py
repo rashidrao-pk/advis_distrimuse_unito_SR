@@ -18,6 +18,7 @@ from calibrate_threshold import (  # noqa: E402
     _save_threshold_json,
     _setup_params_paths,
     discover_annotated_test_samples,
+    load_annotation_index,
     reconstruct,
 )
 
@@ -59,6 +60,7 @@ def make_annotated_test_tree(tmp_path):
         Image.new("RGB", (128, 128), color=(frame_id, 0, 0)).save(folder / filename)
         rows.append({
             "scenario_id": "13_0",
+            "scenario_description": "test scenario",
             "camera": "back_view",
             "safety_area": "PRight",
             "filename": filename,
@@ -81,6 +83,28 @@ def test_current_annotation_layout_supplies_binary_test_labels(tmp_path):
     assert metadata["anomalous"] == 1
     assert metadata["verify_excluded"] == 1
     assert metadata["scenarios"] == ["13_0"]
+    assert metadata["source_scenarios"] == [{
+        "scenario_id": "13_0", "description": "test scenario"
+    }]
+
+
+def test_unified_annotation_uses_scenario_id_from_csv_filename(tmp_path):
+    annotation = tmp_path / "scenario_8_16_back_view_annotations.csv"
+    pd.DataFrame([{
+        "scenario_id": "unified",
+        "camera": "back_view",
+        "safety_area": "PRight",
+        "filename": "s-8_0_s-PRight_f-000000.png",
+        "label": "Anomalous",
+        "source_scenario_id": "8_0",
+    }]).to_csv(annotation, index=False)
+
+    index, used = load_annotation_index(
+        [annotation], "back_view", selected_scenarios={"8_16"}
+    )
+
+    assert index[("8_16", "PRight", "s-8_0_s-PRight_f-000000.png")] == "anomalous"
+    assert used == [annotation.resolve()]
 
 
 def test_supervised_calibration_rejects_an_area_with_one_class(tmp_path):
@@ -158,3 +182,41 @@ def test_test_summary_and_filename_use_winning_taas_parameters(tmp_path):
     assert (summary["offset"], summary["sigma"], summary["quantile"]) == (3, 1.5, 0.98)
     assert summary["score_func"] == "TAAS_OFF3-s_1.5-q_0.98"
     assert path.name == "threshold_PRight_f1c_off3_sig1.5_q0.98.json"
+
+
+def test_test_threshold_writes_scenario_archive_and_active_copy(tmp_path):
+    args = SimpleNamespace(
+        offset=1,
+        sigma=1.0,
+        quantile=0.99,
+        taas_variant="canonical",
+        taas_backend="numpy",
+        threshold_strategy="percentile",
+        threshold_percentile=99.0,
+        threshold_method="f1c",
+    )
+    scores = pd.DataFrame({"anomaly_score": [0.1, 0.9]})
+    calibration_data = {
+        "scenarios": ["8_16"],
+        "source_scenarios": [
+            {"scenario_id": "8_0", "description": "person entering"},
+            {"scenario_id": "9_0", "description": "operator near robot"},
+        ],
+    }
+    summary = _build_summary(
+        "PRight", "PRight_64", 12, args, 0.5, scores,
+        "scores.csv", "test", calibration_data=calibration_data,
+    )
+
+    archived = Path(_save_threshold_json(tmp_path, "PRight", summary, args))
+    active = (
+        tmp_path / "PRight"
+        / "threshold_PRight_f1c_off1_sig1.0_q0.99.json"
+    )
+
+    assert archived.name == (
+        "threshold_PRight_f1c_scenario-8_16_off1_sig1.0_q0.99.json"
+    )
+    assert active.is_file()
+    assert summary["calibration_scenarios"] == ["8_16"]
+    assert summary["calibration_source_scenarios"] == calibration_data["source_scenarios"]
