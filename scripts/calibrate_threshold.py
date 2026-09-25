@@ -1751,7 +1751,7 @@ def parse_args(argv=None):
     )
 
     # ── Val-mode threshold strategies ─────────────────────────────────────
-    p.add_argument("--threshold_strategy",   default="max",
+    p.add_argument("--threshold_strategy",   default="percentile",
                    choices=["max", "percentile", "mean_std"],
                    help=(
                        "How to derive a normal-only threshold in val mode or "
