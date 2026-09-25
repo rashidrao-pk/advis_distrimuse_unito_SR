@@ -539,13 +539,24 @@ def load_threshold(
         strategy if strategy in {"f1c", "max"}
         else f"{strategy}{threshold_percentiles}"
     )
-    variant_name = (
+    variant_tail = (
         f"threshold_{area}_{strategy_tag}_off{offset}"
         f"_sig{sigma}_q{quantile}{variant_suffix}.json"
     )
-    candidates = [area_dir / variant_name]
+    # Calibration filenames include their source mode. Prefer a supervised
+    # test calibration when it exists, then a normal-validation calibration,
+    # while retaining support for thresholds created before mode prefixes
+    # were introduced.
+    mode_variant_names = (
+        variant_tail.replace("threshold_", "threshold_test_", 1),
+        variant_tail.replace("threshold_", "threshold_val_", 1),
+        variant_tail,
+    )
+    candidates = [area_dir / name for name in mode_variant_names]
     if taas_variant == "canonical":
         candidates.extend((
+            area_dir / f"threshold_test_{area}_{strategy}.json",
+            area_dir / f"threshold_val_{area}_{strategy}.json",
             area_dir / f"threshold_{area}_{strategy}.json",
             area_dir / f"threshold_{area}.json",
         ))
@@ -556,7 +567,8 @@ def load_threshold(
         )
         raise FileNotFoundError(
             f"Threshold config not found for strategy={strategy}, offset={offset}, "
-            f"sigma={sigma}, quantile={quantile}. Expected {variant_name}. "
+            f"sigma={sigma}, quantile={quantile}. Expected one of: "
+            f"{', '.join(mode_variant_names)}. "
             f"Available: {available or 'none'}"
         )
     with path.open("r", encoding="utf-8") as stream:
@@ -598,6 +610,7 @@ def load_threshold(
         "score_func": config.get("score_func", "unknown"),
         "taas_variant": configured_variant,
         "reconstruction_mode": config.get("reconstruction_mode", "legacy-unspecified"),
+        "calibration_mode": config.get("mode", "legacy-unspecified"),
         "path": path,
     }
 

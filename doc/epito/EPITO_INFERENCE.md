@@ -150,9 +150,9 @@ set -euo pipefail
 total=18
 current=0
 
-for ooff in 1 2 3; do
-  for ss in 1.0 1.5; do
-    for qq in 0.99 0.98 0.97; do
+for ooff in 1; do
+  for ss in 1.0 1.5 2; do
+    for qq in 0.999 0.99 0.98 0.97; do
       ((current += 1))
 
       echo "================================================================"
@@ -372,16 +372,16 @@ echo "[COMPLETED] All ${total} threshold combinations"
 ```bash
 set -euo pipefail
 
-total=6
+total=12
 current=0
 
 annotations="/Users/rashid/data/PhD/datacloud_data/repos/DistriMuSe/advis_distrimuse_unito_SR/reports/safety_area_annotations/saved_annotation/scenario_8_16_back_view_annotations.csv"
 
 scores_dir="/Users/rashid/data/PhD/datacloud_data/repos/DistriMuSe/advis_distrimuse_unito_SR/results/V6/offline_inference"
 
-for ooff in 3; do
-  for ss in 1.0 1.5; do
-    for qq in 0.99 0.98 0.97; do
+for ooff in 1; do
+  for ss in 1.0 1.5 2; do
+    for qq in 0.999 0.99 0.98 0.97; do
       ((current += 1))
 
       scores="${scores_dir}/video_8_16_percentile_off${ooff}_sig${ss}_q${qq}_scores.csv"

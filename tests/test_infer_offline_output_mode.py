@@ -228,6 +228,64 @@ def test_threshold_ablation_variant_is_selected(tmp_path):
     assert loaded["threshold"] == 0.42
 
 
+def test_mode_prefixed_test_threshold_is_preferred_by_inference(tmp_path):
+    import json
+
+    area_dir = tmp_path / "PLeft"
+    area_dir.mkdir()
+    common = {
+        "threshold_strategy": "percentile",
+        "offset": 2,
+        "sigma": 1.5,
+        "quantile": 0.98,
+    }
+    test_threshold = area_dir / (
+        "threshold_test_PLeft_percentile99.0_off2_sig1.5_q0.98.json"
+    )
+    val_threshold = area_dir / (
+        "threshold_val_PLeft_percentile99.0_off2_sig1.5_q0.98.json"
+    )
+    test_threshold.write_text(
+        json.dumps({**common, "threshold": 0.42, "mode": "test"})
+    )
+    val_threshold.write_text(
+        json.dumps({**common, "threshold": 0.21, "mode": "val"})
+    )
+
+    loaded = load_threshold(
+        tmp_path, "PLeft", "percentile", 99.0, 2, 1.5, 0.98
+    )
+
+    assert loaded["path"] == test_threshold
+    assert loaded["threshold"] == 0.42
+    assert loaded["calibration_mode"] == "test"
+
+
+def test_mode_prefixed_val_threshold_is_inference_fallback(tmp_path):
+    import json
+
+    area_dir = tmp_path / "PRight"
+    area_dir.mkdir()
+    val_threshold = area_dir / (
+        "threshold_val_PRight_percentile99.0_off1_sig1.0_q0.99.json"
+    )
+    val_threshold.write_text(json.dumps({
+        "threshold": 0.31,
+        "threshold_strategy": "percentile",
+        "offset": 1,
+        "sigma": 1.0,
+        "quantile": 0.99,
+        "mode": "val",
+    }))
+
+    loaded = load_threshold(
+        tmp_path, "PRight", "percentile", 99.0, 1, 1.0, 0.99
+    )
+
+    assert loaded["path"] == val_threshold
+    assert loaded["calibration_mode"] == "val"
+
+
 def test_supervised_f1c_threshold_is_loadable(tmp_path):
     import json
 
