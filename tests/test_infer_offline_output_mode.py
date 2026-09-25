@@ -12,9 +12,11 @@ sys.path.insert(0, str(SCRIPTS))
 from infer_offline import (  # noqa: E402
     amplify_threshold_config,
     apply_rolling_policy,
+    calibration_mode_variant_tag,
     camera_name_from_topic,
     compact_sample_name,
     load_threshold,
+    load_settings,
     normalize_model_input,
     parse_args,
     public_result,
@@ -133,6 +135,61 @@ def test_threshold_amplification_count_and_values_are_validated(monkeypatch):
         parse(monkeypatch, "--threshold_amplification", "1.1", "1.2")
     with pytest.raises(SystemExit):
         parse(monkeypatch, "--threshold_amplification", "0")
+
+
+def test_calibration_mode_variant_tag_supports_single_and_mixed_sources():
+    assert calibration_mode_variant_tag(["test"]) == "_cal-test"
+    assert calibration_mode_variant_tag(["val"]) == "_cal-val"
+    assert (
+        calibration_mode_variant_tag({"PLeft": "test", "PRight": "val"})
+        == "_cal-test-val"
+    )
+
+
+def test_default_inference_outputs_include_loaded_calibration_mode(
+    tmp_path, monkeypatch,
+):
+    import json
+
+    input_dir = tmp_path / "frames"
+    input_dir.mkdir()
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("models:\n  latent_dims: 64\n", encoding="utf-8")
+    threshold_root = tmp_path / "thresholds"
+    area_dir = threshold_root / "PLeft"
+    area_dir.mkdir(parents=True)
+    (area_dir / "threshold_test_PLeft_percentile99.0_off3_sig1.5_q0.99.json").write_text(
+        json.dumps({
+            "threshold": 0.42,
+            "threshold_strategy": "percentile",
+            "offset": 3,
+            "sigma": 1.5,
+            "quantile": 0.99,
+            "mode": "test",
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sys, "argv", [
+        "infer_offline.py",
+        "--input_type", "frames",
+        "--input", str(input_dir),
+        "--scenario", "8_16",
+        "--config", str(config_path),
+        "--threshold_dir", str(threshold_root),
+        "--safety_areas", "PLeft",
+        "--threshold_strategy", "percentile",
+        "--offset", "3",
+        "--sigma", "1.5",
+        "--quantile", "0.99",
+        "--scores-only",
+    ])
+
+    settings = load_settings(parse_args())
+
+    assert settings.output_csv.name == (
+        "frames_8_16_percentile_off3_sig1.5_q0.99_cal-test_scores.csv"
+    )
+    assert settings.threshold_calibration_by_area == {"PLeft": "test"}
 
 
 def test_amplified_threshold_preserves_calibrated_value():
@@ -260,6 +317,14 @@ def test_mode_prefixed_test_threshold_is_preferred_by_inference(tmp_path):
     assert loaded["threshold"] == 0.42
     assert loaded["calibration_mode"] == "test"
 
+    selected_val = load_threshold(
+        tmp_path, "PLeft", "percentile", 99.0, 2, 1.5, 0.98,
+        "canonical", "val",
+    )
+    assert selected_val["path"] == val_threshold
+    assert selected_val["threshold"] == 0.21
+    assert selected_val["calibration_mode"] == "val"
+
 
 def test_mode_prefixed_val_threshold_is_inference_fallback(tmp_path):
     import json
@@ -284,6 +349,12 @@ def test_mode_prefixed_val_threshold_is_inference_fallback(tmp_path):
 
     assert loaded["path"] == val_threshold
     assert loaded["calibration_mode"] == "val"
+
+    with pytest.raises(FileNotFoundError, match="calibration_mode=test"):
+        load_threshold(
+            tmp_path, "PRight", "percentile", 99.0, 1, 1.0, 0.99,
+            "canonical", "test",
+        )
 
 
 def test_supervised_f1c_threshold_is_loadable(tmp_path):

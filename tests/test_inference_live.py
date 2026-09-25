@@ -50,6 +50,7 @@ def test_live_cli_accepts_current_inference_controls():
         "--message_type", "compressed",
         "--safety_areas", "PLeft", "RoboArm",
         "--threshold_strategy", "percentile",
+        "--threshold_calibration_mode", "test",
         "--offset", "3",
         "--sigma", "1.5",
         "--quantile", "0.98",
@@ -63,6 +64,7 @@ def test_live_cli_accepts_current_inference_controls():
     assert args.message_type == "compressed"
     assert args.safety_areas == ["PLeft", "RoboArm"]
     assert args.threshold_strategy == "percentile"
+    assert args.threshold_calibration_mode == "test"
     assert (args.offset, args.sigma, args.quantile) == (3, 1.5, 0.98)
     assert args.taas_backend == "cython"
     assert args.taas_variant == "minimization"

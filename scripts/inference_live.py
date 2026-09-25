@@ -104,6 +104,14 @@ def parse_args(argv=None):
     parser.add_argument("--checkpoints", type=Path)
     parser.add_argument("--threshold_dir", "--threshold-dir", type=Path)
     parser.add_argument(
+        "--threshold_calibration_mode", "--threshold-calibration-mode",
+        choices=("auto", "test", "val"), default="auto",
+        help=(
+            "Threshold source to load: test, val, or auto. Auto prefers test, "
+            "then val, then a legacy unprefixed threshold."
+        ),
+    )
+    parser.add_argument(
         "--threshold_strategy", "--threshold-strategy",
         choices=("max", "percentile", "mean_std", "f1c"), default="max",
     )

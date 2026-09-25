@@ -312,12 +312,10 @@ python scripts/calibrate_threshold.py \
   --mode test \
   --dataset_version V6 \
   --safety_area ALL \
-  --test_folder /beegfs/home/mrashid/datasets/AD/SR/V6/test \
   --test_scenarios 8_16 \
-  --gt_csv reports/safety_area_annotations/saved_annotation/scenario_8_16_back_view_annotations.csv \
   --camera back_view \
   --threshold_method f1c \
-  --taas_backend auto
+  --taas_backend cython
 ```
 
 #### RUN IN MAC

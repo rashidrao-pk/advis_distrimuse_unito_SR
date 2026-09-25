@@ -147,10 +147,10 @@ python scripts/infer_offline.py \
 
 set -euo pipefail
 
-total=18
+total=36
 current=0
 
-for ooff in 1; do
+for ooff in 1 2 3; do
   for ss in 1.0 1.5 2; do
     for qq in 0.999 0.99 0.98 0.97; do
       ((current += 1))
@@ -164,6 +164,7 @@ for ooff in 1; do
         --config configs/cf_dataset_epito.yaml \
         --input_type video \
         --scenario 8_16 \
+        --threshold_calibration_mode val \
         --topic /camera/back_view/image_raw \
         --safety_areas ALL \
         --threshold_strategy percentile \

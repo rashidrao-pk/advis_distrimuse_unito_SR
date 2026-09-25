@@ -81,6 +81,14 @@ def parse_args():
     #------------------------------------------------------------------------------------------
     # Threshold calibration options. These must match the values used during training.
     parser.add_argument("--threshold_dir", type=Path)
+    parser.add_argument(
+        "--threshold_calibration_mode", "--threshold-calibration-mode",
+        choices=("auto", "test", "val"), default="auto",
+        help=(
+            "Threshold source to load: test, val, or auto. Auto prefers test, "
+            "then val, then a legacy unprefixed file (default: auto)."
+        ),
+    )
     parser.add_argument("--threshold_strategy", choices=("max", "percentile", "mean_std", "f1c"),
                         default="percentile",
                         help="Calibration strategy to load (default: max).")
@@ -398,6 +406,25 @@ def threshold_amplification_variant_tag(mapping):
     return "_amp-" + "-".join(f"{value:g}" for value in factors)
 
 
+def calibration_mode_variant_tag(calibration_modes):
+    """Return the filename tag for the threshold calibration source(s)."""
+    values = (
+        calibration_modes.values()
+        if hasattr(calibration_modes, "values") else calibration_modes
+    )
+    modes = []
+    for value in values:
+        mode = str(value or "legacy-unspecified").strip().lower()
+        mode = {
+            "validation": "val",
+            "legacy-unspecified": "legacy",
+        }.get(mode, mode)
+        mode = re.sub(r"[^a-z0-9-]+", "-", mode).strip("-") or "unknown"
+        if mode not in modes:
+            modes.append(mode)
+    return "_cal-" + "-".join(modes or ["unknown"])
+
+
 def load_settings(args):
     repository_root = Path(__file__).resolve().parent.parent
     config_path = args.config.expanduser().resolve()
@@ -453,8 +480,34 @@ def load_settings(args):
     args.config_masks_dir = None
     if data_config.get("masks"):
         args.config_masks_dir = Path(data_config["masks"]).expanduser().resolve()
+
+    # Resolve thresholds before constructing default output names. Reuse these
+    # exact configs in load_models so the calibration-mode filename tag always
+    # describes the thresholds actually used for inference.
+    args.resolved_threshold_configs = OrderedDict()
+    args.threshold_calibration_by_area = OrderedDict()
+    for area in args.safety_areas:
+        threshold_config = load_threshold(
+            args.threshold_dir,
+            area,
+            args.threshold_strategy,
+            args.threshold_percentile,
+            args.offset,
+            args.sigma,
+            args.quantile,
+            args.taas_variant,
+            args.threshold_calibration_mode,
+        )
+        args.resolved_threshold_configs[area] = threshold_config
+        args.threshold_calibration_by_area[area] = threshold_config[
+            "calibration_mode"
+        ]
+
     variant_tag = threshold_variant_tag(
         args.threshold_strategy, args.offset, args.sigma, args.quantile
+    )
+    variant_tag += calibration_mode_variant_tag(
+        args.threshold_calibration_by_area
     )
     variant_tag += taas_variant_tag(args.taas_variant)
     variant_tag += rolling_variant_tag(args.rolling, args.rolling_window)
@@ -532,6 +585,7 @@ def parse_masks(values, areas, masks_dir=None):
 def load_threshold(
     threshold_dir, area, strategy="percentile", threshold_percentiles=99.0,
     offset=1, sigma=1.0, quantile=0.99, taas_variant="canonical",
+    calibration_mode="auto",
 ):
     area_dir = threshold_dir / area
     variant_suffix = taas_variant_tag(taas_variant)
@@ -547,28 +601,47 @@ def load_threshold(
     # test calibration when it exists, then a normal-validation calibration,
     # while retaining support for thresholds created before mode prefixes
     # were introduced.
-    mode_variant_names = (
-        variant_tail.replace("threshold_", "threshold_test_", 1),
-        variant_tail.replace("threshold_", "threshold_val_", 1),
-        variant_tail,
-    )
-    candidates = [area_dir / name for name in mode_variant_names]
+    if calibration_mode == "auto":
+        requested_modes = ("test", "val", "legacy")
+    elif calibration_mode in {"test", "val"}:
+        requested_modes = (calibration_mode,)
+    else:
+        raise ValueError(
+            "calibration_mode must be one of: auto, test, val"
+        )
+    mode_variant_names = {
+        "test": variant_tail.replace("threshold_", "threshold_test_", 1),
+        "val": variant_tail.replace("threshold_", "threshold_val_", 1),
+        "legacy": variant_tail,
+    }
+    candidates = [
+        (area_dir / mode_variant_names[mode], mode)
+        for mode in requested_modes
+    ]
     if taas_variant == "canonical":
-        candidates.extend((
-            area_dir / f"threshold_test_{area}_{strategy}.json",
-            area_dir / f"threshold_val_{area}_{strategy}.json",
-            area_dir / f"threshold_{area}_{strategy}.json",
-            area_dir / f"threshold_{area}.json",
-        ))
-    path = next((candidate for candidate in candidates if candidate.is_file()), None)
+        aliases = {
+            "test": area_dir / f"threshold_test_{area}_{strategy}.json",
+            "val": area_dir / f"threshold_val_{area}_{strategy}.json",
+            "legacy": area_dir / f"threshold_{area}_{strategy}.json",
+        }
+        candidates.extend((aliases[mode], mode) for mode in requested_modes)
+        if "legacy" in requested_modes:
+            candidates.append((area_dir / f"threshold_{area}.json", "legacy"))
+    selected = next(
+        ((candidate, mode) for candidate, mode in candidates
+         if candidate.is_file()),
+        None,
+    )
+    path, inferred_mode = selected if selected is not None else (None, None)
     if path is None:
         available = ", ".join(
             item.name for item in sorted(area_dir.glob("threshold_*.json"))
         )
         raise FileNotFoundError(
             f"Threshold config not found for strategy={strategy}, offset={offset}, "
-            f"sigma={sigma}, quantile={quantile}. Expected one of: "
-            f"{', '.join(mode_variant_names)}. "
+            f"sigma={sigma}, quantile={quantile}, calibration_mode="
+            f"{calibration_mode}. Expected one of: "
+            f"{', '.join(mode_variant_names[mode] for mode in requested_modes)}. "
             f"Available: {available or 'none'}"
         )
     with path.open("r", encoding="utf-8") as stream:
@@ -584,6 +657,16 @@ def load_threshold(
         raise ValueError(
             f"Requested TAAS variant {taas_variant!r}, but {path} contains "
             f"{configured_variant!r}"
+        )
+    configured_mode = config.get("mode")
+    if (
+        calibration_mode != "auto"
+        and configured_mode is not None
+        and configured_mode != calibration_mode
+    ):
+        raise ValueError(
+            f"Requested threshold calibration mode {calibration_mode!r}, but "
+            f"{path} contains {configured_mode!r}"
         )
     requested = {"offset": int(offset), "sigma": float(sigma), "quantile": float(quantile)}
     actual = {
@@ -610,7 +693,9 @@ def load_threshold(
         "score_func": config.get("score_func", "unknown"),
         "taas_variant": configured_variant,
         "reconstruction_mode": config.get("reconstruction_mode", "legacy-unspecified"),
-        "calibration_mode": config.get("mode", "legacy-unspecified"),
+        "calibration_mode": configured_mode or (
+            inferred_mode if inferred_mode != "legacy" else "legacy-unspecified"
+        ),
         "path": path,
     }
 
@@ -649,16 +734,22 @@ def load_models(args, device):
             )
         encoder.eval()
         decoder.eval()
-        threshold_config = load_threshold(
-            args.threshold_dir,
-            area,
-            args.threshold_strategy,
-            args.threshold_percentile,
-            args.offset,
-            args.sigma,
-            args.quantile,
-            args.taas_variant,
-        )
+        resolved_thresholds = getattr(args, "resolved_threshold_configs", {})
+        threshold_config = resolved_thresholds.get(area)
+        if threshold_config is None:
+            threshold_config = load_threshold(
+                args.threshold_dir,
+                area,
+                args.threshold_strategy,
+                args.threshold_percentile,
+                args.offset,
+                args.sigma,
+                args.quantile,
+                args.taas_variant,
+                getattr(args, "threshold_calibration_mode", "auto"),
+            )
+        else:
+            threshold_config = dict(threshold_config)
         factor = getattr(args, "threshold_amplification_by_area", {}).get(area, 1.0)
         threshold_config = amplify_threshold_config(threshold_config, factor)
         models[area] = {
