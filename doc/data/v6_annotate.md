@@ -98,6 +98,12 @@ done
 ```bash
 pixi run python scripts/annotation_to_test_data.py --dry-run
 
+## PROCESS FOR SELECTED SCENARIO
+pixi run python scripts/annotation_to_test_data.py \
+    --scenarios 8_16 \
+    --progress
+
+# PROCESS FOR ALL
 for sid in \
   8_0 8_1 8_2 8_3 8_4 \
   9_0 \

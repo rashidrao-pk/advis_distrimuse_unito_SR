@@ -510,12 +510,12 @@ def discover_annotated_test_samples(
         "anomalous": sum(label == 1 for _, label in samples),
         "verify_excluded": int(verify_count),
     }
-    if counts["normal"] == 0 or counts["anomalous"] == 0:
+    if counts["normal"] == 0:
         raise ValueError(
-            f"Supervised test calibration for {area} requires both normal and "
-            f"anomalous frames; found normal={counts['normal']}, "
+            f"Threshold calibration for {area} requires normal frames; "
+            f"found normal={counts['normal']}, "
             f"anomalous={counts['anomalous']}, verify(excluded)={verify_count}. "
-            "Select additional scenarios with --test_scenarios."
+            "Select a scenario containing normal examples."
         )
     metadata = {
         "test_root": str(Path(test_root).expanduser().resolve()),
@@ -875,6 +875,99 @@ def _save_calibration_plots(name, scores, labels, threshold, params,
         plt.close(fig)
 
 
+def _run_normal_only_test_calibration(
+    area, args, device, test_loader, test_ds, test_metadata, Enc, Dec,
+    suffix, n_epochs, area_out, out_dir, scenario_tag,
+):
+    """Calibrate from normal test frames when an area has no anomalies."""
+    parameters = {
+        "offset": args.offset,
+        "sigma": args.sigma,
+        "quantile": args.quantile,
+        "taas_variant": args.taas_variant,
+    }
+    prefix = "TAAS" if args.taas_variant == "canonical" else "TAAS_RESIDUAL_MIN"
+    score_name = f"{prefix}_OFF{args.offset}-s_{args.sigma}-q_{args.quantile}"
+
+    def score_fn(data, reconstruction):
+        return score_batch(
+            data, reconstruction, args.offset, args.sigma, args.quantile,
+            args.taas_variant, args.taas_backend,
+        )
+
+    scores, labels, filenames = _compute_scores_for_loader(
+        test_loader, test_ds, Enc, Dec, score_fn, device
+    )
+    if np.any(labels != 0):
+        raise RuntimeError(
+            f"Normal-only fallback for {area} received non-normal labels"
+        )
+    threshold = _select_threshold_from_scores(
+        scores, args.threshold_strategy,
+        args.threshold_percentile, args.threshold_n_sigma,
+    )
+    df_scores = pd.DataFrame({
+        "file_name": filenames,
+        "anomaly_score": scores,
+        "label": labels,
+    })
+    score_csv = os.path.join(
+        area_out,
+        f"test_scores_{area}{scenario_tag}_normal-only_{score_name}.csv",
+    )
+    df_scores.to_csv(score_csv, index=False)
+
+    metrics_csv = os.path.join(
+        area_out, f"anomaly_metrics_{area}{scenario_tag}.csv"
+    )
+    pd.DataFrame([{
+        "Method": score_name,
+        "Accuracy": None,
+        "Precision": None,
+        "Recall": None,
+        "F1": None,
+        "AUC": None,
+        "Threshold": threshold,
+        "binormal_AUC": None,
+        "Status": "not_applicable_no_anomalous_samples",
+    }]).to_csv(metrics_csv, index=False)
+
+    summary = _build_summary(
+        area, suffix, n_epochs, args, threshold,
+        df_scores, score_csv, "test",
+        score_parameters=parameters,
+        threshold_strategy_override=args.threshold_strategy,
+        calibration_mode="normal_only_fallback",
+        fallback_reason="no_anomalous_samples_for_safety_area",
+        supervised_metrics_available=False,
+        best_method=None,
+        best_binormal_auc=None,
+        best_recall=None,
+        best_f1=None,
+        threshold_selection=args.threshold_strategy,
+        selection_metric=None,
+        threshold_n_sigma=(
+            args.threshold_n_sigma
+            if args.threshold_strategy == "mean_std" else None
+        ),
+        calibration_data=test_metadata,
+        n_normal=test_metadata["normal"],
+        n_anomalous=0,
+        n_verify_excluded=test_metadata["verify_excluded"],
+    )
+    _save_threshold_json(out_dir, area, summary, args)
+    print(f"\n{'='*70}")
+    print(f"[result] Safety area   : {area}")
+    print(f"[result] Test scenario : {', '.join(test_metadata['scenarios'])}")
+    print("[result] Calibration   : normal-only fallback (no anomalies)")
+    print(f"[result] Strategy      : {args.threshold_strategy}")
+    print(f"[result] Score         : {score_name}")
+    print(f"[result] Threshold     : {threshold:.6f}")
+    print("[result] F1/AUC        : not applicable")
+    print(f"{'='*70}")
+    return summary
+
+
 def run_test_mode(area: str, args, device, out_dir: str) -> dict:
     """
     Score labelled test set, sweep scoring functions, pick best threshold.
@@ -914,6 +1007,18 @@ def run_test_mode(area: str, args, device, out_dir: str) -> dict:
     os.makedirs(plot_dir, exist_ok=True)
 
     scenario_tag = _scenario_artifact_tag(test_metadata["scenarios"])
+    if test_metadata["anomalous"] == 0:
+        print(
+            f"[fallback] {area} has no anomalous samples; calibrating from "
+            f"{test_metadata['normal']} normal samples with "
+            f"strategy={args.threshold_strategy}. Supervised F1/AUC metrics "
+            "are not applicable."
+        )
+        return _run_normal_only_test_calibration(
+            area, args, device, test_loader, test_ds, test_metadata, Enc, Dec,
+            suffix, n_epochs, area_out, out_dir, scenario_tag,
+        )
+
     csv_metrics = os.path.join(
         area_out, f"anomaly_metrics_{area}{scenario_tag}.csv"
     )
@@ -1099,7 +1204,8 @@ def _setup_params_paths(area: str, args):
 
 
 def _build_summary(area, suffix, n_epochs, args, tau, df_scores,
-                   score_csv, mode, score_parameters=None, **extra) -> dict:
+                   score_csv, mode, score_parameters=None,
+                   threshold_strategy_override=None, **extra) -> dict:
     score_parameters = score_parameters or {
         "offset": args.offset,
         "sigma": args.sigma,
@@ -1111,16 +1217,19 @@ def _build_summary(area, suffix, n_epochs, args, tau, df_scores,
     quantile = float(score_parameters["quantile"])
     taas_variant = score_parameters.get("taas_variant", args.taas_variant)
     score_prefix = "TAAS" if taas_variant == "canonical" else "TAAS_RESIDUAL_MIN"
+    threshold_strategy = threshold_strategy_override or (
+        args.threshold_strategy if mode == "val" else args.threshold_method
+    )
     s = {
         "safety_area":        area,
         "mode":               mode,
         "suffix":             suffix,
         "epochs_trained":     n_epochs,
         "threshold":          float(tau),
-        "threshold_strategy": args.threshold_strategy if mode == "val" else args.threshold_method,
+        "threshold_strategy": threshold_strategy,
         "threshold_percentile": (
-            1.0 if mode == "val" and args.threshold_strategy == "max"
-            else args.threshold_percentile if mode == "val" else None
+            args.threshold_percentile
+            if threshold_strategy not in {"max", "f1c"} else None
         ),
         "offset":             offset,
         "sigma":              sigma,
@@ -1229,7 +1338,8 @@ def parse_args():
                    help=(
                        "val  : Unsupervised — derive threshold from normal val scores.\n"
                        "test : Supervised — sweep scoring methods on labelled test set\n"
-                       "       and pick best threshold by binormal_AUC."
+                       "       and pick best threshold by binormal_AUC. If an area\n"
+                       "       has no anomalies, use a normal-only fallback."
                    ))
     p.add_argument("--safety_area", default="RoboArm",
                    help="Area to calibrate. 'ALL' processes all areas.")
@@ -1314,7 +1424,10 @@ def parse_args():
     # ── Val-mode threshold strategies ─────────────────────────────────────
     p.add_argument("--threshold_strategy",   default="max",
                    choices=["max", "percentile", "mean_std"],
-                   help="[val mode] How to derive threshold from val scores.")
+                   help=(
+                       "How to derive a normal-only threshold in val mode or "
+                       "when a test safety area has no anomalous samples."
+                   ))
     p.add_argument("--threshold_percentile", default=99.0, type=float)
     p.add_argument("--threshold_n_sigma",    default=3.0,  type=float)
 
@@ -1341,7 +1454,6 @@ def parse_args():
     args.taas_backend = resolve_taas_backend(
         args.taas_backend, args.taas_variant
     )
-    args.threshold_percentile = 1.0 if args.threshold_strategy == "max" else args.threshold_percentile
     try:
         model_config = load_model_config(args.config)
         with args.config.expanduser().resolve().open("r", encoding="utf-8") as stream:

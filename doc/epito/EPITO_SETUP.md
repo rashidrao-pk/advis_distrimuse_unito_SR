@@ -1,17 +1,17 @@
 ```bash
-zip /Users/rashid/data/PhD/datacloud_data/repos/XAI/ShapBPT-SAM/shap_bpt_sam/src/data/risultati_120
+zip /Users/rashid/data/DS/SR/v6/Jul27/test
 
-scp /Users/rashid/data/DS/SR/V6/Jul27/Archive.zip mrashid@slurm.hpc4ai.unito.it:/beegfs/home/mrashid/datasets/AD/SR/V6
-
-# Upload SAM Results
+scp /Users/rashid/data/DS/SR/v6/Jul27/test.zip mrashid@slurm.hpc4ai.unito.it:/beegfs/home/mrashid/datasets/AD/SR/V6
 
 
-unzip -o /beegfs/home/mrashid/datasets/AD/SR/V6/Archive.zip \
-  -d /beegfs/home/mrashid/datasets/AD/SR/V6/rosbags \
+# Upload test data
+
+unzip -o /beegfs/home/mrashid/datasets/AD/SR/V6/test.zip \
+  -d /beegfs/home/mrashid/datasets/AD/SR/V6/test \
   -x "__MACOSX/*"
 
-ls -lah /beegfs/home/mrashid/datasets/AD/SR/V6/rosbags
-du -sh /beegfs/home/mrashid/datasets/AD/SR/V6/rosbags
+ls -lah /beegfs/home/mrashid/datasets/AD/SR/V6/test
+du -sh /beegfs/home/mrashid/datasets/AD/SR/V6/test
 
 ```
 

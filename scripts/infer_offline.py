@@ -493,7 +493,7 @@ def load_threshold(
     area_dir = threshold_dir / area
     variant_suffix = taas_variant_tag(taas_variant)
     strategy_tag = (
-        strategy if strategy == "f1c"
+        strategy if strategy in {"f1c", "max"}
         else f"{strategy}{threshold_percentiles}"
     )
     variant_name = (

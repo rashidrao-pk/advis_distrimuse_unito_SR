@@ -210,6 +210,28 @@ def test_supervised_f1c_threshold_is_loadable(tmp_path):
     assert loaded["strategy"] == "f1c"
 
 
+def test_normal_only_max_threshold_is_loadable(tmp_path):
+    import json
+
+    area_dir = tmp_path / "PRight"
+    area_dir.mkdir()
+    threshold = area_dir / "threshold_PRight_max_off1_sig1.0_q0.99.json"
+    threshold.write_text(json.dumps({
+        "threshold": 0.42,
+        "threshold_strategy": "max",
+        "offset": 1,
+        "sigma": 1.0,
+        "quantile": 0.99,
+    }))
+
+    loaded = load_threshold(
+        tmp_path, "PRight", "max", 99.0, 1, 1.0, 0.99
+    )
+
+    assert loaded["path"] == threshold
+    assert loaded["strategy"] == "max"
+
+
 def test_threshold_parameters_must_match_requested_variant(tmp_path):
     import json
 

@@ -69,7 +69,7 @@ def test_builds_scenario_area_class_hierarchy(tmp_path):
             / f"s-8_0_s-PLeft_f-{frame_id:06d}.png"
         )
         assert expected.read_bytes() == f"frame-{frame_id}".encode()
-    assert (output / "test_manifest.csv").is_file()
+    assert (output / "test_manifest_8_0.csv").is_file()
 
 
 def test_builds_one_cumulative_scenario_from_unified_annotations(tmp_path):
@@ -136,7 +136,9 @@ def test_builds_one_cumulative_scenario_from_unified_annotations(tmp_path):
         / "s-9_0_s-PRight_f-000000.png"
     ).read_bytes() == b"9_0"
 
-    with (output / "test_manifest.csv").open(newline="", encoding="utf-8") as stream:
+    with (output / "test_manifest_8_16.csv").open(
+        newline="", encoding="utf-8"
+    ) as stream:
         manifest = list(csv.DictReader(stream))
     assert [row["scenario_id"] for row in manifest] == ["8_16", "8_16"]
     assert {row["source_scenario_id"] for row in manifest} == {"8_0", "9_0"}

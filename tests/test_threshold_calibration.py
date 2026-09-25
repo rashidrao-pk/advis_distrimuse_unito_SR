@@ -12,6 +12,7 @@ import torch
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
+import calibrate_threshold as calibration  # noqa: E402
 from calibrate_threshold import (  # noqa: E402
     _build_summary,
     _compute_threshold_f1c,
@@ -107,12 +108,26 @@ def test_unified_annotation_uses_scenario_id_from_csv_filename(tmp_path):
     assert used == [annotation.resolve()]
 
 
-def test_supervised_calibration_rejects_an_area_with_one_class(tmp_path):
+def test_test_discovery_accepts_normal_only_safety_area(tmp_path):
     test_root, annotation = make_annotated_test_tree(tmp_path)
     anomalous = test_root / "13_0" / "PRight" / "anomalous"
     next(anomalous.iterdir()).unlink()
 
-    with pytest.raises(ValueError, match="requires both normal and anomalous"):
+    samples, metadata = discover_annotated_test_samples(
+        test_root, "PRight", [annotation], requested_scenarios=["13_0"]
+    )
+
+    assert [label for _, label in samples] == [0]
+    assert metadata["normal"] == 1
+    assert metadata["anomalous"] == 0
+
+
+def test_test_discovery_rejects_area_without_normal_samples(tmp_path):
+    test_root, annotation = make_annotated_test_tree(tmp_path)
+    normal = test_root / "13_0" / "PRight" / "normal"
+    next(normal.iterdir()).unlink()
+
+    with pytest.raises(ValueError, match="requires normal frames"):
         discover_annotated_test_samples(
             test_root, "PRight", [annotation], requested_scenarios=["13_0"]
         )
@@ -220,3 +235,55 @@ def test_test_threshold_writes_scenario_archive_and_active_copy(tmp_path):
     assert active.is_file()
     assert summary["calibration_scenarios"] == ["8_16"]
     assert summary["calibration_source_scenarios"] == calibration_data["source_scenarios"]
+
+
+def test_normal_only_test_calibration_uses_distribution_threshold(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        calibration,
+        "_compute_scores_for_loader",
+        lambda *unused: (
+            np.array([0.1, 0.2, 0.3]),
+            np.array([0, 0, 0]),
+            ["a.png", "b.png", "c.png"],
+        ),
+    )
+    args = SimpleNamespace(
+        offset=1,
+        sigma=1.0,
+        quantile=0.99,
+        taas_variant="canonical",
+        taas_backend="numpy",
+        threshold_strategy="percentile",
+        threshold_percentile=90.0,
+        threshold_n_sigma=3.0,
+        threshold_method="f1c",
+    )
+    metadata = {
+        "scenarios": ["13_0"],
+        "source_scenarios": [{
+            "scenario_id": "13_0", "description": "normal-only area"
+        }],
+        "normal": 3,
+        "anomalous": 0,
+        "verify_excluded": 0,
+    }
+    area_out = tmp_path / "PRight"
+    area_out.mkdir()
+
+    summary = calibration._run_normal_only_test_calibration(
+        "PRight", args, torch.device("cpu"), None, None, metadata,
+        None, None, "PRight_64", 12, str(area_out), str(tmp_path),
+        "_scenario-13_0",
+    )
+
+    assert summary["threshold"] == pytest.approx(0.28)
+    assert summary["threshold_strategy"] == "percentile"
+    assert summary["calibration_mode"] == "normal_only_fallback"
+    assert summary["supervised_metrics_available"] is False
+    assert summary["n_anomalous"] == 0
+    metrics = pd.read_csv(
+        area_out / "anomaly_metrics_PRight_scenario-13_0.csv"
+    )
+    assert metrics.loc[0, "Status"] == "not_applicable_no_anomalous_samples"
