@@ -20,7 +20,9 @@ from calibrate_threshold import (  # noqa: E402
     _setup_params_paths,
     discover_annotated_test_samples,
     load_annotation_index,
+    parse_args,
     reconstruct,
+    resolve_test_annotation_paths,
 )
 
 
@@ -142,6 +144,52 @@ def test_f1c_selects_an_observed_score_threshold():
     assert _compute_threshold_f1c(labels, scores) == pytest.approx(0.8)
 
 
+def test_test_scenario_auto_resolves_matching_annotation_csv(tmp_path):
+    annotations = tmp_path / "annotations"
+    annotations.mkdir()
+    selected = annotations / "scenario_13_1_back_view_annotations.csv"
+    unrelated = annotations / "scenario_13_0_back_view_annotations.csv"
+    selected.touch()
+    unrelated.touch()
+
+    paths = resolve_test_annotation_paths(
+        gt_csv=None,
+        annotations_dir=annotations,
+        test_scenarios=["13_1"],
+        camera="back_view",
+        project_root=tmp_path,
+    )
+
+    assert paths == [selected.resolve()]
+
+
+def test_singular_test_scenario_cli_alias():
+    config = Path(__file__).resolve().parents[1] / "configs" / "cf_dataset_mac.yaml"
+    args = parse_args([
+        "--config", str(config),
+        "--test_scenario", "13_1",
+    ])
+    assert args.test_scenarios == ["13_1"]
+    assert args.test_folder == "/Users/rashid/data/DS/SR/v6/Jul27/test"
+
+
+def test_test_scenario_reports_expected_annotation_filename(tmp_path):
+    annotations = tmp_path / "annotations"
+    annotations.mkdir()
+
+    with pytest.raises(
+        FileNotFoundError,
+        match="scenario_13_1_back_view_annotations.csv",
+    ):
+        resolve_test_annotation_paths(
+            gt_csv=None,
+            annotations_dir=annotations,
+            test_scenarios=["13_1"],
+            camera="back_view",
+            project_root=tmp_path,
+        )
+
+
 def test_config_paths_work_when_legacy_host_lookup_has_no_dataset_root(tmp_path):
     dataset_base = tmp_path / "V6"
     training_dir = dataset_base / "train"
@@ -173,6 +221,7 @@ def test_config_paths_work_when_legacy_host_lookup_has_no_dataset_root(tmp_path)
 
 def test_test_summary_and_filename_use_winning_taas_parameters(tmp_path):
     args = SimpleNamespace(
+        mode="test",
         offset=1,
         sigma=1.0,
         quantile=0.99,
@@ -199,11 +248,12 @@ def test_test_summary_and_filename_use_winning_taas_parameters(tmp_path):
     assert summary["threshold_percentile"] is None
     assert (summary["offset"], summary["sigma"], summary["quantile"]) == (3, 1.5, 0.98)
     assert summary["score_func"] == "TAAS_OFF3-s_1.5-q_0.98"
-    assert path.name == "threshold_PRight_f1c_off3_sig1.5_q0.98.json"
+    assert path.name == "threshold_test_PRight_f1c_off3_sig1.5_q0.98.json"
 
 
 def test_test_threshold_writes_scenario_archive_and_active_copy(tmp_path):
     args = SimpleNamespace(
+        mode="test",
         offset=1,
         sigma=1.0,
         quantile=0.99,
@@ -229,7 +279,7 @@ def test_test_threshold_writes_scenario_archive_and_active_copy(tmp_path):
     archived = Path(_save_threshold_json(tmp_path, "PRight", summary, args))
     active = (
         tmp_path / "PRight"
-        / "threshold_PRight_f1c_off1_sig1.0_q0.99.json"
+        / "threshold_test_PRight_f1c_off1_sig1.0_q0.99.json"
     )
 
     assert archived.name == (
@@ -253,6 +303,7 @@ def test_normal_only_test_calibration_uses_distribution_threshold(
         ),
     )
     args = SimpleNamespace(
+        mode="test",
         offset=1,
         sigma=1.0,
         quantile=0.99,

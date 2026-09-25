@@ -296,7 +296,10 @@ python scripts/calibrate_threshold.py \
   --offset 3 \
   --sigma 1.5 \
   --quantile 0.99 \
-  --taas_backend cython
+  --taas_backend cython \
+  --offset_ls 3 \
+  --sigma_ls 1.5 \
+  --quantile_ls 0.99
 
 # --offset_ls 1,2,3 \
 # --sigma_ls 1.0,1.5 \
@@ -320,4 +323,26 @@ python scripts/calibrate_threshold.py \
   --camera back_view \
   --threshold_method f1c \
   --taas_backend auto
+```
+
+#### RUN IN MAC
+
+```bash
+python scripts/calibrate_threshold.py \
+  --config configs/cf_dataset_mac.yaml \
+  --mode test \
+  --dataset_version V6 \
+  --safety_area ALL \
+  --test_scenario 13_0 13_1 \
+  --camera back_view \
+  --threshold_method f1c \
+  --threshold_strategy percentile \
+  --threshold_percentile 99.0 \
+  --offset 3 \
+  --sigma 1.5 \
+  --quantile 0.99 \
+  --taas_backend cython \
+  --offset_ls 3 \
+  --sigma_ls 1.5 \
+  --quantile_ls 0.99
 ```

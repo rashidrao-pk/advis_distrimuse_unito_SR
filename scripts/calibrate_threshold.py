@@ -795,7 +795,8 @@ def _evaluate_method(name, scores, labels, threshold,
     return m, score_val if is_new_best else current_best, is_new_best, threshold
 
 
-def _save_calibration_plots(name, scores, labels, threshold, params,
+
+def _save_calibration_plots(name, scenario_tag, scores, labels, threshold, params,
                              save_dir: str, destroy: bool = True):
     """Scatter + KDE plot for one scoring method."""
     scores = np.asarray(scores); labels = np.asarray(labels)
@@ -862,7 +863,7 @@ def _save_calibration_plots(name, scores, labels, threshold, params,
     plt.tight_layout()
     os.makedirs(save_dir, exist_ok=True)
     fig.savefig(os.path.join(save_dir,
-                f"{name.replace(' ', '_')}_{params.subgroup}_plot.png"),
+                f"{name.replace(' ', '_')}_{params.subgroup}_plot{scenario_tag}.png"),
                 dpi=120, bbox_inches="tight")
     if destroy:
         plt.close(fig)
@@ -1137,7 +1138,7 @@ def run_test_mode(area: str, args, device, out_dir: str) -> dict:
             writer = csv.writer(f_csv)
             writer.writerow([metrics[k] for k in csv_header])
 
-        _save_calibration_plots(name, scores, labels, threshold,
+        _save_calibration_plots(name,scenario_tag,scores, labels, threshold,
                                  params, plot_dir, destroy=True)
 
     if best_name is None:
@@ -1387,7 +1388,7 @@ def load_model_config(config_file: Path) -> dict:
         raise ValueError(f"Config must define 'models.checkpoints': {config_path}")
     return models
 
-def parse_args():
+def parse_args(argv=None):
     p = argparse.ArgumentParser(
         description="Threshold calibration — val mode or supervised test mode.",
         formatter_class=argparse.RawTextHelpFormatter,
@@ -1443,7 +1444,9 @@ def parse_args():
         ),
     )
     p.add_argument(
-        "--test_scenarios", "--test-scenarios", nargs="+",
+        "--test_scenarios", "--test-scenarios",
+        "--test_scenario", "--test-scenario",
+        dest="test_scenarios", nargs="+",
         help="[test mode] Scenario IDs to combine. Default: all under the test root.",
     )
     p.add_argument("--camera", default="back_view")
@@ -1461,8 +1464,8 @@ def parse_args():
         "--gt_csv", "--annotation-csv", default=None,
         help=(
             "[test mode] Optional single annotation CSV using the current "
-            "scenario_id/camera/safety_area/filename/label schema. When omitted, "
-            "all matching CSVs in --annotations_dir are used."
+            "scenario_id/camera/safety_area/filename/label schema. This overrides "
+            "automatic scenario CSV selection from --annotations_dir."
         ),
     )
 
@@ -1510,7 +1513,7 @@ def parse_args():
                    help="Override output dir (default: results/training/threshold).")
 
 
-    args = p.parse_args()
+    args = p.parse_args(argv)
     args.taas_backend = resolve_taas_backend(
         args.taas_backend, args.taas_variant
     )
@@ -1535,6 +1538,48 @@ def parse_args():
     if args.test_folder is None:
         args.test_folder = args.testing_dir or str(args.dataset_base / "test")
     return args
+
+
+def resolve_test_annotation_paths(
+    *, gt_csv, annotations_dir, test_scenarios, camera, project_root,
+):
+    """Resolve explicit or scenario-derived annotation CSV paths."""
+    project_root = Path(project_root).expanduser().resolve()
+    if gt_csv:
+        path = Path(gt_csv).expanduser()
+        path = path.resolve() if path.is_absolute() else (Path.cwd() / path).resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"Annotation CSV not found: {path}")
+        return [path]
+
+    directory = Path(annotations_dir).expanduser()
+    if not directory.is_absolute():
+        directory = project_root / directory
+    directory = directory.resolve()
+    if not directory.is_dir():
+        raise FileNotFoundError(f"Annotation directory not found: {directory}")
+
+    if test_scenarios:
+        paths = []
+        for value in test_scenarios:
+            scenario = str(value).strip()
+            if not scenario or Path(scenario).name != scenario:
+                raise ValueError(f"Invalid test scenario ID: {value!r}")
+            path = directory / f"scenario_{scenario}_{camera}_annotations.csv"
+            if not path.is_file():
+                raise FileNotFoundError(
+                    f"Annotation CSV for scenario {scenario!r} and camera "
+                    f"{camera!r} not found: {path}"
+                )
+            paths.append(path)
+        return paths
+
+    paths = sorted(directory.glob(f"scenario_*_{camera}_annotations.csv"))
+    if not paths:
+        raise FileNotFoundError(
+            f"No {camera} annotation CSVs found in {directory}"
+        )
+    return paths
 
 
 # ---------------------------------------------------------------------------
@@ -1566,26 +1611,19 @@ def main():
         test_path = args.dataset_base / test_path
     args.test_dir = str(test_path.resolve())
 
-    if args.gt_csv:
-        annotation_path = Path(args.gt_csv).expanduser()
-        if not annotation_path.is_absolute():
-            annotation_path = Path.cwd() / annotation_path
-        args.annotation_paths = [annotation_path.resolve()]
-    else:
-        annotation_dir = args.annotations_dir.expanduser()
-        if not annotation_dir.is_absolute():
-            annotation_dir = Path(__file__).resolve().parent.parent / annotation_dir
-        if not annotation_dir.is_dir():
-            raise FileNotFoundError(
-                f"Annotation directory not found: {annotation_dir.resolve()}"
-            )
-        args.annotation_paths = sorted(
-            annotation_dir.resolve().glob("scenario_*_annotations.csv")
+    args.annotation_paths = []
+    if args.mode == "test":
+        args.annotation_paths = resolve_test_annotation_paths(
+            gt_csv=args.gt_csv,
+            annotations_dir=args.annotations_dir,
+            test_scenarios=args.test_scenarios,
+            camera=args.camera,
+            project_root=Path(__file__).resolve().parent.parent,
         )
-        if not args.annotation_paths:
-            raise FileNotFoundError(
-                f"No scenario annotation CSVs found in {annotation_dir.resolve()}"
-            )
+        print(
+            "[annotations] "
+            + ", ".join(path.name for path in args.annotation_paths)
+        )
     
     if args.verbose_level>1:
         print('-'*100)

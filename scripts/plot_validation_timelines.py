@@ -172,7 +172,7 @@ def main():
     filename_score_function = re.sub(r"[^A-Za-z0-9._-]+", "-", score_function)
     if args.output is None:
         args.output = args.threshold_root / (
-            f"val_scores_timeline_{strategy}_{filename_score_function}.png"
+            f"plots_val_scores/val_scores_timeline_{strategy}_{filename_score_function}.png"
         )
 
     figure, axes = plt.subplots(
