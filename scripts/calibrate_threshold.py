@@ -861,9 +861,10 @@ def _save_calibration_plots(name, scenario_tag, scores, labels, threshold, param
     ax2.set_title("KDE: TN vs TP")
 
     plt.tight_layout()
+    save_dir = os.path.join(save_dir, scenario_tag.lstrip("_"))
     os.makedirs(save_dir, exist_ok=True)
     fig.savefig(os.path.join(save_dir,
-                f"{name.replace(' ', '_')}_{params.subgroup}_plot{scenario_tag}.png"),
+                f"{name.replace(' ', '_')}_{params.subgroup}_plot.png"),
                 dpi=120, bbox_inches="tight")
     if destroy:
         plt.close(fig)

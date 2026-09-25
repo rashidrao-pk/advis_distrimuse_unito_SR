@@ -241,8 +241,7 @@ for ooff in 1 2 3; do
         --offset "$ooff" \
         --sigma "$ss" \
         --quantile "$qq" \
-        --taas_backend cython \
-        --taas_variant canonical
+        --taas_backend cython
     done
   done
 done
@@ -268,9 +267,7 @@ python scripts/calibrate_threshold.py \
   --mode test \
   --dataset_version V6 \
   --safety_area ALL \
-  --test_folder /Users/rashid/data/DS/SR/v6/Jul27/test \
   --test_scenarios 13_0 \
-  --gt_csv reports/safety_area_annotations/saved_annotation/scenario_13_0_back_view_annotations.csv \
   --camera back_view \
   --threshold_method f1c \
   --threshold_strategy percentile \
@@ -286,9 +283,7 @@ python scripts/calibrate_threshold.py \
   --mode test \
   --dataset_version V6 \
   --safety_area ALL \
-  --test_folder /beegfs/home/mrashid/datasets/AD/SR/V6/test \
   --test_scenarios 13_0 \
-  --gt_csv reports/safety_area_annotations/saved_annotation/scenario_13_0_back_view_annotations.csv \
   --camera back_view \
   --threshold_method f1c \
   --threshold_strategy percentile \

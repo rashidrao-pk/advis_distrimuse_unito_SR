@@ -487,10 +487,10 @@ python scripts/infer_offline.py \
   --safety_areas ALL \
   --threshold_strategy percentile \
   --threshold_percentile 99.0 \
+  --threshold_amplification 1.0 1.0 1.0 1.0 \
   --offset 3 \
   --sigma 1.5 \
   --quantile 0.99 \
-  --taas_variant minimization \
   --taas_backend cython \
   --rolling none \
   --add_score_name \
@@ -506,11 +506,11 @@ pixi run python scripts/inference_live.py \
   --message_type auto \
   --safety_areas ALL \
   --threshold_strategy percentile \
+  --threshold_amplification 1.1 1.1 1.1 1.2 \
   --offset 1 \
   --sigma 1.0 \
   --quantile 0.99 \
   --taas_backend auto \
-  --taas_variant canonical \
   --rolling mean \
   --rolling_window 5 \
   --publish_rulex \
