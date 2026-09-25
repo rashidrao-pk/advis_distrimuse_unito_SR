@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import sys
 from types import SimpleNamespace
 
@@ -341,6 +342,64 @@ def test_normal_only_test_calibration_uses_distribution_threshold(
         area_out / "anomaly_metrics_PRight_scenario-13_0.csv"
     )
     assert metrics.loc[0, "Status"] == "not_applicable_no_anomalous_samples"
+    artifact_dir = (
+        area_out / "calibration_plots" / "scenario-13_0"
+    )
+    assert list((artifact_dir / "plots").glob("*.png"))
+    combination_jsons = list((artifact_dir / "json").glob("*.json"))
+    assert len(combination_jsons) == 1
+    payload = json.loads(combination_jsons[0].read_text(encoding="utf-8"))
+    assert payload["is_best"] is True
+    assert payload["calibration_mode"] == "normal_only_fallback"
+    assert payload["data"]["normal"] == 3
+    assert payload["data"]["anomalous"] == 0
+
+
+def test_combination_results_save_every_candidate_and_mark_winner(tmp_path):
+    records = [
+        {
+            "method": "TAAS_OFF1-s_1.0-q_0.99",
+            "safety_area": "PLeft",
+            "metrics": {"binormal_auc": 0.72, "recall": 0.80},
+            "plot_file": "../plots/first.png",
+            "is_best": False,
+            "rank": None,
+        },
+        {
+            "method": "TAAS_OFF3-s_1.5-q_0.99",
+            "safety_area": "PLeft",
+            "metrics": {"binormal_auc": 0.91, "recall": 0.75},
+            "plot_file": "../plots/second.png",
+            "is_best": False,
+            "rank": None,
+        },
+    ]
+
+    paths = calibration._save_test_combination_results(
+        records,
+        str(tmp_path / "calibration_plots"),
+        "_scenario-13_1",
+        "TAAS_OFF3-s_1.5-q_0.99",
+        "binormal_auc",
+    )
+
+    assert len(paths) == 2
+    assert all(
+        Path(path).parent
+        == tmp_path / "calibration_plots" / "scenario-13_1" / "json"
+        for path in paths
+    )
+    saved = {
+        payload["method"]: payload
+        for payload in (
+            json.loads(Path(path).read_text(encoding="utf-8"))
+            for path in paths
+        )
+    }
+    assert saved["TAAS_OFF3-s_1.5-q_0.99"]["is_best"] is True
+    assert saved["TAAS_OFF3-s_1.5-q_0.99"]["rank"] == 1
+    assert saved["TAAS_OFF1-s_1.0-q_0.99"]["is_best"] is False
+    assert saved["TAAS_OFF1-s_1.0-q_0.99"]["rank"] == 2
 
 
 def test_anomalous_only_area_is_skipped_without_overwriting_threshold(tmp_path):

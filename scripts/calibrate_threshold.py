@@ -861,13 +861,168 @@ def _save_calibration_plots(name, scenario_tag, scores, labels, threshold, param
     ax2.set_title("KDE: TN vs TP")
 
     plt.tight_layout()
-    save_dir = os.path.join(save_dir, scenario_tag.lstrip("_"))
+    save_dir = os.path.join(
+        save_dir, scenario_tag.lstrip("_"), "plots"
+    )
     os.makedirs(save_dir, exist_ok=True)
-    fig.savefig(os.path.join(save_dir,
-                f"{name.replace(' ', '_')}_{params.subgroup}_plot.png"),
-                dpi=120, bbox_inches="tight")
+    plot_path = os.path.join(
+        save_dir, f"{name.replace(' ', '_')}_{params.subgroup}_plot.png"
+    )
+    fig.savefig(plot_path, dpi=120, bbox_inches="tight")
     if destroy:
         plt.close(fig)
+    return plot_path
+
+
+def _json_number(value):
+    """Return a regular finite Python number, or None for JSON output."""
+    if value is None:
+        return None
+    if isinstance(value, (np.integer, int)):
+        return int(value)
+    if isinstance(value, (np.floating, float)):
+        value = float(value)
+        return value if math.isfinite(value) else None
+    return value
+
+
+def _build_test_combination_result(
+    area, name, score_parameters, threshold, metrics, scores, labels,
+    args, suffix, n_epochs, test_metadata, plot_path,
+):
+    """Build the compact JSON record used to compare a test-mode sweep."""
+    scores = np.asarray(scores, dtype=float)
+    labels = np.asarray(labels, dtype=int)
+    predictions = (scores >= threshold).astype(int)
+
+    tn = int(np.sum((labels == 0) & (predictions == 0)))
+    fp = int(np.sum((labels == 0) & (predictions == 1)))
+    fn = int(np.sum((labels == 1) & (predictions == 0)))
+    tp = int(np.sum((labels == 1) & (predictions == 1)))
+    finite_scores = scores[np.isfinite(scores)]
+
+    if finite_scores.size:
+        score_statistics = {
+            "minimum": float(np.min(finite_scores)),
+            "maximum": float(np.max(finite_scores)),
+            "mean": float(np.mean(finite_scores)),
+            "standard_deviation": float(np.std(finite_scores)),
+            "p95": float(np.quantile(finite_scores, 0.95)),
+            "p99": float(np.quantile(finite_scores, 0.99)),
+        }
+    else:
+        score_statistics = {
+            key: None for key in (
+                "minimum", "maximum", "mean", "standard_deviation",
+                "p95", "p99",
+            )
+        }
+
+    return {
+        "schema_version": 1,
+        "artifact_type": "test_threshold_combination",
+        "computed_at": datetime.now().isoformat(timespec="seconds"),
+        "safety_area": area,
+        "mode": "test",
+        "method": name,
+        "threshold": float(threshold),
+        "threshold_selection": args.threshold_method,
+        "selection_metric": getattr(args, "monitor_score", None),
+        "score_parameters": {
+            "offset": int(score_parameters["offset"]),
+            "sigma": float(score_parameters["sigma"]),
+            "quantile": float(score_parameters["quantile"]),
+            "taas_variant": score_parameters["taas_variant"],
+            "taas_backend": args.taas_backend,
+        },
+        "metrics": {
+            "accuracy": _json_number(metrics["Accuracy"]),
+            "precision": _json_number(metrics["Precision"]),
+            "recall": _json_number(metrics["Recall"]),
+            "f1": _json_number(metrics["F1"]),
+            "auc": _json_number(metrics["AUC"]),
+            "binormal_auc": _json_number(metrics["binormal_AUC"]),
+            "true_negative": tn,
+            "false_positive": fp,
+            "false_negative": fn,
+            "true_positive": tp,
+        },
+        "data": {
+            "total": int(labels.size),
+            "normal": int(np.sum(labels == 0)),
+            "anomalous": int(np.sum(labels == 1)),
+            "verify_excluded": int(test_metadata["verify_excluded"]),
+            "scenarios": list(test_metadata["scenarios"]),
+            "source_scenarios": list(test_metadata["source_scenarios"]),
+            "annotation_csvs": list(test_metadata.get("annotation_csvs", [])),
+        },
+        "model": {
+            "checkpoint_suffix": suffix,
+            "epochs_trained": int(n_epochs),
+            "reconstruction_mode": "posterior_mean",
+        },
+        "score_statistics": score_statistics,
+        "plot_file": (
+            f"../plots/{Path(plot_path).name}" if plot_path else None
+        ),
+        "is_best": False,
+        "rank": None,
+    }
+
+
+def _save_test_combination_results(records, calibration_plot_dir, scenario_tag,
+                                   best_name, monitor_score):
+    """Save one comparison-ready JSON file for every evaluated combination."""
+    json_dir = Path(calibration_plot_dir) / scenario_tag.lstrip("_") / "json"
+    json_dir.mkdir(parents=True, exist_ok=True)
+
+    metric_key = "binormal_auc" if monitor_score == "binormal_auc" else "recall"
+    ranked = sorted(
+        records,
+        key=lambda record: (
+            record["metrics"].get(metric_key)
+            if record["metrics"].get(metric_key) is not None else -1.0
+        ),
+        reverse=True,
+    )
+    rank_by_method = {
+        record["method"]: rank for rank, record in enumerate(ranked, start=1)
+    }
+
+    saved_paths = []
+    for record in records:
+        record["is_best"] = record["method"] == best_name
+        record["rank"] = rank_by_method[record["method"]]
+        json_path = json_dir / f"{record['method'].replace(' ', '_')}_{record['safety_area']}.json"
+        with json_path.open("w", encoding="utf-8") as stream:
+            json.dump(record, stream, indent=2)
+        saved_paths.append(str(json_path))
+    return saved_paths
+
+
+def _save_normal_only_calibration_plot(
+    name, scenario_tag, scores, threshold, area, save_dir,
+):
+    """Save a score-distribution plot for a normal-only test calibration."""
+    scores = np.asarray(scores, dtype=float)
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.hist(scores, bins=min(50, max(10, len(scores) // 10)),
+            color="steelblue", alpha=0.8)
+    ax.axvline(threshold, color="red", linestyle="--", linewidth=2,
+               label=f"threshold = {threshold:.6f}")
+    ax.set_title(f"{name} | {area} | normal-only calibration")
+    ax.set_xlabel("Anomaly score")
+    ax.set_ylabel("Frames")
+    ax.grid(True, alpha=0.25)
+    ax.legend()
+    fig.tight_layout()
+
+    plots_dir = Path(save_dir) / scenario_tag.lstrip("_") / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    plot_path = plots_dir / f"{name.replace(' ', '_')}_{area}_plot.png"
+    fig.savefig(plot_path, dpi=120, bbox_inches="tight")
+    plt.close(fig)
+    return str(plot_path)
 
 
 def _skip_test_calibration_without_normal(
@@ -989,6 +1144,43 @@ def _run_normal_only_test_calibration(
         "Status": "not_applicable_no_anomalous_samples",
     }]).to_csv(metrics_csv, index=False)
 
+    calibration_plot_dir = os.path.join(area_out, "calibration_plots")
+    plot_path = _save_normal_only_calibration_plot(
+        score_name, scenario_tag, scores, threshold, area,
+        calibration_plot_dir,
+    )
+    combination_result = _build_test_combination_result(
+        area,
+        score_name,
+        parameters,
+        threshold,
+        {
+            "Accuracy": None,
+            "Precision": None,
+            "Recall": None,
+            "F1": None,
+            "AUC": None,
+            "binormal_AUC": None,
+        },
+        scores,
+        labels,
+        args,
+        suffix,
+        n_epochs,
+        test_metadata,
+        plot_path,
+    )
+    combination_result["calibration_mode"] = "normal_only_fallback"
+    combination_result["supervised_metrics_available"] = False
+    combination_json_paths = _save_test_combination_results(
+        [combination_result],
+        calibration_plot_dir,
+        scenario_tag,
+        score_name,
+        getattr(args, "monitor_score", "binormal_auc"),
+    )
+    print(f"[save] Combination JSON → {combination_json_paths[0]}")
+
     summary = _build_summary(
         area, suffix, n_epochs, args, threshold,
         df_scores, score_csv, "test",
@@ -1097,6 +1289,8 @@ def run_test_mode(area: str, args, device, out_dir: str) -> dict:
     best_name       = None
     best_parameters = None
     all_metrics     = []
+    combination_results = []
+    plot_paths = {}
 
     with open(csv_metrics, "w", newline="") as f_csv:
         writer = csv.writer(f_csv)
@@ -1139,19 +1333,39 @@ def run_test_mode(area: str, args, device, out_dir: str) -> dict:
             writer = csv.writer(f_csv)
             writer.writerow([metrics[k] for k in csv_header])
 
-        _save_calibration_plots(name,scenario_tag,scores, labels, threshold,
-                                 params, plot_dir, destroy=True)
+        plot_path = _save_calibration_plots(
+            name, scenario_tag, scores, labels, threshold,
+            params, plot_dir, destroy=True,
+        )
+        plot_paths[name] = plot_path
+        combination_results.append(_build_test_combination_result(
+            area, name, score_parameters, threshold, metrics, scores, labels,
+            args, suffix, n_epochs, test_metadata, plot_path,
+        ))
 
     if best_name is None:
         raise RuntimeError("No valid scoring method found (check GT labels).")
 
     # ── Rename best-method plot ───────────────────────────────────────────
-    old_f = os.path.join(plot_dir,
-                f"{best_name.replace(' ','_')}_{area}_plot.png")
-    new_f = os.path.join(plot_dir,
-                f"BEST-{best_name.replace(' ','_')}_{area}_plot.png")
+    old_f = plot_paths[best_name]
+    new_f = os.path.join(
+        os.path.dirname(old_f), f"BEST-{os.path.basename(old_f)}"
+    )
     if os.path.exists(old_f):
         os.replace(old_f, new_f)
+        plot_paths[best_name] = new_f
+        for record in combination_results:
+            if record["method"] == best_name:
+                record["plot_file"] = f"../plots/{Path(new_f).name}"
+
+    combination_json_paths = _save_test_combination_results(
+        combination_results, plot_dir, scenario_tag,
+        best_name, args.monitor_score,
+    )
+    print(
+        f"[save] Combination JSON files ({len(combination_json_paths)}) → "
+        f"{Path(combination_json_paths[0]).parent}"
+    )
 
     # ── Save raw test scores for the best method ──────────────────────────
     best_fn   = scoring_grid[best_idx][1]
