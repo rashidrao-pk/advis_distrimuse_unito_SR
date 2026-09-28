@@ -4,7 +4,8 @@ preview = ["pixi-build"]
 name = "advis_mac"
 version = "0.1.0"
 
-platforms = ["osx-arm64"]
+platforms = ["linux-64",
+            "osx-arm64"]
 
 channels = [
   "https://prefix.dev/conda-forge",

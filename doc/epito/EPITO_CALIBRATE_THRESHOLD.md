@@ -315,6 +315,9 @@ python scripts/calibrate_threshold.py \
   --test_scenarios 8_16 \
   --camera back_view \
   --threshold_method f1c \
+  --offset 3 \
+  --sigma 1.5 \
+  --quantile 0.99 \
   --taas_backend cython
 ```
 
