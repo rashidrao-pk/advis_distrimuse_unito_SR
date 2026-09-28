@@ -79,7 +79,7 @@ python scripts/check_model_checkpoints.py \
 --json
 ```
 
-
+## Dummy Inference Test
 ```bash
 python scripts/test_model_inference.py \
   --config configs/cf_dataset_hp.yaml \
@@ -88,3 +88,67 @@ python scripts/test_model_inference.py \
   --max_images 32
 ```
 
+### Download Thresholds
+
+```bash
+mkdir -p results/V6
+
+pixi run hf download rashidrao/ADVIS_SR_DISTRIMUSE \
+  --include "thresholds/**" \
+  --local-dir results/V6
+
+# verify
+find results/V6/thresholds -maxdepth 2 -type f \
+  -name '*percentile99.0_off1_sig1.0_q0.99*.json' | sort
+```
+
+
+### Inference:
+```bash
+conda actiavte dm_unito
+
+#  RUN OFFLINE USING SAVED VIDEO
+python scripts/infer_offline.py   --config configs/cf_dataset_hp.yaml   --input_type video   --scenario 13_1   --topic /camera/back_view/image_raw   --safety_areas ALL   --threshold_strategy percentile   --offset 1   --sigma 1.0   --quantile 0.99 --scores-only
+
+#  RUN OFFLINE USING SAVED ROSBAG
+pixi run python scripts/infer_offline.py \
+  --config configs/cf_dataset_hp.yaml \
+  --input_type rosbag \
+  --scenario 8_0 \
+  --topic /camera/back_view/image_raw \
+  --safety_areas ALL \
+  --max_frames 200 \
+  --skip-first 100
+
+```
+
+```bash
+pixi run python scripts/inference_live.py \
+  --config configs/cf_dataset_hp.yaml \
+  --camera_topic /camera/back_view/image_raw \
+  --message_type auto \
+  --safety_areas ALL \
+  --threshold_strategy percentile \
+  --threshold_amplification 1.1 1.1 1.1 1.2 \
+  --offset 1 \
+  --sigma 1.0 \
+  --quantile 0.99 \
+  --taas_backend auto \
+  --rolling mean \
+  --rolling_window 5 \
+  --detections_topic /advis/detections \
+  --log_every_n 1 \
+  --profile_timing \
+  --publish_zenoh \
+  --debug_mode \
+  --zenoh_endpoint tcp/127.0.0.1:7447
+  --publish_rulex \
+  --rulex_topic /rulex/data \
+```
+
+
+## Run DASHBOARD VIEWER
+
+```bash
+python zenoh_dashboard/dashboard_viewer.py   --zenoh-endpoint tcp/127.0.0.1:7447   --camera-topic /camera/back_view/image_raw   --camera-message-type compressed   --camera-timeout 2   --inference-timeout 3
+```
