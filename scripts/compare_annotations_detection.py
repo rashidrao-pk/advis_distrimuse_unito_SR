@@ -157,7 +157,7 @@ def ranking_curve_data(group: pd.DataFrame) -> dict:
     return {
         "fpr": fpr, "tpr": tpr,
         "recall": recall, "precision": precision,
-        "auroc": float(np.trapz(tpr, fpr)),
+        "auroc": float(np.trapezoid(tpr, fpr)),
         "auprc": float(np.sum(np.diff(recall) * precision[1:])),
     }
 

@@ -12,3 +12,4 @@ pillow
 mcap
 pytest
 cython
+plotly
