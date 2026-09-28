@@ -17,7 +17,6 @@ python3 scripts/train_new.py \
   --save_figures
 ```
 
-
 ```bash
 python3 scripts/train_new.py \
   --config configs/cf_dataset_epito.yaml \
@@ -26,11 +25,21 @@ python3 scripts/train_new.py \
   --save_figures
 ```
 
-
 ```bash
 python3 scripts/train_new.py \
   --config configs/cf_dataset_epito.yaml \
   --safety_area PRight \
   --batch_size 128 \
   --save_figures
+```
+
+## Upload Checkpoints to Huggingface:
+
+```
+hf upload rashidrao/ADVIS_SR_DISTRIMUSE \
+  . \
+  . \
+  --exclude ".git/*" \
+  --exclude ".DS_Store" \
+  --commit-message "Update repository files and README"
 ```
