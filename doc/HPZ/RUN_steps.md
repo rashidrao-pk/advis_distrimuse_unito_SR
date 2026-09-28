@@ -3,8 +3,14 @@
 1. ## RUN SAFROON 
 ```bash
 cd ~/dm/distrimuse-seds/
+RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+CYCLONEDDS_URI=file:///home/unito/dm/distrimuse-seds/cyclonedds.xml
+ROS_DOMAIN_ID=1
 source setup_ros.sh vlans.conf unito/dm kilted
 ./vlan_manager.sh vlans.conf
+
+pixi run ros2 daemon stop
+pixi run ros2 daemon start
 
 ```
 

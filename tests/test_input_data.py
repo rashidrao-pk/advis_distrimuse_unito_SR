@@ -85,7 +85,7 @@ def test_train_and_test_paths_do_not_overlap(tmp_path):
 
 def test_configured_training_data_samples_are_readable_when_available():
     """Small Epito integration check; skipped on machines without that dataset."""
-    config_path = REPOSITORY_ROOT / "configs/cf_dataset_epito.yaml"
+    config_path = REPOSITORY_ROOT / "configs/cf_dataset_hp.yaml"
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     training_root = Path(config["data"]["training"]).expanduser()
     if not training_root.is_dir():

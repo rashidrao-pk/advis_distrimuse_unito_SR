@@ -1,14 +1,14 @@
 
 data:
-  dataset_base: /home/unito/advis/DS/SR/V6
-  masks: /home/unito/advis/DS/SR/V6/masks
+  dataset_base: /home/unito/advis/DS/SR/v6
+  masks: /home/unito/advis/DS/SR/v6/masks
   mask_types:
-    PLeft: /home/unito/advis/DS/SR/V6/masks/Mask_Generation_v6_PLeft.png
-    PRight: /home/unito/advis/DS/SR/V6/masks/Mask_Generation_v6_PRight.png
-    RoboArm: /home/unito/advis/DS/SR/V6/masks/Mask_Generation_v6_RoboArm.png
-    ConvBelt: /home/unito/advis/DS/SR/V6/masks/Mask_Generation_v6_ConvBelt.png
-  training: /home/unito/advis/DS/SR/V6/train
-  testing: /home/unito/advis/DS/SR/V6/test
+    PLeft: /home/unito/advis/DS/SR/v6/masks/Mask_Generation_v6_PLeft.png
+    PRight: /home/unito/advis/DS/SR/v6/masks/Mask_Generation_v6_PRight.png
+    RoboArm: /home/unito/advis/DS/SR/v6/masks/Mask_Generation_v6_RoboArm.png
+    ConvBelt: /home/unito/advis/DS/SR/v6/masks/Mask_Generation_v6_ConvBelt.png
+  training: /home/unito/advis/DS/SR/v6/Jul27/train
+  testing: /home/unito/advis/DS/SR/v6/Jul27/test
 
 scenario:
   id: "1_0"
