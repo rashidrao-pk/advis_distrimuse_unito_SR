@@ -1,5 +1,8 @@
 # ADVIS setup and inference on the HP workstation
 
+> HPZ documentation: **First-time setup** · [Daily run](RUN_steps.md) ·
+> [ROS monitoring and recovery](RM_ROS.md) · [System services](SERVICES.md)
+
 This guide configures the HP Linux workstation for ADVIS training and
 inference. Run repository commands from:
 
@@ -503,3 +506,10 @@ Then confirm:
 PYTHONPATH=scripts pixi run python -c \
   "import tass_cython_distance; print(tass_cython_distance.__file__)"
 ```
+
+## Next step
+
+After this one-time setup succeeds, use [RUN_steps.md](RUN_steps.md) for each
+normal session. If ROS discovery or messages stop, follow
+[RM_ROS.md](RM_ROS.md). For unattended startup, logs, or service control, use
+[SERVICES.md](SERVICES.md).
