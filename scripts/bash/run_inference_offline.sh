@@ -1,17 +1,17 @@
 set -euo pipefail
 
-total=6
+total=36
 current=0
 
 for ooff in 1 2 3; do
-  for ss in 1.0 1.5; do
-    for qq in 0.99 0.98 0.97; do
+  for ss in 1.0 1.5 2; do
+    for qq in 0.999 0.99 0.98 0.97; do
       ((current += 1))
     
       echo "================================================================"
       echo "Combination ${current}/${total}"
       echo "Offset=${ooff}, Sigma=${ss}, Quantile=${qq}"
-      echo "================================================================"
+      echo "----------------------------------------------------------------"
 
       python scripts/infer_offline.py \
         --config configs/cf_dataset_epito.yaml \

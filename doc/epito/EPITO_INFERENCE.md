@@ -380,7 +380,7 @@ annotations="/Users/rashid/data/PhD/datacloud_data/repos/DistriMuSe/advis_distri
 
 scores_dir="/Users/rashid/data/PhD/datacloud_data/repos/DistriMuSe/advis_distrimuse_unito_SR/results/V6/offline_inference"
 
-for ooff in 1; do
+for ooff in 1 2 3; do
   for ss in 1.0 1.5 2; do
     for qq in 0.999 0.99 0.98 0.97; do
       ((current += 1))
@@ -414,8 +414,8 @@ echo "[COMPLETED] All ${total} threshold combinations"
 ```
 
 ```bash
-chmod +x scripts/bash/run_evaluation.sh
-./scripts/bash/run_evaluation.sh
+chmod +x scripts/bash/run_inference_offline.sh
+./scripts/bash/run_inference_offline.sh
 ```
 
 ## Run on Winning without RollingMin

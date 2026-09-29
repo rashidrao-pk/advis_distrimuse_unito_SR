@@ -28,6 +28,13 @@ LABEL_COLORS = {
 }
 
 
+def trapezoidal_area(y: np.ndarray, x: np.ndarray) -> float:
+    """Integrate with NumPy 1.x and 2.x compatible APIs."""
+    if hasattr(np, "trapezoid"):
+        return float(np.trapezoid(y, x))
+    return float(np.trapz(y, x))
+
+
 def boolean_series(series: pd.Series) -> pd.Series:
     if pd.api.types.is_bool_dtype(series):
         return series.fillna(False)
@@ -157,7 +164,7 @@ def ranking_curve_data(group: pd.DataFrame) -> dict:
     return {
         "fpr": fpr, "tpr": tpr,
         "recall": recall, "precision": precision,
-        "auroc": float(np.trapezoid(tpr, fpr)),
+        "auroc": trapezoidal_area(tpr, fpr),
         "auprc": float(np.sum(np.diff(recall) * precision[1:])),
     }
 
