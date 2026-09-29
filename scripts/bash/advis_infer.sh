@@ -1,44 +1,40 @@
 #!/bin/bash
-
 set -e
-trap 'echo "Stopping all processes..."; kill 0' EXIT
+
+export HOME=/home/unito
+export PATH="/home/unito/.pixi/bin:$PATH"
 
 export ROS_DOMAIN_ID=1
-# export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export CYCLONEDDS_URI=/home/unito/dm/distrimuse-seds/cyclonedds.xml
 
-# echo "Starting image broadcaster..."
-# cd ~/advis/distrimuse-image-broadcaster || exit 1
-# pixi run replay /home/unito/advis/bags/recording_20260313_133316/ --no-display --loop &
-# sleep 5
-
-cd /home/unito
-source .bashrc
-export PATH="/home/unito/.pixi/bin:$PATH"
-export HOME=/home/unito
-
-echo "Starting inference GUI..."
-cd /home/unito/advis/advis_distrimuse_unito_SR
-
+# Load DistriMuSe ROS2 custom message definitions
 source /home/unito/advis/distrimuse-ros2-api/install/setup.bash
 
-# echo pixi is `which pixi` and ROS_DOMAIN_ID is $ROS_DOMAIN_ID
+cd /home/unito/advis/advis_distrimuse_unito_SR
 
-pixi run python scripts/infer_ros_live_zenoh.py \
+echo "Starting ADVIS V6 live inference..."
+
+exec pixi run python scripts/inference_live.py \
+  --config configs/cf_dataset_hp.yaml \
   --camera_topic /camera/back_view/image_raw \
-  --safety_area PRight PLeft \
-  --area_names PRight PLeft \
-  --static_mask_paths \
-    /home/unito/advis/DS/SR/v4/masks/Mask_Generation_v4_PRight.png \
-    /home/unito/advis/DS/SR/v4/masks/Mask_Generation_v4_PLeft.png \
-  --threshold_dir /home/unito/advis/advis_distrimuse_unito_SR/scripts/results/thresholds_v4 \
-  --checkpoints /home/unito/advis/advis_distrimuse_unito_SR/scripts/results/models_v4 \
-  --latent_dims 64 \
-  --frame_stride 1 \
-  --verbose_level 0 \
+  --message_type auto \
+  --safety_areas ALL \
+  --threshold_calibration_mode auto \
+  --threshold_strategy percentile \
+  --threshold_amplification 1.1 1.1 1.1 1.2 \
+  --offset 3 \
+  --sigma 1.5 \
+  --quantile 0.99 \
+  --taas_backend auto \
+  --taas_variant canonical \
+  --rolling mean \
+  --rolling_window 5 \
+  --detections_topic /advis/detections \
   --log_every_n 10 \
-  --process_period 0.02 \
-  --quantile 0.99 --offset 1 \
-  --publish_rulex
-
-
-
+  --profile_timing \
+  --publish_zenoh \
+  --debug_mode \
+  --zenoh_endpoint tcp/127.0.0.1:7447 \
+  --publish_rulex \
+  --rulex_topic /rulex/data
