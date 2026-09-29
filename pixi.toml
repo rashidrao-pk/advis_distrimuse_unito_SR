@@ -2,7 +2,10 @@
 authors = ["rashid <muhammad.rashid@unito.it>"]
 name = "advis"
 version = "0.1.1"
-platforms = ["linux-64"]
+platforms = [
+  "linux-64",
+  "osx-arm64",
+]
 
 # Keep conda-forge first for generic deps.
 channels = [
@@ -15,19 +18,17 @@ channels = [
 [activation.env]
 PYTHONPATH = "${PIXI_PROJECT_ROOT}/src:${PYTHONPATH}"
 RMW_IMPLEMENTATION = "rmw_cyclonedds_cpp"
-CYCLONEDDS_URI = "/home/unito/dm/distrimuse-seds/cyclonedds.xml"
 ROS_DOMAIN_ID="1"
 
 
 [dependencies]
 python = "3.12.*"
-numpy = { version = "*", channel = "https://prefix.dev/conda-forge" }
-
-mkl = { version = "*", channel = "https://prefix.dev/conda-forge" }
+cython = ">=3,<4"
+# PyTorch from the macOS channel is built against the NumPy 1.x ABI.
+numpy = { version = ">=1.26,<2", channel = "https://prefix.dev/conda-forge" }
 
 pytorch = { version = "*", channel = "pytorch" }
 torchvision = { version = "*", channel = "pytorch" }
-pytorch-cuda = { version = "12.1.*", channel = "pytorch" }
 
 
 scipy = ">=1.17.1,<2"
@@ -47,6 +48,20 @@ ros-kilted-rosbag2-storage-mcap = "*"
 ros-kilted-ros-base = "*"
 
 ros-kilted-rmw-cyclonedds-cpp = "*"
+
+# Linux HP workstation: CUDA acceleration and the existing site-specific DDS
+# configuration. These packages are not requested by the macOS solver.
+[target.linux-64.dependencies]
+mkl = { version = "*", channel = "https://prefix.dev/conda-forge" }
+pytorch-cuda = { version = "12.1.*", channel = "pytorch" }
+
+[target.linux-64.activation.env]
+CYCLONEDDS_URI = "/home/unito/dm/distrimuse-seds/cyclonedds.xml"
+
+# Apple Silicon: PyTorch uses its built-in MPS backend. CUDA and MKL are
+# deliberately omitted, and CycloneDDS uses the portable macOS configuration.
+[target.osx-arm64.activation.env]
+CYCLONEDDS_URI = "file://${PIXI_PROJECT_ROOT}/configs/cyclonedds-macos.xml"
 
 [pypi-dependencies]
 huggingface-hub = ">=2.0.0, <3"
