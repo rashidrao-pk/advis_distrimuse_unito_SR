@@ -176,7 +176,7 @@ This extraction produces `Jul27/train`, not `Jul27/train/train`.
 
 ## 4. Download model checkpoints from Hugging Face
 
-The repository is `rashidrao/ADVIS_SR_DISTRIMUSE`. Download the checkpoint
+The repository is [`rashidrao/ADVIS_SR_DISTRIMUSE`](https://huggingface.co/rashidrao/ADVIS_SR_DISTRIMUSE). Download the checkpoint
 folder into a temporary directory and copy its contents into the path expected
 by `cf_dataset_hp.yaml`:
 
@@ -219,7 +219,7 @@ pixi run python scripts/test_model_inference.py \
 
 ## 5. Download calibrated thresholds from Hugging Face
 
-The Hugging Face repository contains a top-level `thresholds/` directory.
+The [`Hugging Face repository`](https://huggingface.co/rashidrao/ADVIS_SR_DISTRIMUSE) contains a top-level `thresholds/` directory.
 Download it directly into `results/V6` so the safety-area directory structure
 is retained:
 
