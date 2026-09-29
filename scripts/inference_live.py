@@ -105,7 +105,7 @@ def parse_args(argv=None):
     parser.add_argument("--threshold_dir", "--threshold-dir", type=Path)
     parser.add_argument(
         "--threshold_calibration_mode", "--threshold-calibration-mode",
-        choices=("auto", "test", "val"), default="auto",
+        choices=("auto", "test", "val"), default="val",
         help=(
             "Threshold source to load: test, val, or auto. Auto prefers test, "
             "then val, then a legacy unprefixed threshold."

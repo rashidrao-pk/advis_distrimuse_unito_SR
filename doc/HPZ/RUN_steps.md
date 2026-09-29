@@ -227,7 +227,7 @@ safety area. It also reports whether each threshold was calibrated using
 ```bash
 cd /home/unito/advis/advis_distrimuse_unito_SR
 
-pixi run python zenoh_dashboard/dashboard_viewer.py \
+python zenoh_dashboard/dashboard_viewer.py \
   --zenoh-endpoint tcp/127.0.0.1:7447 \
   --camera-topic /camera/back_view/image_raw \
   --camera-message-type compressed \
