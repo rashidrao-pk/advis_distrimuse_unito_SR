@@ -1,3 +1,7 @@
-gradio>=5.0,<7
+gradio==5.49.1
 pandas>=2.0
 huggingface_hub>=0.25
+
+spaces
+torch
+opencv-python-headless
