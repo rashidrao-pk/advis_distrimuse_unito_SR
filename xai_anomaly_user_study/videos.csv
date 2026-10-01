@@ -1,0 +1,2 @@
+video_id,filename,ground_truth,expected_area,event_type
+V001,Unexpected_box.mp4,unexpected,RoboArm,unexpected_object

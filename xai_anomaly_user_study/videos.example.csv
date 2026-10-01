@@ -1,0 +1,4 @@
+video_id,filename,ground_truth,expected_area,event_type
+V001,Unexpected_box.mp4,unexpected,RoboArm,unexpected_object
+V002,normal_01.mp4,normal,None,normal_palletizing
+V003,operator_fall_01.mp4,unexpected,RoboArm,operator_fall

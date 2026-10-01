@@ -1,6 +1,7 @@
-
 ## Step 1:
- - Update repo:
+
+- Update repo:
+
 ```bash
 cd ~advis_dis.....
 
@@ -8,6 +9,7 @@ git pull
 ```
 
 ## Step 2: Compile and install TAAS
+
 ```bash
 conda activate dm_unito
 python -m pip install cython
@@ -45,8 +47,6 @@ du -sh /home/unito/advis/DS/SR/v6/train
 
 ```
 
-
-
 ## Step 3: Check Model Checkpoints
 
 ```bash
@@ -80,6 +80,7 @@ python scripts/check_model_checkpoints.py \
 ```
 
 ## Dummy Inference Test
+
 ```bash
 python scripts/test_model_inference.py \
   --config configs/cf_dataset_hp.yaml \
@@ -102,8 +103,8 @@ find results/V6/thresholds -maxdepth 2 -type f \
   -name '*percentile99.0_off1_sig1.0_q0.99*.json' | sort
 ```
 
-
 ### Inference:
+
 ```bash
 conda actiavte dm_unito
 
@@ -121,6 +122,10 @@ pixi run python scripts/infer_offline.py \
   --skip-first 100
 
 ```
+
+- --threshold_amplification
+  - 1.05 1.05 1.05 1.05
+  - PLeft PRight RoboArm ConvBelt
 
 ```bash
 pixi run python scripts/inference_live.py \
@@ -145,7 +150,6 @@ pixi run python scripts/inference_live.py \
   --publish_rulex \
   --rulex_topic /rulex/data \
 ```
-
 
 ## Run DASHBOARD VIEWER
 

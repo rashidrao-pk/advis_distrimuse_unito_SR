@@ -10,10 +10,40 @@ sys.path.insert(0, str(SCRIPTS))
 from compare_annotations_detection import (  # noqa: E402
     binary_metrics,
     default_evaluation_path,
+    evaluation_plot_context,
     load_threshold_metadata,
     ranking_curve_data,
+    scenario_id_from_annotation_path,
     scenario_runs,
 )
+
+
+def test_evaluation_plot_context_shows_scenario_and_inference_score():
+    data = pd.DataFrame({
+        "scenario_id": ["8_16", "8_16"],
+        "inference_score_func": [
+            "TAAS_OFF1-s_1.0-q_0.97", "TAAS_OFF1-s_1.0-q_0.97",
+        ],
+    })
+
+    assert evaluation_plot_context(data) == (
+        "Scenario 8_16 | TAAS_OFF1-s_1.0-q_0.97"
+    )
+
+
+def test_unified_plot_context_uses_annotation_filename_scenario_id():
+    data = pd.DataFrame({
+        "scenario_id": ["unified"],
+        "inference_score_func": ["TAAS_OFF3-s_1.5-q_0.99"],
+    })
+    annotation = Path("scenario_8_16_back_view_annotations.csv")
+
+    scenario_id = scenario_id_from_annotation_path(annotation)
+
+    assert scenario_id == "8_16"
+    assert evaluation_plot_context(data, scenario_id) == (
+        "Scenario 8_16 | TAAS_OFF3-s_1.5-q_0.99"
+    )
 
 
 def test_f1_is_undefined_without_annotated_anomalies():
