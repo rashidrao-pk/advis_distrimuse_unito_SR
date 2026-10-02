@@ -69,6 +69,7 @@ try:
 except ImportError:
     sns = None
 from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 from scipy.ndimage import gaussian_filter, minimum_filter
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score,
@@ -870,6 +871,25 @@ def _plot_test_distribution(ax, groups, mode):
     return drawn_mode
 
 
+def _shade_annotation_background(ax, labels):
+    """Shade contiguous ground-truth regions behind the score timeline."""
+    labels = np.asarray(labels, dtype=int)
+    if labels.size == 0:
+        return
+
+    colors = {0: "green", 1: "red"}
+    start = 0
+    for end in range(1, labels.size + 1):
+        if end < labels.size and labels[end] == labels[start]:
+            continue
+        label = int(labels[start])
+        ax.axvspan(
+            start - 0.5, end - 0.5,
+            color=colors[label], alpha=0.075, linewidth=0, zorder=0,
+        )
+        start = end
+
+
 def _save_calibration_plots(name, scenario_tag, scores, labels, threshold, params,
                              save_dir: str, destroy: bool = True,
                              distribution: str = "KDE"):
@@ -888,8 +908,12 @@ def _save_calibration_plots(name, scenario_tag, scores, labels, threshold, param
     f1   = f1_score       (labels, preds, zero_division=0)
     b_auc = _binormal_auc(tnv, tpv)
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4),
-                                    gridspec_kw={"width_ratios": [3, 2]})
+    fig, (ax1, ax2) = plt.subplots(
+        1, 2, figsize=(15, 4.5),
+        gridspec_kw={"width_ratios": [5, 1.5]},
+    )
+
+    _shade_annotation_background(ax1, labels)
 
     cat_data = {
         "True Negatives": (
@@ -922,7 +946,13 @@ def _save_calibration_plots(name, scenario_tag, scores, labels, threshold, param
         f"Acc:{acc:.2f} F1:{f1:.2f} Prec:{prec:.2f} Rec:{rec:.2f} bAUC:{b_auc:.2f}"
     )
     ax1.set_xlabel("Index"); ax1.set_ylabel("Anomaly Score")
-    ax1.legend(fontsize=7); ax1.grid(True)
+    handles, legend_labels = ax1.get_legend_handles_labels()
+    handles.extend([
+        Patch(facecolor="green", alpha=0.075, label="GT Normal"),
+        Patch(facecolor="red", alpha=0.075, label="GT Anomalous"),
+    ])
+    ax1.legend(handles=handles, fontsize=7)
+    ax1.grid(True)
 
     drawn_distribution = _plot_test_distribution(
         ax2, {"TN": tnv, "TP": tpv}, distribution,
@@ -1091,8 +1121,10 @@ def _save_normal_only_calibration_plot(
     false_positive_indices = np.where(predictions)[0]
 
     fig, (ax1, ax2) = plt.subplots(
-        1, 2, figsize=(12, 4), gridspec_kw={"width_ratios": [3, 2]}
+        1, 2, figsize=(15, 4.5),
+        gridspec_kw={"width_ratios": [5, 1.5]},
     )
+    _shade_annotation_background(ax1, np.zeros(len(scores), dtype=int))
     if len(normal_indices):
         ax1.scatter(
             normal_indices, scores[normal_indices],
@@ -1113,7 +1145,11 @@ def _save_normal_only_calibration_plot(
     ax1.set_title(f"{name} | {area}\nNormal-only calibration")
     ax1.set_xlabel("Index")
     ax1.set_ylabel("Anomaly Score")
-    ax1.legend(fontsize=7)
+    handles, legend_labels = ax1.get_legend_handles_labels()
+    handles.append(
+        Patch(facecolor="green", alpha=0.075, label="GT Normal")
+    )
+    ax1.legend(handles=handles, fontsize=7)
     ax1.grid(True)
 
     # Keep the same density view used by supervised calibration. There is no

@@ -218,6 +218,15 @@ def test_test_distribution_cli_is_case_insensitive():
     assert args.plot_test_distribution == "KDE_HIST"
 
 
+def test_annotation_background_uses_contiguous_label_regions():
+    figure, axis = calibration.plt.subplots()
+    calibration._shade_annotation_background(axis, [0, 0, 1, 1, 0])
+    try:
+        assert len(axis.patches) == 3
+    finally:
+        calibration.plt.close(figure)
+
+
 def test_test_scenario_reports_expected_annotation_filename(tmp_path):
     annotations = tmp_path / "annotations"
     annotations.mkdir()
