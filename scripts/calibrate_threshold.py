@@ -822,9 +822,58 @@ def _evaluate_method(name, scores, labels, threshold,
 
 
 
+def _plot_test_distribution(ax, groups, mode):
+    """Draw KDE, histogram, or both for named test-score groups."""
+    mode = str(mode).upper()
+    palette = {"TN": "green", "TP": "red"}
+    rows = [
+        {"value": float(value), "group": group}
+        for group, values in groups.items()
+        for value in values
+        if np.isfinite(value)
+    ]
+    frame = pd.DataFrame(rows, columns=["value", "group"])
+    drawn_mode = mode
+
+    if not frame.empty and sns is not None:
+        try:
+            if mode in {"HIST", "KDE_HIST"}:
+                sns.histplot(
+                    data=frame, x="value", hue="group", stat="density",
+                    common_norm=False, element="step", fill=True, alpha=0.25,
+                    palette=palette, ax=ax,
+                )
+            if mode in {"KDE", "KDE_HIST"}:
+                sns.kdeplot(
+                    data=frame, x="value", hue="group",
+                    fill=(mode == "KDE"), common_norm=False,
+                    linewidth=2.0, palette=palette, ax=ax,
+                )
+        except (TypeError, ValueError, np.linalg.LinAlgError):
+            ax.clear()
+            drawn_mode = "HIST (KDE unavailable)"
+            for group, values in groups.items():
+                if len(values):
+                    ax.hist(
+                        values, bins=30, density=True, alpha=0.35,
+                        color=palette[group], label=group,
+                    )
+    elif not frame.empty:
+        drawn_mode = "HIST (seaborn unavailable)"
+        for group, values in groups.items():
+            if len(values):
+                ax.hist(
+                    values, bins=30, density=True, alpha=0.35,
+                    color=palette[group], label=group,
+                )
+
+    return drawn_mode
+
+
 def _save_calibration_plots(name, scenario_tag, scores, labels, threshold, params,
-                             save_dir: str, destroy: bool = True):
-    """Scatter + KDE plot for one scoring method."""
+                             save_dir: str, destroy: bool = True,
+                             distribution: str = "KDE"):
+    """Classification timeline plus configurable score distribution."""
     scores = np.asarray(scores); labels = np.asarray(labels)
     preds  = (scores >= threshold).astype(int)
 
@@ -843,15 +892,29 @@ def _save_calibration_plots(name, scenario_tag, scores, labels, threshold, param
                                     gridspec_kw={"width_ratios": [3, 2]})
 
     cat_data = {
-        "True Negatives":  (np.where((labels==0)&(preds==0))[0], "blue"),
-        "False Negatives": (np.where((labels==1)&(preds==0))[0], "orange"),
-        "True Positives":  (np.where((labels==1)&(preds==1))[0], "green"),
-        "False Positives": (np.where((labels==0)&(preds==1))[0], "red"),
+        "True Negatives": (
+            np.where((labels == 0) & (preds == 0))[0],
+            {"color": "green", "marker": ".", "s": 10, "alpha": 0.65},
+        ),
+        "True Positives": (
+            np.where((labels == 1) & (preds == 1))[0],
+            {"color": "red", "marker": ".", "s": 10, "alpha": 0.65},
+        ),
+        "False Positives": (
+            np.where((labels == 0) & (preds == 1))[0],
+            {"color": "blue", "marker": "x", "s": 52, "alpha": 0.9,
+             "linewidths": 1.7},
+        ),
+        "False Negatives": (
+            np.where((labels == 1) & (preds == 0))[0],
+            {"color": "orange", "marker": "x", "s": 52, "alpha": 0.9,
+             "linewidths": 1.7},
+        ),
     }
-    for lbl, (idxs, color) in cat_data.items():
+    for lbl, (idxs, style) in cat_data.items():
         if len(idxs):
             ax1.scatter(idxs, scores[idxs], label=f"{lbl} ({len(idxs)})",
-                        alpha=0.6, color=color, s=12)
+                        **style)
     ax1.axhline(threshold, color="gray", linestyle="--",
                 label=f"tau = {threshold:.4f}")
     ax1.set_title(
@@ -861,21 +924,9 @@ def _save_calibration_plots(name, scenario_tag, scores, labels, threshold, param
     ax1.set_xlabel("Index"); ax1.set_ylabel("Anomaly Score")
     ax1.legend(fontsize=7); ax1.grid(True)
 
-    df_kde = pd.DataFrame({
-        "value": np.concatenate([tnv, tpv]),
-        "group": ["TN"] * len(tnv) + ["TP"] * len(tpv),
-    })
-    if len(df_kde) and sns is not None:
-        sns.kdeplot(data=df_kde, x="value", hue="group", fill=True,
-                    common_norm=False, ax=ax2,
-                    palette={"TN": "skyblue", "TP": "lightgreen"})
-    elif len(df_kde):
-        if len(tnv):
-            ax2.hist(tnv, bins=30, density=True, alpha=0.45,
-                     color="skyblue", label="TN")
-        if len(tpv):
-            ax2.hist(tpv, bins=30, density=True, alpha=0.45,
-                     color="lightgreen", label="TP")
+    drawn_distribution = _plot_test_distribution(
+        ax2, {"TN": tnv, "TP": tpv}, distribution,
+    )
     if len(tnv): ax2.axvline(tnv.mean(), color="blue",  ls="--",
                               label=f"TN mean={tnv.mean():.3f}")
     if len(tpv): ax2.axvline(tpv.mean(), color="green", ls="--",
@@ -884,7 +935,9 @@ def _save_calibration_plots(name, scenario_tag, scores, labels, threshold, param
     handles.append(Line2D([0], [0], color="none",
                            label=f"bAUC: {b_auc:.4f}"))
     ax2.legend(handles=handles, fontsize=7)
-    ax2.set_title("KDE: TN vs TP")
+    ax2.set_title(f"{drawn_distribution}: TN vs TP")
+    ax2.set_xlabel("Anomaly Score")
+    ax2.grid(True, alpha=0.25)
 
     plt.tight_layout()
     save_dir = os.path.join(
@@ -954,6 +1007,7 @@ def _build_test_combination_result(
         "threshold": float(threshold),
         "threshold_selection": args.threshold_method,
         "selection_metric": getattr(args, "monitor_score", None),
+        "plot_test_distribution": getattr(args, "plot_test_distribution", "KDE"),
         "score_parameters": {
             "offset": int(score_parameters["offset"]),
             "sigma": float(score_parameters["sigma"]),
@@ -1028,6 +1082,7 @@ def _save_test_combination_results(records, calibration_plot_dir, scenario_tag,
 
 def _save_normal_only_calibration_plot(
     name, scenario_tag, scores, threshold, area, save_dir,
+    distribution="KDE",
 ):
     """Save the standard scatter + KDE layout for normal-only calibration."""
     scores = np.asarray(scores, dtype=float)
@@ -1042,13 +1097,14 @@ def _save_normal_only_calibration_plot(
         ax1.scatter(
             normal_indices, scores[normal_indices],
             label=f"True Negatives ({len(normal_indices)})",
-            alpha=0.6, color="blue", s=12,
+            alpha=0.65, color="green", marker=".", s=10,
         )
     if len(false_positive_indices):
         ax1.scatter(
             false_positive_indices, scores[false_positive_indices],
             label=f"False Positives ({len(false_positive_indices)})",
-            alpha=0.6, color="red", s=12,
+            alpha=0.9, color="blue", marker="x", s=52,
+            linewidths=1.7,
         )
     ax1.axhline(
         threshold, color="gray", linestyle="--",
@@ -1063,22 +1119,9 @@ def _save_normal_only_calibration_plot(
     # Keep the same density view used by supervised calibration. There is no
     # TP distribution in a normal-only area, so this panel contains all normal
     # scores and marks their mean and the selected operating threshold.
-    kde_drawn = False
-    if sns is not None and len(scores) > 1 and np.std(scores) > 0:
-        try:
-            sns.kdeplot(
-                x=scores, fill=True, color="skyblue", alpha=0.55,
-                label="Normal scores", ax=ax2,
-            )
-            kde_drawn = True
-        except (TypeError, ValueError, np.linalg.LinAlgError):
-            kde_drawn = False
-    if not kde_drawn:
-        ax2.hist(
-            scores, bins=min(50, max(10, len(scores) // 10)),
-            density=True, alpha=0.45, color="skyblue",
-            label="Normal scores",
-        )
+    drawn_distribution = _plot_test_distribution(
+        ax2, {"TN": scores, "TP": np.asarray([], dtype=float)}, distribution,
+    )
     if len(scores):
         ax2.axvline(
             scores.mean(), color="blue", linestyle="--",
@@ -1088,7 +1131,7 @@ def _save_normal_only_calibration_plot(
         threshold, color="gray", linestyle="--",
         label=f"tau={threshold:.4f}",
     )
-    ax2.set_title("KDE: normal-score distribution")
+    ax2.set_title(f"{drawn_distribution}: normal-score distribution")
     ax2.set_xlabel("Anomaly Score")
     ax2.legend(fontsize=7)
     ax2.grid(True, alpha=0.25)
@@ -1225,6 +1268,7 @@ def _run_normal_only_test_calibration(
     plot_path = _save_normal_only_calibration_plot(
         score_name, scenario_tag, scores, threshold, area,
         calibration_plot_dir,
+        getattr(args, "plot_test_distribution", "KDE"),
     )
     combination_result = _build_test_combination_result(
         area,
@@ -1413,6 +1457,7 @@ def run_test_mode(area: str, args, device, out_dir: str) -> dict:
         plot_path = _save_calibration_plots(
             name, scenario_tag, scores, labels, threshold,
             params, plot_dir, destroy=True,
+            distribution=getattr(args, "plot_test_distribution", "KDE"),
         )
         plot_paths[name] = plot_path
         combination_results.append(_build_test_combination_result(
@@ -1799,6 +1844,14 @@ def parse_args(argv=None):
     p.add_argument("--monitor_score",    default="binormal_auc",
                    choices=["binormal_auc", "recall"],
                    help="[test mode] Metric to maximise when picking best method.")
+    p.add_argument(
+        "--plot_test_distribution", "--plot-test-distribution",
+        type=str.upper, choices=["KDE", "KDE_HIST", "HIST"], default="KDE",
+        help=(
+            "[test mode] Distribution panel style: KDE, KDE_HIST, or HIST "
+            "(default: KDE)."
+        ),
+    )
 
     # ── Output ────────────────────────────────────────────────────────────
     p.add_argument("--output_dir", default=None,

@@ -209,6 +209,15 @@ def test_singular_test_scenario_cli_alias():
     assert args.test_folder == "/Users/rashid/data/DS/SR/v6/Jul27/test"
 
 
+def test_test_distribution_cli_is_case_insensitive():
+    config = Path(__file__).resolve().parents[1] / "configs" / "cf_dataset_mac.yaml"
+    args = parse_args([
+        "--config", str(config),
+        "--plot_test_distribution", "kde_hist",
+    ])
+    assert args.plot_test_distribution == "KDE_HIST"
+
+
 def test_test_scenario_reports_expected_annotation_filename(tmp_path):
     annotations = tmp_path / "annotations"
     annotations.mkdir()

@@ -318,7 +318,8 @@ python scripts/calibrate_threshold.py \
   --offset 3 \
   --sigma 1.5 \
   --quantile 0.99 \
-  --taas_backend cython
+  --taas_backend cython \
+  --plot_test_distribution KDE_HIST
 ```
 
 #### RUN IN MAC
