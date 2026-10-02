@@ -927,9 +927,9 @@ def _save_calibration_plots(name, scenario_tag, scores, labels, threshold, param
     drawn_distribution = _plot_test_distribution(
         ax2, {"TN": tnv, "TP": tpv}, distribution,
     )
-    if len(tnv): ax2.axvline(tnv.mean(), color="blue",  ls="--",
+    if len(tnv): ax2.axvline(tnv.mean(), color="green", ls="--",
                               label=f"TN mean={tnv.mean():.3f}")
-    if len(tpv): ax2.axvline(tpv.mean(), color="green", ls="--",
+    if len(tpv): ax2.axvline(tpv.mean(), color="red", ls="--",
                               label=f"TP mean={tpv.mean():.3f}")
     handles, lbl_names = ax2.get_legend_handles_labels()
     handles.append(Line2D([0], [0], color="none",
