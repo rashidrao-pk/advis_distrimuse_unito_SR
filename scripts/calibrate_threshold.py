@@ -462,7 +462,12 @@ def discover_annotated_test_samples(
             + ", ".join(sorted(selected))
         )
 
-    samples = []
+    # The directory layout groups images by class, so walking
+    # normal/ followed by anomalous/ destroys the event timeline.  Build a
+    # lookup from the folders first, then assemble ``samples`` in annotation
+    # CSV order below.  ``load_annotation_index`` preserves insertion order,
+    # which is the frame/timeline order written by the annotation tools.
+    available_samples = {}
     verify_count = 0
     missing_annotations = []
     mismatched_labels = []
@@ -485,7 +490,12 @@ def discover_annotated_test_samples(
                 elif annotation_label != label:
                     mismatched_labels.append((image_path, annotation_label, label))
                 else:
-                    samples.append((image_path, binary_label))
+                    if key in available_samples:
+                        raise ValueError(
+                            f"Duplicate test image for {scenario}/{area}/"
+                            f"{image_path.name}"
+                        )
+                    available_samples[key] = (image_path, binary_label)
         verify_dir = area_dir / "verify"
         if verify_dir.is_dir():
             verify_count += sum(
@@ -505,6 +515,21 @@ def discover_annotated_test_samples(
             f"{annotation_label}, folder={folder_label}"
         )
 
+    samples = []
+    for key in annotation_index:
+        scenario, annotation_area, _ = key
+        if scenario not in selected or annotation_area != area:
+            continue
+        sample = available_samples.get(key)
+        if sample is not None:
+            samples.append(sample)
+
+    if len(samples) != len(available_samples):
+        raise RuntimeError(
+            f"Could not restore annotation timeline for {area}: ordered "
+            f"{len(samples)} of {len(available_samples)} discovered images"
+        )
+
     counts = {
         "normal": sum(label == 0 for _, label in samples),
         "anomalous": sum(label == 1 for _, label in samples),
@@ -517,6 +542,7 @@ def discover_annotated_test_samples(
             used_annotations, camera, selected
         ),
         "annotation_csvs": [str(path) for path in used_annotations],
+        "sample_order": "annotation_timeline",
         **counts,
     }
     return samples, metadata

@@ -7,6 +7,7 @@ import argparse
 import html
 import json
 from pathlib import Path
+import re
 
 import numpy as np
 import pandas as pd
@@ -118,6 +119,12 @@ def winner(frame: pd.DataFrame, metric: str) -> pd.Series | None:
 
 def _metric(value, digits=4):
     return "—" if value is None or pd.isna(value) else f"{float(value):.{digits}f}"
+
+
+def plot_anchor(method: str) -> str:
+    """Return a stable in-page anchor for one calibration method."""
+    slug = re.sub(r"[^A-Za-z0-9_-]+", "-", str(method)).strip("-")
+    return f"calibration-plot-{slug or 'unknown'}"
 
 
 def _winner_card(frame: pd.DataFrame, metric: str, title: str) -> str:
@@ -234,7 +241,16 @@ def results_table(frame: pd.DataFrame, rank_by: str) -> str:
         )
     body = []
     for index, row in ranked.iterrows():
-        cells = [f"<td>{index + 1}</td>"]
+        rank = index + 1
+        if row.source_plot:
+            rank_cell = (
+                f'<td><a class="rank-link" href="#{plot_anchor(row.method)}" '
+                f'title="Open calibration plot for {html.escape(str(row.method))}">'
+                f'{rank}</a></td>'
+            )
+        else:
+            rank_cell = f'<td title="Calibration plot unavailable">{rank}</td>'
+        cells = [rank_cell]
         for column in columns:
             value = row[column]
             rendered = str(value) if column == "method" else _metric(value, 6 if column == "threshold" else 4)
@@ -250,6 +266,41 @@ def results_table(frame: pd.DataFrame, rank_by: str) -> str:
         + "".join(head) + "</tr></thead><tbody>" + "".join(body)
         + "</tbody></table></div>"
     )
+
+
+def calibration_plot_gallery(frame: pd.DataFrame, rank_by: str) -> str:
+    """Render all existing calibration PNGs in default ranking order."""
+    figures = []
+    for index, row in rank_frame(frame, rank_by).iterrows():
+        rank = index + 1
+        anchor = plot_anchor(row.method)
+        badges = (
+            f'Balanced accuracy <b>{_metric(row.balanced_accuracy)}</b> · '
+            f'F1 <b>{_metric(row.f1)}</b> · AUROC <b>{_metric(row.auc)}</b> · '
+            f'FP <b>{int(row.fp)}</b> · FN <b>{int(row.fn)}</b>'
+        )
+        if row.source_plot:
+            visual = (
+                f'<a href="{row.source_plot.as_uri()}" target="_blank" '
+                f'title="Open full-size calibration plot">'
+                f'<img loading="lazy" src="{row.source_plot.as_uri()}" '
+                f'alt="Calibration plot for {html.escape(str(row.method))}"></a>'
+            )
+        else:
+            visual = '<div class="plot-missing">Calibration plot unavailable</div>'
+        winner_badge = (
+            '<span class="saved-badge">Saved winner</span>'
+            if row.saved_winner else ""
+        )
+        figures.append(
+            f'<figure class="calibration-figure" id="{anchor}">'
+            f'<figcaption><div><span class="rank-badge">Rank {rank}</span>'
+            f'{winner_badge}<strong>{html.escape(str(row.method))}</strong></div>'
+            f'<small>{badges}</small></figcaption>{visual}'
+            f'<a class="back-link" href="#results-section">↑ Back to ranking table</a>'
+            '</figure>'
+        )
+    return "".join(figures)
 
 
 def write_report(output: Path, frame: pd.DataFrame, rank_by: str) -> None:
@@ -287,6 +338,7 @@ def write_report(output: Path, frame: pd.DataFrame, rank_by: str) -> None:
     parameters = parameter_figure(frame, rank_by).to_html(
         full_html=False, include_plotlyjs=False, config={"responsive": True}
     )
+    plot_gallery = calibration_plot_gallery(frame, rank_by)
     area = ", ".join(sorted(frame["safety_area"].astype(str).unique()))
     document = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -306,6 +358,16 @@ details{{background:#fff;border:1px solid var(--line);border-radius:12px;padding
 table{{border-collapse:separate;border-spacing:0;width:100%;font-size:.86rem}} th,td{{padding:9px 11px;border-bottom:1px solid var(--line);white-space:nowrap;text-align:right}}
 th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){{text-align:left}} th{{position:sticky;top:0;background:#172033;color:#fff;cursor:pointer;z-index:2}}
 tr.default-winner{{background:#eff6ff}} tr.saved-winner{{background:#fff7ed}} code{{background:#e8eef7;padding:2px 5px;border-radius:4px}}
+.rank-link{{display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:28px;border-radius:8px;background:#dbeafe;color:#1d4ed8;font-weight:800;text-decoration:none}}
+.rank-link:hover{{background:#2563eb;color:#fff}} .gallery-heading{{margin:32px 0 8px}}
+.plot-gallery{{display:grid;grid-template-columns:1fr;gap:20px}}
+.calibration-figure{{scroll-margin-top:18px;margin:0;background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:0 5px 20px #1e293b0d}}
+.calibration-figure:target{{border:4px solid var(--accent);box-shadow:0 0 0 5px #2563eb22}}
+.calibration-figure figcaption{{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:12px}}
+.calibration-figure figcaption div{{display:flex;align-items:center;gap:9px;flex-wrap:wrap}} .calibration-figure figcaption strong{{font-size:1.12rem}}
+.calibration-figure figcaption small{{color:var(--muted);text-align:right}} .calibration-figure img{{display:block;width:100%;height:auto;border-radius:9px;border:1px solid var(--line)}}
+.rank-badge,.saved-badge{{display:inline-block;padding:5px 9px;border-radius:999px;font-size:.78rem;font-weight:800}} .rank-badge{{background:#dbeafe;color:#1d4ed8}} .saved-badge{{background:#ffedd5;color:#c2410c}}
+.back-link{{display:inline-block;margin-top:10px;color:var(--accent);font-weight:650;text-decoration:none}} .plot-missing{{padding:50px;text-align:center;background:#f1f5f9;color:var(--muted);border-radius:9px}}
 @media(max-width:1000px){{.plots{{grid-template-columns:1fr}} .plots .wide{{grid-column:auto}} main{{padding:15px}}}}
 </style></head><body><main>
 <h1>TAAS calibration comparison — {html.escape(area)}</h1>
@@ -316,7 +378,10 @@ tr.default-winner{{background:#eff6ff}} tr.saved-winner{{background:#fff7ed}} co
 <p><b>Separation score</b> is the legacy value previously called <code>binormal_auc</code>. It is an unbounded effect-size-like distance between correctly classified normal and anomalous scores, not an AUC. It should not be interpreted on a 0–1 scale.</p>
 <p>The red-outlined point in the first chart is the winner saved by calibration. This report does not modify that saved choice.</p></details>
 <section class="plots"><div class="panel">{tradeoff}</div><div class="panel">{errors}</div><div class="panel wide">{parameters}</div></section>
-<section class="panel"><h2>Sortable results</h2><p>Click a column heading to rank for a different operating objective.</p>{results_table(frame, rank_by)}</section>
+<section class="panel" id="results-section"><h2>Sortable results</h2><p>Click a column heading to sort for a different operating objective. Click a value in the <b>Rank</b> column to jump to that method's calibration plot.</p>{results_table(frame, rank_by)}</section>
+<h2 class="gallery-heading">Calibration plots in default rank order</h2>
+<p class="subtitle">Plots are linked from the existing calibration artifacts and are not embedded in this HTML. Click an image to open it at full size.</p>
+<section class="plot-gallery">{plot_gallery}</section>
 </main><script>
 document.querySelectorAll('#results th').forEach(th=>th.addEventListener('click',()=>{{
  const table=th.closest('table'), body=table.tBodies[0], rows=[...body.rows], col=Number(th.dataset.column);

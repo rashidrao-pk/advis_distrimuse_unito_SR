@@ -90,6 +90,41 @@ def test_current_annotation_layout_supplies_binary_test_labels(tmp_path):
     assert metadata["source_scenarios"] == [{
         "scenario_id": "13_0", "description": "test scenario"
     }]
+    assert metadata["sample_order"] == "annotation_timeline"
+
+
+def test_test_discovery_preserves_annotation_event_order(tmp_path):
+    test_root = tmp_path / "test"
+    rows = []
+    event_labels = ("anomalous", "normal", "anomalous", "normal")
+    for frame_id, label in enumerate(event_labels):
+        filename = f"s-8_0_s-PRight_f-{frame_id:06d}.png"
+        folder = test_root / "8_16" / "PRight" / label
+        folder.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (128, 128), color=(frame_id, 0, 0)).save(
+            folder / filename
+        )
+        rows.append({
+            "scenario_id": "unified",
+            "camera": "back_view",
+            "safety_area": "PRight",
+            "frame_position": frame_id + 1,
+            "filename": filename,
+            "label": label.title(),
+        })
+
+    annotation = tmp_path / "scenario_8_16_back_view_annotations.csv"
+    pd.DataFrame(rows).to_csv(annotation, index=False)
+
+    samples, metadata = discover_annotated_test_samples(
+        test_root, "PRight", [annotation], requested_scenarios=["8_16"]
+    )
+
+    assert [Path(path).name for path, _ in samples] == [
+        row["filename"] for row in rows
+    ]
+    assert [label for _, label in samples] == [1, 0, 1, 0]
+    assert metadata["sample_order"] == "annotation_timeline"
 
 
 def test_unified_annotation_uses_scenario_id_from_csv_filename(tmp_path):
