@@ -628,6 +628,19 @@ def _select_threshold_from_scores(scores: np.ndarray, strategy: str,
     raise ValueError(f"Unknown strategy: {strategy}")
 
 
+def _select_anomalous_threshold_from_scores(
+    scores: np.ndarray, strategy: str, percentile: float, n_sigma: float,
+) -> float:
+    """Select a lower-tail threshold from an anomalous-only sequence."""
+    if strategy == "max":
+        return float(scores.min())
+    if strategy == "percentile":
+        return float(np.percentile(scores, 100.0 - percentile))
+    if strategy == "mean_std":
+        return float(scores.mean() - n_sigma * scores.std())
+    raise ValueError(f"Unknown strategy: {strategy}")
+
+
 def run_val_mode(area: str, args, device, out_dir: str) -> dict:
     """Score val split, derive threshold from score distribution."""
     params, paths = _setup_params_paths(area, args)
@@ -826,7 +839,10 @@ def _evaluate_method(name, scores, labels, threshold,
 def _plot_test_distribution(ax, groups, mode):
     """Draw KDE, histogram, or both for named test-score groups."""
     mode = str(mode).upper()
-    palette = {"TN": "green", "TP": "red"}
+    palette = {
+        "TN": "green", "TP": "red",
+        "Normal": "green", "Anomalous": "red",
+    }
     rows = [
         {"value": float(value), "group": group}
         for group, values in groups.items()
@@ -1181,60 +1197,202 @@ def _save_normal_only_calibration_plot(
     return str(plot_path)
 
 
-def _skip_test_calibration_without_normal(
-    area, test_metadata, area_out, scenario_tag,
+def _save_anomalous_only_calibration_plot(
+    name, scenario_tag, scores, threshold, area, save_dir,
+    distribution="KDE",
 ):
-    """Record an unsafe anomalous-only area without replacing its threshold."""
-    summary = {
-        "safety_area": area,
-        "mode": "test",
-        "status": "skipped",
-        "calibration_mode": "anomalous_only_skipped",
-        "skip_reason": "no_normal_samples_for_safety_area",
-        "threshold": None,
-        "threshold_written": False,
-        "supervised_metrics_available": False,
-        "n_images": int(test_metadata["anomalous"]),
-        "n_normal": 0,
-        "n_anomalous": int(test_metadata["anomalous"]),
-        "n_verify_excluded": int(test_metadata["verify_excluded"]),
-        "calibration_scenarios": list(test_metadata["scenarios"]),
-        "calibration_source_scenarios": list(
-            test_metadata["source_scenarios"]
-        ),
-        "calibration_data": test_metadata,
-        "computed_at": datetime.now().isoformat(timespec="seconds"),
-    }
-    os.makedirs(area_out, exist_ok=True)
-    report_path = os.path.join(
-        area_out,
-        f"calibration_skipped_{area}{scenario_tag}_no-normal.json",
-    )
-    with open(report_path, "w", encoding="utf-8") as stream:
-        json.dump(summary, stream, indent=2)
+    """Save timeline and distribution for anomalous-only calibration."""
+    scores = np.asarray(scores, dtype=float)
+    predictions = scores >= threshold
+    true_positive_indices = np.where(predictions)[0]
+    false_negative_indices = np.where(~predictions)[0]
 
-    metrics_path = os.path.join(
+    fig, (ax1, ax2) = plt.subplots(
+        1, 2, figsize=(15, 4.5),
+        gridspec_kw={"width_ratios": [5, 1.5]},
+    )
+    _shade_annotation_background(ax1, np.ones(len(scores), dtype=int))
+    if len(true_positive_indices):
+        ax1.scatter(
+            true_positive_indices, scores[true_positive_indices],
+            label=f"True Positives ({len(true_positive_indices)})",
+            alpha=0.65, color="red", marker=".", s=10,
+        )
+    if len(false_negative_indices):
+        ax1.scatter(
+            false_negative_indices, scores[false_negative_indices],
+            label=f"False Negatives ({len(false_negative_indices)})",
+            alpha=0.9, color="orange", marker="x", s=52,
+            linewidths=1.7,
+        )
+    ax1.axhline(
+        threshold, color="gray", linestyle="--",
+        label=f"tau = {threshold:.4f}",
+    )
+    ax1.set_title(f"{name} | {area}\nAnomalous-only calibration")
+    ax1.set_xlabel("Index")
+    ax1.set_ylabel("Anomaly Score")
+    handles, _ = ax1.get_legend_handles_labels()
+    handles.append(Patch(facecolor="red", alpha=0.075, label="GT Anomalous"))
+    ax1.legend(handles=handles, fontsize=7)
+    ax1.grid(True)
+
+    drawn_distribution = _plot_test_distribution(
+        ax2, {"Anomalous": scores}, distribution,
+    )
+    if len(scores):
+        ax2.axvline(
+            scores.mean(), color="red", linestyle="--",
+            label=f"Anomalous mean={scores.mean():.3f}",
+        )
+    ax2.axvline(
+        threshold, color="gray", linestyle="--",
+        label=f"tau={threshold:.4f}",
+    )
+    ax2.set_title(f"{drawn_distribution}: anomalous-score distribution")
+    ax2.set_xlabel("Anomaly Score")
+    ax2.legend(fontsize=7)
+    ax2.grid(True, alpha=0.25)
+    fig.tight_layout()
+
+    plots_dir = Path(save_dir) / scenario_tag.lstrip("_") / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    plot_path = plots_dir / f"{name.replace(' ', '_')}_{area}_plot.png"
+    fig.savefig(plot_path, dpi=120, bbox_inches="tight")
+    plt.close(fig)
+    return str(plot_path)
+
+
+def _run_anomalous_only_test_calibration(
+    area, args, device, test_loader, test_ds, test_metadata, Enc, Dec,
+    suffix, n_epochs, area_out, out_dir, scenario_tag,
+):
+    """Calibrate a lower-tail operating point from anomalous-only frames."""
+    parameters = {
+        "offset": args.offset,
+        "sigma": args.sigma,
+        "quantile": args.quantile,
+        "taas_variant": args.taas_variant,
+    }
+    prefix = "TAAS" if args.taas_variant == "canonical" else "TAAS_RESIDUAL_MIN"
+    score_name = f"{prefix}_OFF{args.offset}-s_{args.sigma}-q_{args.quantile}"
+
+    def score_fn(data, reconstruction):
+        return score_batch(
+            data, reconstruction, args.offset, args.sigma, args.quantile,
+            args.taas_variant, args.taas_backend,
+        )
+
+    scores, labels, filenames = _compute_scores_for_loader(
+        test_loader, test_ds, Enc, Dec, score_fn, device
+    )
+    scores = np.asarray(scores, dtype=float)
+    labels = np.asarray(labels, dtype=int)
+    if np.any(labels != 1):
+        raise RuntimeError(
+            f"Anomalous-only fallback for {area} received non-anomalous labels"
+        )
+    threshold = _select_anomalous_threshold_from_scores(
+        scores, args.threshold_strategy,
+        args.threshold_percentile, args.threshold_n_sigma,
+    )
+    predictions = scores >= threshold
+    recall = float(np.mean(predictions)) if len(predictions) else float("nan")
+
+    df_scores = pd.DataFrame({
+        "file_name": filenames,
+        "anomaly_score": scores,
+        "label": labels,
+    })
+    score_csv = os.path.join(
+        area_out,
+        f"test_scores_{area}{scenario_tag}_anomalous-only_{score_name}.csv",
+    )
+    df_scores.to_csv(score_csv, index=False)
+
+    metrics_csv = os.path.join(
         area_out, f"anomaly_metrics_{area}{scenario_tag}.csv"
     )
     pd.DataFrame([{
-        "Method": None,
-        "Accuracy": None,
+        "Method": score_name,
+        "Accuracy": recall,
         "Precision": None,
-        "Recall": None,
+        "Recall": recall,
         "F1": None,
         "AUC": None,
-        "Threshold": None,
+        "Threshold": threshold,
         "binormal_AUC": None,
-        "Status": "skipped_no_normal_samples",
-    }]).to_csv(metrics_path, index=False)
+        "Status": "anomalous_only_recall_available",
+    }]).to_csv(metrics_csv, index=False)
 
-    print(
-        f"[skip] {area}: normal=0, anomalous={test_metadata['anomalous']}, "
-        f"verify={test_metadata['verify_excluded']}. A safe threshold cannot "
-        "be calibrated from anomalous samples alone."
+    calibration_plot_dir = os.path.join(area_out, "calibration_plots")
+    plot_path = _save_anomalous_only_calibration_plot(
+        score_name, scenario_tag, scores, threshold, area,
+        calibration_plot_dir,
+        getattr(args, "plot_test_distribution", "KDE"),
     )
-    print(f"[skip] Existing threshold files were not modified.")
-    print(f"[skip] Report → {report_path}")
+    metrics = {
+        "Accuracy": recall,
+        "Precision": None,
+        "Recall": recall,
+        "F1": None,
+        "AUC": None,
+        "binormal_AUC": None,
+    }
+    combination_result = _build_test_combination_result(
+        area, score_name, parameters, threshold, metrics, scores, labels,
+        args, suffix, n_epochs, test_metadata, plot_path,
+    )
+    combination_result["calibration_mode"] = "anomalous_only_fallback"
+    combination_result["supervised_metrics_available"] = False
+    combination_result["one_class_recall_available"] = True
+    combination_result["threshold_tail"] = "lower"
+    combination_json_paths = _save_test_combination_results(
+        [combination_result], calibration_plot_dir, scenario_tag,
+        score_name, "recall",
+    )
+    print(f"[save] Combination JSON → {combination_json_paths[0]}")
+
+    summary = _build_summary(
+        area, suffix, n_epochs, args, threshold,
+        df_scores, score_csv, "test",
+        score_parameters=parameters,
+        threshold_strategy_override=args.threshold_strategy,
+        calibration_mode="anomalous_only_fallback",
+        fallback_reason="no_normal_samples_for_safety_area",
+        supervised_metrics_available=False,
+        one_class_recall_available=True,
+        best_method=None,
+        best_binormal_auc=None,
+        best_recall=recall,
+        best_f1=None,
+        threshold_selection=args.threshold_strategy,
+        selection_metric="anomalous_recall",
+        threshold_tail="lower",
+        anomalous_target_recall_percentile=(
+            args.threshold_percentile
+            if args.threshold_strategy == "percentile" else None
+        ),
+        threshold_n_sigma=(
+            args.threshold_n_sigma
+            if args.threshold_strategy == "mean_std" else None
+        ),
+        calibration_data=test_metadata,
+        n_normal=0,
+        n_anomalous=test_metadata["anomalous"],
+        n_verify_excluded=test_metadata["verify_excluded"],
+    )
+    _save_threshold_json(out_dir, area, summary, args)
+    print(f"\n{'='*70}")
+    print(f"[result] Safety area   : {area}")
+    print(f"[result] Test scenario : {', '.join(test_metadata['scenarios'])}")
+    print("[result] Calibration   : anomalous-only lower-tail fallback")
+    print(f"[result] Strategy      : {args.threshold_strategy}")
+    print(f"[result] Score         : {score_name}")
+    print(f"[result] Threshold     : {threshold:.6f}")
+    print(f"[result] Recall        : {recall:.3f}")
+    print("[result] FPR/AUC/F1    : not applicable (no normal samples)")
+    print(f"{'='*70}")
     return summary
 
 
@@ -1402,10 +1560,6 @@ def run_test_mode(area: str, args, device, out_dir: str) -> dict:
 
     area_out = os.path.join(out_dir, area)
     scenario_tag = _scenario_artifact_tag(test_metadata["scenarios"])
-    if test_metadata["normal"] == 0:
-        return _skip_test_calibration_without_normal(
-            area, test_metadata, area_out, scenario_tag
-        )
 
     # ── Setup model ───────────────────────────────────────────────────────
     params, paths = _setup_params_paths(area, args)
@@ -1417,6 +1571,18 @@ def run_test_mode(area: str, args, device, out_dir: str) -> dict:
     plot_dir = os.path.join(area_out, "calibration_plots")
     os.makedirs(area_out, exist_ok=True)
     os.makedirs(plot_dir, exist_ok=True)
+
+    if test_metadata["normal"] == 0:
+        print(
+            f"[fallback] {area} has no normal samples; calibrating a "
+            f"lower-tail threshold from {test_metadata['anomalous']} "
+            f"anomalous samples with strategy={args.threshold_strategy}. "
+            "Recall is available; FPR/AUC/F1 are not applicable."
+        )
+        return _run_anomalous_only_test_calibration(
+            area, args, device, test_loader, test_ds, test_metadata, Enc, Dec,
+            suffix, n_epochs, area_out, out_dir, scenario_tag,
+        )
 
     if test_metadata["anomalous"] == 0:
         print(
@@ -1772,8 +1938,8 @@ def parse_args(argv=None):
                    help=(
                        "val  : Unsupervised — derive threshold from normal val scores.\n"
                        "test : Supervised — sweep scoring methods on labelled test set\n"
-                       "       and pick best threshold by binormal_AUC. If an area\n"
-                       "       has no anomalies, use a normal-only fallback."
+                       "       and pick best threshold by binormal_AUC. Single-class\n"
+                       "       areas use normal-only or anomalous-only fallbacks."
                    ))
     p.add_argument("--safety_area", default="RoboArm",
                    help="Area to calibrate. 'ALL' processes all areas.")
