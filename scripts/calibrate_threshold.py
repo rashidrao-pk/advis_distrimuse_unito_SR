@@ -948,8 +948,8 @@ def _save_calibration_plots(name, scenario_tag, scores, labels, threshold, param
     ax1.set_xlabel("Index"); ax1.set_ylabel("Anomaly Score")
     handles, legend_labels = ax1.get_legend_handles_labels()
     handles.extend([
-        Patch(facecolor="green", alpha=0.075, label="GT Normal"),
-        Patch(facecolor="red", alpha=0.075, label="GT Anomalous"),
+        Patch(facecolor="green", alpha=0.1, label="GT Normal"),
+        Patch(facecolor="red", alpha=0.1, label="GT Anomalous"),
     ])
     ax1.legend(handles=handles, fontsize=7)
     ax1.grid(True)
