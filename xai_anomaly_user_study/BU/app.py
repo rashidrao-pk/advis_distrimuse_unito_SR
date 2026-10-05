@@ -5,7 +5,6 @@ import cv2
 import html as html_lib
 import io
 import os
-import re
 import secrets
 import shutil
 import sqlite3
@@ -18,6 +17,7 @@ import spaces
 import pandas as pd
 import torch
 import torch.nn.functional as F
+import re
 
 APP_DIR = Path(__file__).resolve().parent
 VIDEO_DIR = APP_DIR / "videos"
@@ -463,6 +463,10 @@ def study_overview_html(metadata):
                 <div class="label">Estimated completion time</div>
             </div>
         </div>
+        <div class="study-meta">
+            The participant view intentionally does not reveal how many clips are
+            normal versus unexpected, to reduce response bias.
+        </div>
     </div>
     """
 
@@ -474,25 +478,35 @@ def participant_progress_html(participant_id: str, metadata):
     percent = 0 if total == 0 else round((completed / total) * 100)
 
     return f"""
-    <div class="study-card compact-progress-card">
-        <div class="compact-progress-row">
-            <div class="compact-progress-title">Progress</div>
-            <div class="compact-progress-item">
-                <strong>{completed} / {total}</strong>
-                <span>Completed</span>
+    <div class="study-card">
+        <div class="progress-head">
+            <div>
+                <div class="study-card-title">Participant progress</div>
+                <div class="study-meta">Participant ID: {participant_id}</div>
             </div>
-            <div class="compact-progress-item">
-                <strong>{remaining}</strong>
-                <span>Remaining</span>
-            </div>
+            <div class="progress-count">{completed} / {total}</div>
         </div>
 
-        <div class="progress-shell compact-progress-shell">
+        <div class="progress-shell">
             <div class="progress-fill" style="width:{percent}%"></div>
+        </div>
+
+        <div class="study-grid">
+            <div class="study-stat">
+                <div class="value">{total}</div>
+                <div class="label">Available</div>
+            </div>
+            <div class="study-stat">
+                <div class="value">{completed}</div>
+                <div class="label">Completed</div>
+            </div>
+            <div class="study-stat">
+                <div class="value">{remaining}</div>
+                <div class="label">Remaining</div>
+            </div>
         </div>
     </div>
     """
-
 
 
 def researcher_summary_html():
@@ -716,84 +730,77 @@ def format_area_name(value):
 
 def prewatch_reference_html():
     return """
-    <div class="sequence-reference reference-locked compact-lock">
-        <div class="reference-title">🔒 Watch the full video to continue</div>
+    <div class="sequence-reference reference-locked">
+        <div class="reference-kicker">VIDEO REQUIRED</div>
+        <div class="reference-title">🔒 Watch the complete video to unlock the questionnaire</div>
+        <div class="reference-text">
+            The questions remain locked until playback reaches the end.
+            After the video finishes, the study reference will show whether
+            the sequence is normal or anomalous and, when applicable, the
+            expected anomalous condition and relevant safety area.
+        </div>
     </div>
     """
 
 
 def sequence_reference_html(current):
     """
-    Show a compact, collapsible study reference after the participant watches
-    the full clip. The panel is collapsed by default to keep the questionnaire
-    visually focused.
+    Show the curated study reference only after the participant has watched
+    the complete clip. This helps the participant evaluate the explanation
+    map against the intended event and safety area.
     """
     gt = (current.get("ground_truth", "") or "").strip().lower()
     event_type = html_lib.escape(format_event_type(current.get("event_type", "")))
     area = html_lib.escape(format_area_name(current.get("expected_area", "")))
-    filename = html_lib.escape(str(current.get("filename", "") or ""))
 
     if gt in {"normal", "expected", "no_anomaly", "no anomaly"}:
         return f"""
-        <details class="sequence-reference reference-normal reference-collapsible">
-            <summary>
-                <span class="reference-summary-label">Study reference</span>
-                <span class="reference-summary-state">✓ Normal workflow</span>
-                <span class="reference-summary-toggle">Show details</span>
-            </summary>
-            <div class="reference-body">
-                <div class="reference-details compact-reference-details">
-                    <span><strong>Video:</strong> {filename}</span>
-                    <span><strong>Condition:</strong> {event_type}</span>
-                    <span><strong>Expected anomalous area:</strong> None</span>
-                </div>
-                <div class="reference-text compact-reference-text">
-                    No unexpected condition is expected. The explanation should not
-                    falsely highlight an anomalous cause or safety area.
-                </div>
+        <div class="sequence-reference reference-normal">
+            <div class="reference-kicker">STUDY REFERENCE</div>
+            <div class="reference-title">✓ NORMAL WORKFLOW</div>
+            <div class="reference-text">
+                No unexpected condition is expected in this sequence.
+                The explanation map should remain appropriately quiet and
+                should not falsely highlight a safety area.
             </div>
-        </details>
+            <div class="reference-details">
+                <span><strong>Reference condition:</strong> {event_type}</span>
+                <span><strong>Expected anomalous area:</strong> None</span>
+            </div>
+        </div>
         """
 
     if gt in {"unexpected", "anomalous", "anomaly", "abnormal"}:
         return f"""
-        <details class="sequence-reference reference-anomaly reference-collapsible">
-            <summary>
-                <span class="reference-summary-label">Study reference</span>
-                <span class="reference-summary-state">! Unexpected / anomalous</span>
-                <span class="reference-summary-toggle">Show details</span>
-            </summary>
-            <div class="reference-body">
-                <div class="reference-details compact-reference-details">
-                    <span><strong>Video:</strong> {filename}</span>
-                    <span><strong>Anomalous condition:</strong> {event_type}</span>
-                    <span><strong>Relevant safety area:</strong> {area}</span>
-                </div>
-                <div class="reference-text compact-reference-text">
-                    An unexpected condition is present. Judge whether the highlighted
-                    explanation corresponds to the actual cause.
-                </div>
+        <div class="sequence-reference reference-anomaly">
+            <div class="reference-kicker">STUDY REFERENCE</div>
+            <div class="reference-title">! UNEXPECTED / ANOMALOUS</div>
+            <div class="reference-text">
+                An unexpected condition is present. Use the information below
+                as the study reference when judging whether the anomaly map
+                explains the event for the right reason and in the right area.
             </div>
-        </details>
+            <div class="reference-details">
+                <span><strong>Anomalous condition:</strong> {event_type}</span>
+                <span><strong>Relevant safety area:</strong> {area}</span>
+            </div>
+        </div>
         """
 
     return f"""
-    <details class="sequence-reference reference-unknown reference-collapsible">
-        <summary>
-            <span class="reference-summary-label">Study reference</span>
-            <span class="reference-summary-state">? Reference not specified</span>
-            <span class="reference-summary-toggle">Show details</span>
-        </summary>
-        <div class="reference-body">
-            <div class="reference-details compact-reference-details">
-                <span><strong>Video:</strong> {filename}</span>
-                <span><strong>Condition:</strong> {event_type}</span>
-                <span><strong>Area:</strong> {area}</span>
-            </div>
+    <div class="sequence-reference reference-unknown">
+        <div class="reference-kicker">STUDY REFERENCE</div>
+        <div class="reference-title">? REFERENCE NOT SPECIFIED</div>
+        <div class="reference-text">
+            The sequence metadata does not specify whether this clip is normal
+            or anomalous. Judge the explanation map from the visible scene.
         </div>
-    </details>
+        <div class="reference-details">
+            <span><strong>Condition:</strong> {event_type}</span>
+            <span><strong>Area:</strong> {area}</span>
+        </div>
+    </div>
     """
-
 
 
 def question_labels_for_current(current):
@@ -875,7 +882,11 @@ def trial_display(state):
         </div>
         """
     else:
-        status = ""
+        status = (
+            f"### Sequence {trial_number} / {total}\n"
+            "Watch the complete clip. The questionnaire unlocks automatically "
+            "when the video finishes."
+        )
         video_update = gr.update(value=video_path, visible=True)
         reference_html = prewatch_reference_html()
 
@@ -959,7 +970,7 @@ def resume_study(participant_id):
                 pid,
                 None,
                 None,
-                "Participant ID not found. Use **Start study** to create a new ID.",
+                "Participant ID not found. Use **Start new participant** to create a new ID.",
                 "",
                 "",
                 gr.update(visible=False),
@@ -2555,198 +2566,6 @@ body,
 }
 
 
-
-/* ---------- focused participant questionnaire ---------- */
-.dm-hero-compact {
-    background: linear-gradient(135deg, #071A2D 0%, #6B007B 100%) !important;
-    padding: 14px 18px !important;
-    min-height: 0 !important;
-    margin-bottom: 8px !important;
-}
-
-.dm-hero-compact .dm-hero-content {
-    max-width: 100% !important;
-}
-
-.dm-hero-compact .dm-eyebrow {
-    margin-bottom: 4px !important;
-    font-size: .74rem !important;
-}
-
-.dm-hero-compact h1 {
-    margin: 0 !important;
-    font-size: clamp(1.3rem, 2vw, 1.8rem) !important;
-    line-height: 1.15 !important;
-}
-
-.compact-lock {
-    padding: 7px 11px !important;
-    margin: 5px 0 7px !important;
-}
-
-.compact-lock .reference-title {
-    margin: 0 !important;
-    font-size: .88rem !important;
-}
-
-
-
-/* ---------- compact participant progress ---------- */
-.compact-progress-card {
-    padding: 10px 12px !important;
-    margin: 6px 0 8px !important;
-}
-
-.compact-progress-row {
-    display: flex;
-    align-items: center;
-    gap: 18px;
-    flex-wrap: nowrap;
-}
-
-.compact-progress-title {
-    font-weight: 850;
-    font-size: .92rem;
-    color: var(--dm-text) !important;
-    margin-right: auto;
-}
-
-.compact-progress-item {
-    display: flex;
-    align-items: baseline;
-    gap: 5px;
-    white-space: nowrap;
-}
-
-.compact-progress-item strong {
-    font-size: .95rem;
-    color: var(--dm-text) !important;
-}
-
-.compact-progress-item span {
-    font-size: .76rem;
-    color: var(--dm-text-muted) !important;
-}
-
-.compact-progress-shell {
-    margin-top: 7px !important;
-}
-
-@media (max-width: 560px) {
-    .compact-progress-row {
-        gap: 10px;
-    }
-
-    .compact-progress-title {
-        font-size: .86rem;
-    }
-
-    .compact-progress-item strong {
-        font-size: .88rem;
-    }
-
-    .compact-progress-item span {
-        font-size: .72rem;
-    }
-}
-
-
-
-/* ---------- compact collapsible study reference ---------- */
-.reference-collapsible {
-    padding: 0 !important;
-    margin: 6px 0 8px !important;
-    overflow: hidden;
-}
-
-.reference-collapsible summary {
-    list-style: none;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 9px 12px;
-    user-select: none;
-}
-
-.reference-collapsible summary::-webkit-details-marker {
-    display: none;
-}
-
-.reference-summary-label {
-    font-size: .72rem;
-    font-weight: 850;
-    text-transform: uppercase;
-    letter-spacing: .05em;
-    color: var(--dm-text-muted) !important;
-}
-
-.reference-summary-state {
-    font-size: .86rem;
-    font-weight: 850;
-    color: var(--dm-text) !important;
-}
-
-.reference-summary-toggle {
-    margin-left: auto;
-    font-size: .72rem;
-    color: var(--dm-text-muted) !important;
-}
-
-.reference-collapsible[open] .reference-summary-toggle::after {
-    content: "Hide details";
-    font-size: 0;
-}
-
-.reference-collapsible[open] .reference-summary-toggle {
-    font-size: 0;
-}
-
-.reference-collapsible[open] .reference-summary-toggle::before {
-    content: "Hide details";
-    font-size: .72rem;
-}
-
-.reference-body {
-    border-top: 1px solid var(--dm-border);
-    padding: 10px 12px 11px;
-}
-
-.compact-reference-details {
-    display: flex !important;
-    flex-wrap: wrap;
-    gap: 6px 18px !important;
-    margin: 0 !important;
-}
-
-.compact-reference-details span {
-    font-size: .79rem !important;
-}
-
-.compact-reference-text {
-    margin-top: 8px !important;
-    font-size: .78rem !important;
-    line-height: 1.4 !important;
-}
-
-@media (max-width: 650px) {
-    .reference-collapsible summary {
-        align-items: flex-start;
-        flex-wrap: wrap;
-    }
-
-    .reference-summary-toggle {
-        width: 100%;
-        margin-left: 0;
-    }
-
-    .compact-reference-details {
-        flex-direction: column;
-        gap: 4px !important;
-    }
-}
-
-
 /* ---------- video ---------- */
 #study-video {
     border: 1px solid var(--dm-border);
@@ -3352,33 +3171,142 @@ with gr.Blocks(
     with gr.Tabs(elem_id="main-tabs"):
         with gr.Tab("Questionnaire", id="questionnaire"):
             gr.HTML(
-                """
-                <section class="dm-hero dm-hero-compact">
-                    <div class="dm-hero-content">
-                        <div class="dm-eyebrow">DistriMuSe · XAI User Study</div>
-                        <h1>Explainable Unexpected-Condition Detection Study</h1>
+                f"""
+                <section
+                    class="dm-hero dm-hero-image"
+                    style="--hero-image: url('{HEADER_IMAGE_URI}');"
+                >
+                    <div class="dm-hero-overlay"></div>
+
+                    <div class="dm-hero-layout">
+                        <div class="dm-hero-inner">
+                            <div class="dm-eyebrow">
+                                DistriMuSe · UC3 · Safe Interaction with Robots
+                            </div>
+
+                            <h1>
+                                Explainable Unexpected-Condition
+                                <span>Detection Study</span>
+                            </h1>
+
+                            <p>
+                                Human evaluation of anomaly maps for trustworthy,
+                                transparent and safer human–robot collaboration in
+                                industrial environments.
+                            </p>
+
+                            <div class="dm-badges">
+                                <span>DistriMuSe</span>
+                                <span>University of Torino</span>
+                                <span>Explainable AI</span>
+                                <span>Human–Robot Safety</span>
+                            </div>
+                        </div>
+
+                        <div class="dm-hero-features" aria-label="Study focus">
+                            <div class="dm-hero-feature">
+                                <span class="feature-icon">◎</span>
+                                <span>Human Safety</span>
+                            </div>
+                            <div class="dm-hero-feature">
+                                <span class="feature-icon">⚙</span>
+                                <span>Robot Collaboration</span>
+                            </div>
+                            <div class="dm-hero-feature">
+                                <span class="feature-icon">◇</span>
+                                <span>Explainable AI</span>
+                            </div>
+                            <div class="dm-hero-feature">
+                                <span class="feature-icon">▥</span>
+                                <span>Industrial Impact</span>
+                            </div>
+                        </div>
                     </div>
                 </section>
                 """
             )
 
+            gr.Markdown(
+                """
+                **Purpose.** This study evaluates whether the anomaly/explanation map
+                highlights an unexpected condition for the **right reason** and in the
+                **right safety area**.
+
+                Please judge the explanation shown in the video, not merely whether an
+                anomaly detector produced an alert. Your responses are stored under the
+                anonymous participant ID generated for this study.
+                """,
+                elem_id="instructions",
+            )
+
+            try:
+                _initial_metadata = load_metadata()
+                _overview = study_overview_html(_initial_metadata)
+            except Exception as _overview_exc:
+                _overview = (
+                    "<div class='study-card'>"
+                    f"Could not load study overview: {_overview_exc}"
+                    "</div>"
+                )
+
+            study_overview = gr.HTML(_overview)
+
             state = gr.State()
+
+            gr.Markdown(
+                """
+                ### Participant access
+
+                For a **new participant**, click **Start new participant**. The app
+                generates an anonymous participant ID automatically. Keep that ID if
+                you need to resume the study later.
+                """
+            )
 
             with gr.Row():
                 new_participant_button = gr.Button(
-                    "Start study",
+                    "Start new participant",
                     variant="primary",
                     scale=1,
                 )
+                participant_id = gr.Textbox(
+                    label="Participant ID",
+                    placeholder="Generated automatically, e.g. P-A1B2C3",
+                    scale=2,
+                )
+                resume_button = gr.Button("Resume participant", scale=1)
 
-            # Internal participant identifier used for data storage only.
-            participant_id = gr.Textbox(value="", visible=False)
-
-            status = gr.Markdown("")
+            status = gr.Markdown(
+                "Start a new participant or enter an existing ID to resume."
+            )
             participant_progress = gr.HTML("")
             sequence_reference = gr.HTML("")
 
-
+            gr.HTML(
+                """
+                <div class="confusion-guide">
+                    <div class="confusion-guide-title">Quick interpretation guide</div>
+                    <div class="confusion-guide-grid">
+                        <div class="confusion-guide-item tp">
+                            <div class="metric">TP · True Positive</div>
+                            <div class="meaning">Anomaly detected as anomaly</div>
+                        </div>
+                        <div class="confusion-guide-item fp">
+                            <div class="metric">FP · False Positive</div>
+                            <div class="meaning">Normal flagged as anomaly · False alarm</div>
+                        </div>
+                        <div class="confusion-guide-item tn">
+                            <div class="metric">TN · True Negative</div>
+                            <div class="meaning">Normal detected as normal</div>
+                        </div>
+                        <div class="confusion-guide-item fn">
+                            <div class="metric">FN · False Negative</div>
+                            <div class="meaning">Anomaly missed · Missed anomaly</div>
+                        </div>
+                    </div>
+                </div>
+                """
+            )
 
             video = gr.Video(
                 label="Study clip",
@@ -3738,6 +3666,21 @@ with gr.Blocks(
 
     new_participant_button.click(
         start_new_participant,
+        outputs=[
+            participant_id,
+            state,
+            video,
+            status,
+            participant_progress,
+            sequence_reference,
+            questions_group,
+            submit_button,
+        ],
+    )
+
+    resume_button.click(
+        resume_study,
+        inputs=[participant_id],
         outputs=[
             participant_id,
             state,

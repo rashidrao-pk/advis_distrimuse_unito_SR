@@ -399,3 +399,141 @@ The Researcher Tools page now separates the event-type distribution into:
 
 Each group shows the number of videos in that category and the count of each
 event type. This replaces the previous single flat event list.
+
+
+## Reduced questionnaire
+
+The participant questionnaire now has two required questions:
+
+1. Does the explanation map correctly indicate the condition shown in the sequence?
+2. Does the highlighted region correspond to the actual cause of the condition?
+
+Both use: **Yes / No**.
+
+Removed:
+- right safety-area question,
+- localization 1–5 rating,
+- confidence 1–5 rating.
+
+Legacy database/CSV columns remain for compatibility and are empty for new responses.
+
+
+## Yes/No-only response format
+
+The two participant questions now use only:
+- **Yes**
+- **No**
+
+`Partially` and `Cannot determine` have been removed from both the questionnaire
+and the response key.
+
+
+## Database Manager
+
+A third top-level **Database Manager** page is available for study administration.
+
+Features:
+- active participant table,
+- active response table,
+- database statistics,
+- CSV export,
+- downloadable SQLite backups,
+- archive/delete one response,
+- archive/delete a participant and all responses,
+- restore archived participants,
+- optional removal of matching Hugging Face Dataset rows,
+- full active-study reset with `DELETE ALL` confirmation.
+
+Every destructive action first creates a timestamped SQLite backup in
+`data/backups/`. Deleted local records are moved to `deleted_participants`
+and `deleted_responses` archive tables rather than being irreversibly destroyed.
+
+
+## TP / FP / TN / FN guide
+
+A compact four-card guide is shown immediately above the study video:
+
+- **TP — True Positive:** anomaly detected as anomaly
+- **FP — False Positive:** normal flagged as anomaly / false alarm
+- **TN — True Negative:** normal detected as normal
+- **FN — False Negative:** anomaly missed / missed anomaly
+
+The guide is informational only and does not change participant responses or
+the study database.
+
+
+## Fixed video order
+
+Study videos are no longer randomized per participant.
+
+Every participant now receives the videos in ascending `video_id` order using
+natural sorting (for example: `V1`, `V2`, `V3`, ..., `V10`).
+
+
+## Password-protected Database Manager
+
+The **Database Manager** tab is locked by default.
+
+Configure the password as a Hugging Face Space Secret:
+
+- Name: `DB_MANAGER_PASSWORD`
+- Value: your chosen researcher/admin password
+
+In Hugging Face Spaces, open **Settings → Variables and secrets → New secret**,
+add `DB_MANAGER_PASSWORD`, then restart/rebuild the Space.
+
+The password is not hard-coded in `app.py`. The database-management controls
+remain hidden until the correct password is entered.
+
+
+## Focused participant page
+
+The Questionnaire page was streamlined for a short 2–5 minute evaluation.
+
+Removed:
+- long playback-lock explanation,
+- sequence number / sequence progress sentence above the video,
+- participant-access instructions,
+- long purpose paragraph,
+- long human–robot collaboration subtitle,
+- participant-view bias note,
+- TP/FP/TN/FN quick interpretation guide.
+
+The participant page now prioritizes the participant controls, video, study
+reference, two Yes/No questions, optional comment, and submission.
+
+
+## Ultra-focused participant flow
+
+The participant-facing page was further simplified:
+
+- removed **Resume participant**,
+- removed the visible participant ID field,
+- removed the participant ID from the progress card,
+- removed the full **Study overview** card with sequence/time estimates,
+- renamed the primary entry action to **Start study**.
+
+Participant IDs are still generated and stored internally for response tracking.
+
+
+## Compact progress indicator
+
+The participant progress card is now a single compact row:
+
+`Progress | completed / total Completed | remaining Remaining`
+
+The redundant **Available** count was removed because it duplicated the total
+already shown in the completed/total value.
+
+
+## Collapsible study reference
+
+The post-video **Study reference** is now minimized by default using a collapsible
+panel. The collapsed row shows only the reference type. Expanding it reveals:
+
+- video filename from `videos.csv`,
+- reference/anomalous condition,
+- relevant safety area,
+- one short interpretation sentence.
+
+This keeps the participant flow compact while preserving the reference details.

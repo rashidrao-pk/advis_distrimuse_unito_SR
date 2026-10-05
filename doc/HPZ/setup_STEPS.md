@@ -156,3 +156,11 @@ pixi run python scripts/inference_live.py \
 ```bash
 python zenoh_dashboard/dashboard_viewer.py   --zenoh-endpoint tcp/127.0.0.1:7447   --camera-topic /camera/back_view/image_raw   --camera-message-type compressed   --camera-timeout 2   --inference-timeout 3
 ```
+
+---
+
+## TEST AT 5th Oct 14:01
+
+```bash
+pixi run python scripts/inference_live.py   --config configs/cf_dataset_hp.yaml   --camera_topic /camera/back_view/image_raw   --message_type auto   --safety_areas ALL   --threshold_strategy percentile   --threshold_amplification 1.5 1.5 1.5 1.5   --offset 3   --sigma 2.0   --quantile 0.99   --taas_backend cython   --rolling min   --rolling_window 10   --detections_topic /advis/detections   --log_every_n 1   --profile_timing   --publish_zenoh   --debug_mode   --zenoh_endpoint tcp/127.0.0.1:7447
+```
