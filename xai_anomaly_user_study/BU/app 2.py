@@ -797,9 +797,18 @@ def sequence_reference_html(current):
 
 
 def question_labels_for_current(current):
+    gt = (current.get("ground_truth", "") or "").strip().lower()
+    is_normal = gt in {"normal", "expected", "no_anomaly", "no anomaly"}
+
+    if is_normal:
+        return (
+            "1. Does the explanation map correctly indicate that this is a normal sequence?",
+            "2. Does the explanation map correctly avoid highlighting a false anomalous cause?",
+        )
+
     return (
-        "1. Is the system behavior shown in this video consistent with the description above?",
-        "2. Does the highlighted area correctly explain the system decision?",
+        "1. Does the explanation map correctly indicate the unexpected condition?",
+        "2. Does the highlighted region correspond to the actual cause of the unexpected condition?",
     )
 
 
@@ -868,7 +877,7 @@ def trial_display(state):
     else:
         status = ""
         video_update = gr.update(value=video_path, visible=True)
-        reference_html = ""
+        reference_html = prewatch_reference_html()
 
     # Questions and Submit stay hidden until the browser reports video completion.
     return (
@@ -1168,10 +1177,10 @@ def researcher_response_summary():
     q2_positive = _percent_of(df["right_reason"], ["Yes", "Partially"])
 
     q_counts = {
-        "Q1 — System behavior consistent": int(
+        "Q1 — Correct condition indication": int(
             df["map_indicates_unexpected"].notna().sum()
         ),
-        "Q2 — Highlight explains decision": int(df["right_reason"].notna().sum()),
+        "Q2 — Right reason": int(df["right_reason"].notna().sum()),
     }
 
     q_rows = "".join(
@@ -1249,12 +1258,12 @@ def response_breakdown_html():
         <div class="study-card-title">Response distributions</div>
 
         <div class="distribution-section">
-            <div class="summary-list-title">Q1 — System behavior consistent</div>
+            <div class="summary-list-title">Q1 — Correct condition indication</div>
             {distribution("map_indicates_unexpected")}
         </div>
 
         <div class="distribution-section">
-            <div class="summary-list-title">Q2 — Highlight explains decision</div>
+            <div class="summary-list-title">Q2 — Right reason</div>
             {distribution("right_reason")}
         </div>
     </div>
@@ -2098,20 +2107,6 @@ CSS = """
     --dm-anomaly-text: #FFE3B3;
 }
 
-
-/* ---------- top tab navigation ---------- */
-#main-tabs [role="tablist"] {
-    position: static !important;
-    margin: 0 0 14px !important;
-    padding: 0 !important;
-    border-bottom: 1px solid var(--dm-border) !important;
-    background: transparent !important;
-}
-
-#main-tabs [role="tablist"] button {
-    font-weight: 750 !important;
-}
-
 /* ---------- global ---------- */
 html,
 body,
@@ -2859,239 +2854,6 @@ body,
     #evaluation-focus-card {
         padding: 12px !important;
         border-radius: 14px !important;
-    }
-}
-
-
-/* ---------- self-explaining system specification ---------- */
-.system-spec-card {
-    border: 1px solid #D5DEE8;
-    border-radius: 12px;
-    padding: 12px 14px;
-    margin: 0 0 12px;
-    background: #F8FAFC;
-}
-
-.system-spec-title {
-    font-size: .95rem;
-    font-weight: 850;
-    color: #14213D;
-    margin-bottom: 8px;
-}
-
-.system-spec-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-}
-
-.system-spec-item {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    padding: 9px 11px;
-    border-radius: 9px;
-    font-size: .82rem;
-    line-height: 1.35;
-}
-
-.system-spec-item strong {
-    font-size: .82rem;
-}
-
-.system-spec-item.normal {
-    background: #EEF8F1;
-    border-left: 4px solid #4FAF6A;
-}
-
-.system-spec-item.unexpected {
-    background: #FCEFEF;
-    border-left: 4px solid #D96B6B;
-}
-
-.video-role-guide {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    font-size: .78rem;
-    color: #52606D;
-    margin: 4px 0 7px;
-    padding: 0 2px;
-}
-
-.video-role-guide strong {
-    color: #14213D;
-    margin-right: 3px;
-}
-
-.video-role-guide .divider {
-    color: #94A3B8;
-}
-
-@media (max-width: 700px) {
-    .system-spec-grid {
-        grid-template-columns: 1fr;
-    }
-
-    .video-role-guide .divider {
-        display: none;
-    }
-}
-
-
-
-/* ---------- collapsible system specification ---------- */
-.system-spec-collapsible {
-    padding: 0 !important;
-    overflow: hidden;
-}
-
-.system-spec-collapsible summary {
-    cursor: pointer;
-    list-style: none;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 12px;
-    user-select: none;
-}
-
-.system-spec-collapsible summary::-webkit-details-marker {
-    display: none;
-}
-
-.system-spec-collapsible summary::after {
-    content: "▾";
-    margin-left: auto;
-    color: #64748B;
-    font-size: .9rem;
-    transition: transform .15s ease;
-}
-
-.system-spec-collapsible[open] summary::after {
-    transform: rotate(180deg);
-}
-
-.system-spec-collapsible .system-spec-title {
-    margin: 0 !important;
-}
-
-.system-spec-toggle {
-    color: #64748B !important;
-    font-size: .76rem;
-    margin-left: auto;
-}
-
-.system-spec-collapsible[open] .system-spec-toggle {
-    font-size: 0;
-}
-
-.system-spec-collapsible[open] .system-spec-toggle::before {
-    content: "Hide details";
-    font-size: .76rem;
-}
-
-.system-spec-body {
-    border-top: 1px solid #E2E8F0;
-    padding: 10px 12px 12px;
-}
-
-
-/* ---------- three-part system specification ---------- */
-.system-spec-grid-three {
-    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
-}
-
-.system-spec-item.false-positive {
-    background: #FFF7E8;
-    border-left: 4px solid #E59A2F;
-}
-
-@media (max-width: 900px) {
-    .system-spec-grid-three {
-        grid-template-columns: 1fr !important;
-    }
-}
-
-/* ---------- surveyor help ---------- */
-.surveyor-help {
-    border: 1px solid #CBD5E1 !important;
-    border-radius: 11px;
-    background: #FFFFFF !important;
-    margin: 0 0 12px !important;
-    overflow: hidden;
-}
-
-.surveyor-help summary {
-    cursor: pointer;
-    list-style: none;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 12px;
-    user-select: none;
-}
-
-.surveyor-help summary::-webkit-details-marker {
-    display: none;
-}
-
-.surveyor-help summary::after {
-    content: "▾";
-    margin-left: auto;
-    color: #64748B;
-    font-size: .9rem;
-    transition: transform .15s ease;
-}
-
-.surveyor-help[open] summary::after {
-    transform: rotate(180deg);
-}
-
-.surveyor-help-title {
-    font-weight: 850;
-    color: #14213D !important;
-    font-size: .9rem;
-}
-
-.surveyor-help-subtitle {
-    color: #64748B !important;
-    font-size: .76rem;
-}
-
-.surveyor-help-body {
-    border-top: 1px solid #E2E8F0;
-    padding: 10px 12px 11px;
-    display: grid;
-    gap: 7px;
-    font-size: .8rem;
-    line-height: 1.4;
-    color: #475569 !important;
-}
-
-.surveyor-help-step strong {
-    color: #14213D !important;
-}
-
-.help-green {
-    color: #16763A !important;
-    font-weight: 800;
-}
-
-.help-red {
-    color: #B52D2D !important;
-    font-weight: 800;
-}
-
-@media (max-width: 700px) {
-    .surveyor-help summary {
-        align-items: flex-start;
-        flex-wrap: wrap;
-    }
-
-    .surveyor-help-subtitle {
-        width: 100%;
     }
 }
 
@@ -3873,8 +3635,6 @@ AUTOPLAY_NEXT_VIDEO_JS = r"""
 }
 """
 
-
-
 with gr.Blocks(
     title="Explainable Anomaly Detection User Study",
     css=CSS,
@@ -3912,92 +3672,9 @@ with gr.Blocks(
             participant_id = gr.Textbox(value="", visible=False)
 
             with gr.Group(elem_id="evaluation-focus-card"):
-                gr.HTML(
-                    """
-                    <details class="surveyor-help">
-                        <summary>
-                            <span class="surveyor-help-title">What should a surveyor do?</span>
-                            <span class="surveyor-help-subtitle">Learn how to fill this</span>
-                        </summary>
-                        <div class="surveyor-help-body">
-                            <div class="surveyor-help-step">
-                                <strong>1. Watch the full video.</strong>
-                                Do not answer before playback reaches the end.
-                            </div>
-                            <div class="surveyor-help-step">
-                                <strong>2. Check the left panel.</strong>
-                                It contains the input video and the safety-area detections.
-                                A <span class="help-green">green border</span> means that
-                                safety area is considered normal.
-                            </div>
-                            <div class="surveyor-help-step">
-                                <strong>3. Look for red detections.</strong>
-                                A <span class="help-red">red border</span> indicates a
-                                potential unexpected condition that should be verified
-                                using the right panel.
-                            </div>
-                            <div class="surveyor-help-step">
-                                <strong>4. Check the right panel.</strong>
-                                It shows the system output / anomaly explanation. Use it
-                                to decide whether the system behavior is correct and whether
-                                the highlighted area explains the decision.
-                            </div>
-                        </div>
-                    </details>
-                    """
-                )
-
-                gr.HTML(
-                    """
-                    <details class="system-spec-card system-spec-collapsible">
-                        <summary>
-                            <span class="system-spec-title">What should the system do?</span>
-                            <span class="system-spec-toggle">Show details</span>
-                        </summary>
-                        <div class="system-spec-body">
-                            <div class="system-spec-grid system-spec-grid-three">
-                                <div class="system-spec-item unexpected">
-                                    <strong>Anomaly / Unexpected</strong>
-                                    <span>
-                                        Unauthorized persons, unsafe movements, faults,
-                                        misplaced boxes, or other interference outside
-                                        the normal palletizing process.
-                                    </span>
-                                </div>
-                                <div class="system-spec-item normal">
-                                    <strong>Normal</strong>
-                                    <span>
-                                        Machine palletizing, normal operator activity,
-                                        pallet replacement, etc.
-                                    </span>
-                                </div>
-                                <div class="system-spec-item false-positive">
-                                    <strong>False Positive</strong>
-                                    <span>
-                                        A normal situation is incorrectly flagged as
-                                        anomalous — a false alarm.
-                                    </span>
-                                </div>
-                            </div>
-                        </div>
-                    </details>
-                    """
-                )
-
                 status = gr.Markdown("")
                 participant_progress = gr.HTML("")
                 sequence_reference = gr.HTML("")
-
-                gr.HTML(
-                    """
-                    <div class="video-role-guide">
-                        <strong>Video</strong>
-                        <span>Original scene</span>
-                        <span class="divider">|</span>
-                        <span>System output / anomaly explanation</span>
-                    </div>
-                    """
-                )
 
                 video = gr.Video(
                     label="Study clip",
@@ -4019,8 +3696,8 @@ with gr.Blocks(
                     map_indicates_unexpected = gr.Radio(
                         QUESTION_OPTIONS,
                         label=(
-                            "1. Is the system behavior shown in this video consistent "
-                            "with the description above?"
+                            "1. Does the explanation map correctly indicate the condition "
+                            "shown in this sequence?"
                         ),
                         interactive=True,
                         elem_id="q1-map-indication",
@@ -4030,7 +3707,8 @@ with gr.Blocks(
                     right_reason = gr.Radio(
                         QUESTION_OPTIONS,
                         label=(
-                            "2. Does the highlighted area correctly explain the system decision?"
+                            "2. Does the highlighted region correspond to the actual cause "
+                            "of the condition?"
                         ),
                         interactive=True,
                         elem_id="q2-right-reason",
@@ -4042,6 +3720,22 @@ with gr.Blocks(
                     variant="primary",
                     visible=False,
                 )
+
+            gr.HTML(
+                """
+                <footer class="dm-footer">
+                    <div>
+                        <strong>DistriMuSe UC3 · Explainable AI User Study</strong><br>
+                        University of Torino · Safe interaction and cooperation with robots
+                    </div>
+                    <div class="dm-footer-links">
+                        <a href="https://distrimuse.eu/" target="_blank">DistriMuSe project</a>
+                        <a href="https://rashidrao-pk.github.io/projects/advis-distrimuse-sr/" target="_blank">ADVIS project page</a>
+                        <a href="https://github.com/rashidrao-pk/advis_distrimuse_unito_SR" target="_blank">GitHub</a>
+                    </div>
+                </footer>
+                """
+            )
 
         with gr.Tab("Researcher Tools", id="researcher-tools"):
             gr.HTML(
@@ -4080,14 +3774,15 @@ with gr.Blocks(
                 """
                 ### How effective are the explanations?
 
-                The questionnaire uses two direct checks:
+                The reduced questionnaire now focuses on two direct indicators:
 
-                - **System behavior consistency**: whether the system behavior shown
-                  in the video is coherent with the stated Normal/Unexpected specification.
-                - **Explanation correctness**: whether the highlighted area correctly
-                  explains the system decision.
+                - **Correct condition indication**: whether the explanation map
+                  appropriately represents the normal or unexpected condition shown.
+                - **Right reason**: whether the highlighted region corresponds to the
+                  actual cause of the condition.
 
-                Each question uses **Yes or No**.
+                Each question uses the same quick options:
+                **Yes or No**.
                 """
             )
 
@@ -4312,22 +4007,6 @@ with gr.Blocks(
                     variant="stop",
                 )
                 db_reset_status = gr.Markdown("")
-
-    gr.HTML(
-        """
-        <footer class="dm-footer" id="global-footer">
-            <div>
-                <strong>DistriMuSe UC3 · Explainable AI User Study</strong><br>
-                University of Torino · Safe interaction and cooperation with robots
-            </div>
-            <div class="dm-footer-links">
-                <a href="https://distrimuse.eu/" target="_blank">DistriMuSe project</a>
-                <a href="https://rashidrao-pk.github.io/projects/advis-distrimuse-sr/" target="_blank">ADVIS project page</a>
-                <a href="https://github.com/rashidrao-pk/advis_distrimuse_unito_SR" target="_blank">GitHub</a>
-            </div>
-        </footer>
-        """
-    )
 
     demo.load(
         fn=None,

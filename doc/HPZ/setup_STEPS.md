@@ -3,6 +3,7 @@
 - Update repo:
 
 ```bash
+ssh HPZ3_at_SR
 cd ~advis_dis.....
 
 git pull
@@ -163,4 +164,71 @@ python zenoh_dashboard/dashboard_viewer.py   --zenoh-endpoint tcp/127.0.0.1:7447
 
 ```bash
 pixi run python scripts/inference_live.py   --config configs/cf_dataset_hp.yaml   --camera_topic /camera/back_view/image_raw   --message_type auto   --safety_areas ALL   --threshold_strategy percentile   --threshold_amplification 1.5 1.5 1.5 1.5   --offset 3   --sigma 2.0   --quantile 0.99   --taas_backend cython   --rolling min   --rolling_window 10   --detections_topic /advis/detections   --log_every_n 1   --profile_timing   --publish_zenoh   --debug_mode   --zenoh_endpoint tcp/127.0.0.1:7447
+```
+
+```bash
+pixi run python scripts/inference_live.py   --config configs/cf_dataset_hp.yaml   --camera_topic /camera/back_view/image_raw   --message_type auto   --safety_areas ALL   --threshold_strategy percentile   --threshold_amplification 3.5 3.5 6.5 5.5   --offset 3   --sigma 2.0   --quantile 0.99   --taas_backend cython   --rolling min   --rolling_window 10   --detections_topic /advis/detections   --log_every_n 1   --profile_timing   --publish_zenoh   --debug_mode   --zenoh_endpoint tcp/127.0.0.1:7447
+```
+
+```bash
+cd ~/advis/advis_distrimuse_unito_SR
+
+pixi run ros2 topic type /camera/back_view/image_raw
+pixi run ros2 topic hz /camera/back_view/image_raw
+```
+
+```bash
+mkdir -p /home/unito/advis/bags
+
+bag_path="/home/unito/advis/bags/camera_$(date +%Y%m%d_%H%M%S)"
+
+pixi run ros2 bag record \
+  --storage mcap \
+  --output "$bag_path" \
+  /camera/back_view/image_raw
+```
+
+```bash
+pixi run ros2 bag info "$bag_path"
+```
+
+```bash
+pixi run ros2 bag play "$bag_path" \
+  --topics /camera/back_view/image_raw
+```
+
+## Check RuleX Detection
+
+```bash
+pixi run bash -c '
+source /home/unito/advis/distrimuse-ros2-api/install/setup.bash
+ros2 topic hz /rulex/data'
+```
+
+## Recording Rosbags and RuleX detections
+
+```bash
+bag_path="/home/unito/advis/bags/camera_detection_$(date +%Y%m%d_%H%M%S)"
+echo "$bag_path"
+
+pixi run bash -c "
+source /home/unito/advis/distrimuse-ros2-api/install/setup.bash
+
+ros2 bag record \
+  --storage mcap \
+  --output '$bag_path' \
+  --topics \
+  /camera/back_view/image_raw \
+  /advis/detections \
+  /rulex/data
+"
+# /home/unito/advis/bags/camera_detection_20261005_143503
+
+df -h /home/unito/advis/bags
+
+du -sh /home/unito/advis/bags
+
+du -sh /home/unito/advis/bags/* 2>/dev/null | sort -hr
+
+
 ```

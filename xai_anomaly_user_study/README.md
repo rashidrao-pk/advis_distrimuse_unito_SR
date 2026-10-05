@@ -537,3 +537,214 @@ panel. The collapsed row shows only the reference type. Expanding it reveals:
 - one short interpretation sentence.
 
 This keeps the participant flow compact while preserving the reference details.
+
+
+## No-comment streamlined response
+
+The participant comment field was removed.
+
+For both Yes/No questions:
+- the selected option stays fully visible,
+- it gets a strong purple outline/background,
+- the other option is dimmed after selection.
+
+The legacy `comment` database/CSV column remains for compatibility and new
+responses store it as an empty string.
+
+
+## Softer Yes/No selection styling
+
+The standalone Yes/No legend and helper sentence were removed.
+
+The answer buttons now use softer visual cues:
+- **Yes** has a light green tint,
+- **No** has a light red tint,
+- the selected option becomes clearer,
+- the unselected option dims gently rather than disappearing visually.
+
+
+## Cleaner question UI v2
+
+- removed the standalone `Yes / No` legend above the questions,
+- removed the light background/pill behind each question title,
+- Yes and No are neutral before selection,
+- selected Yes uses a soft green highlight,
+- selected No uses a soft red highlight,
+- the unselected option dims strongly after selection.
+
+
+## Explicit selected-vs-unselected dimming
+
+The two Yes/No questions now behave visually as follows:
+
+- **Yes** is softly green and **No** softly red before selection.
+- Selecting **Yes** keeps Yes fully visible and strongly dims/desaturates No.
+- Selecting **No** keeps No fully visible and strongly dims/desaturates Yes.
+
+This makes the chosen response immediately obvious.
+
+
+## Final Yes/No clarity fix
+
+The colored emoji circles were removed from the answer labels because they
+remained visually strong even when the option was unselected.
+
+Answers now use plain `Yes` / `No` text. After selection, the opposite option is
+reduced to 20% opacity and fully desaturated. The selected option uses a soft
+green (Yes) or soft red (No) background.
+
+
+## Radio-dot colors
+
+To make the two answers easier to distinguish:
+
+- selected **Yes** uses a green radio dot,
+- selected **No** uses a red radio dot,
+- unselected radio controls remain neutral gray.
+
+
+## Inline selection styling fix
+
+The Yes/No visual state is now applied by a browser-side listener using inline
+`!important` styles. This prevents Gradio's default blue selected styling from
+overriding the intended colors.
+
+- selected Yes: soft green + green radio control,
+- selected No: soft red + red radio control,
+- opposite option: 18% opacity + grayscale.
+
+The listener also watches for Gradio re-renders and reapplies the styles.
+
+
+## Stronger selected colors
+
+Selected answer emphasis was increased while preserving the same interaction:
+
+- selected **Yes** now uses a stronger green background, border, text, and radio dot,
+- selected **No** now uses a stronger red background, border, text, and radio dot,
+- the opposite option remains strongly dimmed and desaturated.
+
+
+## Theme-aware Yes/No borders
+
+The Yes/No controls now have stronger visual boundaries:
+
+- Light theme:
+  - **Yes** uses a thick green border.
+  - **No** uses a thick red border.
+- Dark theme:
+  - both answer cards use a clear white border for contrast.
+- Radio circles also receive a visible outline.
+- The selected answer keeps the stronger green/red emphasis, while the opposite
+  answer remains dimmed.
+
+
+## Light theme by default
+
+The participant app now starts in **light theme by default**, even when the
+visitor's operating system is configured for dark mode.
+
+Explicit `.dark` styling remains in the stylesheet for compatibility, but the
+initial study view is forced to light mode on load.
+
+
+## Autoplay next video
+
+After the participant submits a response, the next study video is loaded and
+playback starts automatically. A short browser-side retry loop is used so the
+play request waits until Gradio has finished replacing the video source.
+
+
+## Autoplay on Start study
+
+The first video now starts automatically after the participant clicks
+**Start study**.
+
+The same autoplay helper is also used after **Submit & Next**, so both the first
+trial and subsequent trials begin playback automatically.
+
+
+## Focused evaluation border
+
+The full participant task area is now enclosed in one clear visual container:
+
+- response status and progress,
+- study reference,
+- video,
+- both Yes/No questions,
+- Submit & Next button.
+
+This helps participants visually separate the active evaluation task from the
+rest of the page.
+
+
+## Self-explaining questionnaire
+
+The participant task now starts with a concise system specification:
+
+- **Normal:** machine palletizing, normal operator activity, pallet replacement, etc.
+- **Unexpected:** unauthorized persons, unsafe movements, faults, misplaced boxes,
+  or other interference outside the normal palletizing process.
+
+The two participant questions are:
+
+1. **Is the system behavior shown in this video consistent with the description above?**
+2. **Does the highlighted area correctly explain the system decision?**
+
+The per-video Study Reference is no longer shown to participants, avoiding a
+direct cue to the expected answer.
+
+
+## Bottom navigation and surveyor help
+
+- The `Questionnaire / Researcher Tools / Database Manager` tab navigation is
+  moved to the bottom of the tab content, immediately before the common footer.
+- A collapsed **What should a surveyor do?** help section was added above the
+  task specification.
+- Expanding **Learn how to fill this** explains:
+  - watch the full video,
+  - left panel = input video + safety-area detections,
+  - green border = normal safety area,
+  - red border = potential unexpected condition,
+  - verify the red detection using the right system-output/anomaly-explanation panel.
+
+
+## Restored Study Reference
+
+The per-video **Study Reference** has been restored. It appears after the video
+finishes and remains collapsed by default.
+
+The **What should the system do?** specification is also collapsed by default,
+so both contextual sections stay compact unless the participant chooses to
+expand them.
+
+
+## System specification order
+
+The collapsed **What should the system do?** section now presents:
+
+1. **Anomaly / Unexpected**
+2. **Normal**
+3. **False Positive** — a normal situation incorrectly flagged as anomalous (false alarm)
+
+
+## Tabs physically moved before footer
+
+The actual Gradio tab navigation is now moved in the browser DOM to immediately
+before the common footer. This is more reliable than reordering the tablist
+inside its original wrapper.
+
+Final order at the bottom of the page:
+
+`Questionnaire | Researcher Tools | Database Manager`
+
+followed by the DistriMuSe footer.
+
+
+## Tabs restored to top
+
+The main navigation tabs are back at the top of the interface:
+
+`Questionnaire | Researcher Tools | Database Manager`
+
+The previous browser-side tab-reordering logic was removed.

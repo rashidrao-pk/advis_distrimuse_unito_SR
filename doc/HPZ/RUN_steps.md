@@ -50,4 +50,7 @@ sudo systemctl stop inference.service
 sudo systemctl is-active inference.service
 pgrep -af 'inference_live.py|infer_ros_live'
 
+## Block permannelt
+
+sudo systemctl disable --now inference.service
 ```
