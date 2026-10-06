@@ -35,3 +35,4 @@ scripts/taas_cython*.so
 scripts/tass_cython_distance.c
 scripts/tass_cython_distance*.so
 scripts/build/
+.DS_Store
