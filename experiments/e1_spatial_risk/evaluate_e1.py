@@ -214,7 +214,13 @@ def main():
         persistent_workers=args.num_workers > 0,
     )
 
-    ckpt = torch.load(args.checkpoint, map_location=device)
+    # ckpt = torch.load(args.checkpoint, map_location=device)
+    ckpt = torch.load(
+    args.checkpoint,
+    map_location=device,
+    weights_only=False,
+    )
+    
     config = ckpt.get("config", {})
     hidden = int(config.get("hidden", 32))
 
