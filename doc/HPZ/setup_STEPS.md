@@ -232,3 +232,75 @@ du -sh /home/unito/advis/bags/* 2>/dev/null | sort -hr
 
 
 ```
+
+##
+
+```bash
+pixi run python scripts/inference_live.py   --config configs/cf_dataset_hp.yaml   --camera_topic /camera/back_view/image_raw   --message_type auto   --safety_areas ALL   --threshold_strategy percentile   --threshold_amplification 4 3.5 3.5 7.5   --offset 3   --sigma 2.0   --quantile 0.99   --taas_backend cython   --rolling min   --rolling_window 10   --detections_topic /advis/detections   --log_every_n 1   --profile_timing   --publish_zenoh   --debug_mode   --zenoh_endpoint tcp/127.0.0.1:7447
+```
+
+```bash
+pixi run bash -c '
+set -e
+
+source /home/unito/advis/distrimuse-ros2-api/install/setup.bash
+
+new_bag="/home/unito/advis/bags/camera_detection_$(date +%Y%m%d_%H%M%S)_${RANDOM}_$$"
+
+echo "New recording: $new_bag"
+test ! -e "$new_bag"
+
+exec ros2 bag record \
+  --storage mcap \
+  --output "$new_bag" \
+  --topics \
+  /camera/back_view/image_raw \
+  /advis/detections \
+  /rulex/data
+'
+```
+
+```bash
+pixi run python scripts/inference_live.py   --config configs/cf_dataset_hp.yaml   --camera_topic /camera/back_view/image_raw   --message_type auto   --safety_areas ALL   --threshold_strategy percentile   --threshold_amplification 4 3.5 3.5 8   --offset 3   --sigma 2.0   --quantile 0.99   --taas_backend cython   --rolling min   --rolling_window 10   --detections_topic /advis/detections   --log_every_n 1   --profile_timing   --publish_zenoh   --debug_mode   --zenoh_endpoint tcp/127.0.0.1:7447
+```
+
+```bash
+BAG_PATH="$latest_bag" pixi run python - <<'PY'
+import os
+from pathlib import Path
+import yaml
+
+bag = Path(os.environ["BAG_PATH"])
+metadata = yaml.safe_load((bag / "metadata.yaml").read_text())
+info = metadata["rosbag2_bagfile_information"]
+topics = info["topics_with_message_count"]
+
+duration = info["duration"]["nanoseconds"] / 1e9
+
+print(f"Bag: {bag}")
+print(f"Duration: {duration:.2f} seconds")
+print(f"Total messages: {info['message_count']}")
+print(f"Topics: {len(topics)}")
+print()
+
+for item in topics:
+    topic = item["topic_metadata"]
+    count = int(item["message_count"])
+    rate = count / duration if duration > 0 else 0
+    kind = "frames" if topic["name"] == "/camera/back_view/image_raw" else "messages"
+    print(
+        f"{topic['name']}\n"
+        f"  type: {topic['type']}\n"
+        f"  {kind}: {count}\n"
+        f"  average rate: {rate:.2f} Hz"
+    )
+PY
+```
+
+### Recorded Rosbags:
+
+> New recording: /home/unito/advis/bags/camera_detection_20261006_104650_4369_6007
+
+```bash
+pixi run python scripts/inference_live.py   --config configs/cf_dataset_hp.yaml   --camera_topic /camera/back_view/image_raw   --message_type auto   --safety_areas ALL   --threshold_strategy percentile   --threshold_amplification 4.2 3.5 3.5 8   --offset 3   --sigma 2.0   --quantile 0.99   --taas_backend cython   --rolling min   --rolling_window 10   --detections_topic /advis/detections   --log_every_n 1   --profile_timing   --publish_zenoh   --debug_mode   --zenoh_endpoint tcp/127.0.0.1:7447
+```
