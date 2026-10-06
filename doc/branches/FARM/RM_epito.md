@@ -201,3 +201,33 @@ python experiments/e1_spatial_risk/train_e1.py \
   --num-workers 4 \
   --output results/V6/e1_spatial_risk/e1A_convlstm.pt
 ```
+
+## Evaluate Model
+
+```bash
+python experiments/e1_spatial_risk/evaluate_e1.py \
+  --checkpoint results/V6/e1_spatial_risk/e1A_convlstm.pt \
+  --test \
+    results/V6/e1_spatial_risk/exports/scenario_8_4_maps.npz \
+    results/V6/e1_spatial_risk/exports/scenario_16_0_maps.npz \
+  --history 15 \
+  --horizons 3 5 10 15 \
+  --batch-size 32
+```
+
+```bash
+python experiments/e1_spatial_risk/evaluate_e1.py \
+  --checkpoint results/V6/e1_spatial_risk/e1A_convlstm.pt \
+  --test \
+    results/V6/e1_spatial_risk/exports/scenario_8_4_maps.npz \
+    results/V6/e1_spatial_risk/exports/scenario_16_0_maps.npz \
+  --history 15 \
+  --horizons 3 5 10 15 \
+  --batch-size 32 \
+  --num-workers 4 \
+  --fps 5 \
+  --score-threshold 1.0 \
+  --min-anomaly-frames 3 \
+  --trend-window 5 \
+  --output-dir results/V6/e1_spatial_risk/eval_e1B
+```
