@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import bisect
 import csv
 import json
 from collections import defaultdict
@@ -16,7 +17,9 @@ from model import SpatialRiskConvLSTM
 
 
 def parse_args():
-    p = argparse.ArgumentParser("Evaluate E1-B spatial-risk forecasting")
+    p = argparse.ArgumentParser(
+        "Evaluate E1-B2 spatial-risk forecasting with horizon-specific pre-onset windows"
+    )
     p.add_argument("--checkpoint", type=Path, required=True)
     p.add_argument("--test", nargs="+", required=True, help="Test scenario .npz files")
     p.add_argument("--history", type=int, default=15)
@@ -24,15 +27,37 @@ def parse_args():
     p.add_argument("--window-stride", type=int, default=1)
     p.add_argument("--batch-size", type=int, default=32)
     p.add_argument("--num-workers", type=int, default=4)
-    p.add_argument("--risk-threshold", type=float, default=0.5)
-    p.add_argument("--score-threshold", type=float, default=1.0)
-    p.add_argument("--min-anomaly-frames", type=int, default=3)
-    p.add_argument("--trend-window", type=int, default=5)
+
+    p.add_argument(
+        "--risk-threshold",
+        type=float,
+        default=0.5,
+        help="Pixel-level threshold used for IoU metrics",
+    )
+    p.add_argument(
+        "--score-threshold",
+        type=float,
+        default=1.0,
+        help="Normalized ADVIS scalar threshold for area anomaly state",
+    )
+    p.add_argument(
+        "--min-anomaly-frames",
+        type=int,
+        default=3,
+        help="Stable onset requires this many consecutive anomalous scalar-score frames",
+    )
+    p.add_argument(
+        "--trend-window",
+        type=int,
+        default=5,
+        help="Recent history frames used by the linear-trend baseline",
+    )
     p.add_argument("--fps", type=float, default=5.0)
+
     p.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("results/V6/e1_spatial_risk/eval_e1B"),
+        default=Path("results/V6/e1_spatial_risk/eval_e1B2"),
     )
     p.add_argument("--cpu", action="store_true")
     return p.parse_args()
@@ -48,12 +73,22 @@ def choose_device(cpu=False):
     return torch.device("cpu")
 
 
+# ---------------------------------------------------------------------
+# Baselines
+# ---------------------------------------------------------------------
+
 def persistence_forecast(x, n_horizons):
+    # x: [B,T,1,H,W]
     return x[:, -1:].repeat(1, n_horizons, 1, 1, 1)
 
 
 def linear_trend_forecast(x, horizons, trend_window=5):
-    B, T, C, H, W = x.shape
+    """
+    Per-pixel least-squares extrapolation over the last N history maps.
+    x: [B,T,1,H,W]
+    returns: [B,K,1,H,W]
+    """
+    _, T, _, _, _ = x.shape
     n = min(int(trend_window), T)
     recent = x[:, -n:]
 
@@ -61,7 +96,7 @@ def linear_trend_forecast(x, horizons, trend_window=5):
     t_mean = t.mean()
     denom = ((t - t_mean) ** 2).sum().clamp_min(1e-8)
 
-    y_mean = recent.mean(dim=1, keepdim=False)
+    y_mean = recent.mean(dim=1)
     slope = (
         ((t - t_mean).view(1, n, 1, 1, 1)
          * (recent - y_mean.unsqueeze(1))).sum(dim=1)
@@ -75,34 +110,45 @@ def linear_trend_forecast(x, horizons, trend_window=5):
     return torch.stack(preds, dim=1)
 
 
+# ---------------------------------------------------------------------
+# Metrics
+# ---------------------------------------------------------------------
+
 def batch_mae(pred, target):
-    return (pred - target).abs().flatten(2).mean(dim=2)
+    return (pred - target).abs().flatten(2).mean(dim=2)  # [B,K]
 
 
 def batch_iou(pred, target, threshold=0.5):
+    """
+    IoU per sample/horizon.
+    Empty-union samples are NaN rather than being counted as IoU=1.
+    """
     p = (pred >= threshold).flatten(2)
     t = (target >= threshold).flatten(2)
 
-    intersection = (p & t).sum(dim=2).float()
+    inter = (p & t).sum(dim=2).float()
     union = (p | t).sum(dim=2).float()
 
-    out = torch.full_like(intersection, float("nan"))
+    out = torch.full_like(inter, float("nan"))
     valid = union > 0
-    out[valid] = intersection[valid] / union[valid]
+    out[valid] = inter[valid] / union[valid]
     return out
 
 
 def batch_positive_target_iou(pred, target, threshold=0.5):
+    """
+    IoU only when the target map itself contains threshold-positive pixels.
+    """
     p = (pred >= threshold).flatten(2)
     t = (target >= threshold).flatten(2)
 
-    intersection = (p & t).sum(dim=2).float()
+    inter = (p & t).sum(dim=2).float()
     union = (p | t).sum(dim=2).float()
     target_positive = t.sum(dim=2) > 0
 
-    out = torch.full_like(intersection, float("nan"))
+    out = torch.full_like(inter, float("nan"))
     valid = target_positive & (union > 0)
-    out[valid] = intersection[valid] / union[valid]
+    out[valid] = inter[valid] / union[valid]
     return out
 
 
@@ -113,81 +159,168 @@ def safe_nanmean(values):
     return float(np.nanmean(arr))
 
 
-def stable_future_anomaly(norm_scores, start_idx, min_frames=3, threshold=1.0):
+def safe_mean(values):
+    arr = np.asarray(values, dtype=np.float64)
+    if arr.size == 0:
+        return float("nan")
+    return float(np.mean(arr))
+
+
+# ---------------------------------------------------------------------
+# Event / onset handling
+# ---------------------------------------------------------------------
+
+def stable_onset_frames(norm_scores, threshold=1.0, min_frames=3):
+    """
+    Return start frames of stable anomaly episodes.
+
+    A stable anomaly onset at frame j means:
+        score[j:j+min_frames] >= threshold
+
+    Only the first frame of each stable contiguous episode is returned.
+    """
     x = np.asarray(norm_scores, dtype=np.float32)
-    mask = x >= threshold
+    abnormal = x >= threshold
+
+    if len(abnormal) == 0:
+        return []
 
     if min_frames <= 1:
-        return bool(mask[start_idx:].any())
+        stable = abnormal.copy()
+    else:
+        stable = np.zeros_like(abnormal, dtype=bool)
+        for j in range(0, len(abnormal) - min_frames + 1):
+            if abnormal[j:j + min_frames].all():
+                stable[j] = True
 
-    for i in range(start_idx, len(mask) - min_frames + 1):
-        if mask[i:i + min_frames].all():
-            return True
-    return False
+    # Only starts of stable episodes
+    starts = []
+    prev_stable = False
+    for j, is_stable in enumerate(stable):
+        if is_stable and not prev_stable:
+            starts.append(j)
+        prev_stable = bool(is_stable)
+
+        # Once an episode stops being anomalous, allow a later new start.
+        if j < len(abnormal) - 1 and not abnormal[j]:
+            prev_stable = False
+
+    return starts
 
 
-class ScalarScoreCache:
-    def __init__(self, files):
-        self.by_file = {}
+class ScalarEventCache:
+    """
+    Loads normalized area scalar scores and precomputes stable anomaly onsets.
+    """
+
+    def __init__(self, files, threshold=1.0, min_frames=3):
+        self.norm_by_file = {}
         self.area_to_idx = {}
+        self.onsets = {}
 
         for f in files:
             p = str(Path(f))
             d = np.load(p, allow_pickle=True)
+
             areas = [str(a) for a in d["areas"]]
             scores = d["scores"].astype(np.float32)
             thresholds = d["thresholds"].astype(np.float32)
             norm = scores / np.maximum(thresholds, 1e-12)
 
-            self.by_file[p] = norm
+            self.norm_by_file[p] = norm
             self.area_to_idx[p] = {a: i for i, a in enumerate(areas)}
+
+            for area in areas:
+                ai = self.area_to_idx[p][area]
+                seq = norm[:, ai]
+                self.onsets[(p, area)] = stable_onset_frames(
+                    seq,
+                    threshold=threshold,
+                    min_frames=min_frames,
+                )
 
     def sequence(self, file_path, area):
         p = str(Path(file_path))
-        idx = self.area_to_idx[p][str(area)]
-        return self.by_file[p][:, idx]
+        ai = self.area_to_idx[p][str(area)]
+        return self.norm_by_file[p][:, ai]
+
+    def onset_list(self, file_path, area):
+        return self.onsets[(str(Path(file_path)), str(area))]
 
 
-def classify_window(
+def horizon_category(
     norm_scores,
+    onset_frames,
     start,
     history,
-    horizons,
+    horizon,
     score_threshold=1.0,
-    min_anomaly_frames=3,
 ):
+    """
+    Strict horizon-specific category.
+
+    Let stop = first future frame after the history window.
+
+    already_anomalous:
+        final history frame is already >= threshold
+
+    pre_onset:
+        history is currently normal AND a stable anomaly onset starts
+        inside [stop, stop+horizon-1]
+
+    transition_other:
+        history is normal; no stable onset begins inside horizon, but at least
+        one transient threshold crossing occurs inside the horizon
+
+    normal_to_normal:
+        history is normal and there is no threshold crossing inside horizon
+    """
     stop = int(start) + int(history)
     current_idx = stop - 1
 
-    current_anom = norm_scores[current_idx] >= score_threshold
+    if current_idx >= len(norm_scores):
+        return "invalid", None
 
-    future_indices = [stop + int(h) - 1 for h in horizons]
-    future_indices = [i for i in future_indices if i < len(norm_scores)]
-    future_values = norm_scores[future_indices] if future_indices else np.asarray([])
+    if norm_scores[current_idx] >= score_threshold:
+        return "already_anomalous", None
 
-    if current_anom:
-        return "already_anomalous"
+    future_end = min(stop + int(horizon) - 1, len(norm_scores) - 1)
 
-    future_stable = stable_future_anomaly(
-        norm_scores,
-        start_idx=stop,
-        min_frames=min_anomaly_frames,
-        threshold=score_threshold,
-    )
+    # Efficiently find the first stable onset >= stop.
+    pos = bisect.bisect_left(onset_frames, stop)
+    if pos < len(onset_frames):
+        onset = onset_frames[pos]
+        if onset <= future_end:
+            lead_frames = onset - current_idx
+            return "pre_onset", int(lead_frames)
 
-    if future_stable:
-        return "pre_onset"
+    # No stable onset in the requested forecast horizon.
+    future = norm_scores[stop:future_end + 1]
+    if len(future) and np.any(future >= score_threshold):
+        return "transition_other", None
 
-    if len(future_values) and np.all(future_values < score_threshold):
-        return "normal_to_normal"
-
-    return "transition_other"
+    return "normal_to_normal", None
 
 
 def scenario_from_file(path):
     stem = Path(path).stem
     return stem.replace("scenario_", "").replace("_maps", "")
 
+
+def map_scenario_to_file(scenario, file_paths):
+    scenario = str(scenario)
+    for fp in file_paths:
+        sc = scenario_from_file(fp)
+        if scenario == sc or scenario in fp or sc in scenario:
+            return fp
+    raise RuntimeError(
+        f"Could not map batch scenario '{scenario}' to a supplied test NPZ file"
+    )
+
+
+# ---------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------
 
 def main():
     args = parse_args()
@@ -214,33 +347,61 @@ def main():
         persistent_workers=args.num_workers > 0,
     )
 
-    # ckpt = torch.load(args.checkpoint, map_location=device)
-    ckpt = torch.load(
-    args.checkpoint,
-    map_location=device,
-    weights_only=False,
-    )
-    
+    try:
+        ckpt = torch.load(
+            args.checkpoint,
+            map_location=device,
+            weights_only=False,
+        )
+    except TypeError:
+        # Compatibility with older PyTorch.
+        ckpt = torch.load(args.checkpoint, map_location=device)
+
     config = ckpt.get("config", {})
     hidden = int(config.get("hidden", 32))
 
-    model = SpatialRiskConvLSTM(hidden, len(args.horizons)).to(device)
+    model = SpatialRiskConvLSTM(
+        hidden,
+        len(args.horizons),
+    ).to(device)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
 
     print(f"[model] checkpoint={args.checkpoint}")
     print(f"[model] hidden={hidden} horizons={args.horizons}")
 
-    scalar_cache = ScalarScoreCache(args.test)
     file_paths = [str(Path(f)) for f in args.test]
 
+    print("[events] precomputing normalized scores and stable anomaly onsets...")
+    event_cache = ScalarEventCache(
+        args.test,
+        threshold=args.score_threshold,
+        min_frames=args.min_anomaly_frames,
+    )
+
+    for fp in file_paths:
+        sc = scenario_from_file(fp)
+        d = np.load(fp, allow_pickle=True)
+        for area in [str(a) for a in d["areas"]]:
+            print(
+                f"[events] scenario={sc:>5s} area={area:<8s} "
+                f"stable_onsets={len(event_cache.onset_list(fp, area))}"
+            )
+
+    # Key:
+    # (group_type, group_value, horizon_category, model_name, horizon_frames)
     metrics = defaultdict(lambda: {
         "mae": [],
         "iou": [],
         "positive_iou": [],
+        "lead_frames": [],
         "count": 0,
     })
+
+    # key: (scenario, area, horizon, category)
     category_counts = defaultdict(int)
+
+    model_names = ("convlstm", "persistence", "linear_trend")
 
     with torch.no_grad():
         for batch_idx, batch in enumerate(loader):
@@ -249,11 +410,27 @@ def main():
 
             preds = {
                 "convlstm": model(x),
-                "persistence": persistence_forecast(x, len(args.horizons)),
+                "persistence": persistence_forecast(
+                    x, len(args.horizons)
+                ),
                 "linear_trend": linear_trend_forecast(
-                    x, args.horizons, args.trend_window
+                    x,
+                    args.horizons,
+                    args.trend_window,
                 ),
             }
+
+            computed = {}
+            for name, pred in preds.items():
+                computed[name] = {
+                    "mae": batch_mae(pred, y).cpu().numpy(),
+                    "iou": batch_iou(
+                        pred, y, args.risk_threshold
+                    ).cpu().numpy(),
+                    "positive_iou": batch_positive_target_iou(
+                        pred, y, args.risk_threshold
+                    ).cpu().numpy(),
+                }
 
             scenarios = batch["scenario"]
             areas = batch["area"]
@@ -266,55 +443,40 @@ def main():
             if torch.is_tensor(starts):
                 starts = starts.cpu().numpy().tolist()
 
-            computed = {}
-            for name, pred in preds.items():
-                computed[name] = {
-                    "mae": batch_mae(pred, y).cpu().numpy(),
-                    "iou": batch_iou(pred, y, args.risk_threshold).cpu().numpy(),
-                    "positive_iou": batch_positive_target_iou(
-                        pred, y, args.risk_threshold
-                    ).cpu().numpy(),
-                }
-
-            sample_meta = []
             for b in range(x.size(0)):
                 scenario = str(scenarios[b])
                 area = str(areas[b])
                 start = int(starts[b])
 
-                candidate_file = None
-                for fp in file_paths:
-                    sc = scenario_from_file(fp)
-                    if scenario == sc or scenario in fp or sc in scenario:
-                        candidate_file = fp
-                        break
-                if candidate_file is None:
-                    raise RuntimeError(
-                        f"Could not map scenario '{scenario}' to a test NPZ file"
+                fp = map_scenario_to_file(scenario, file_paths)
+                norm_scores = event_cache.sequence(fp, area)
+                onset_frames = event_cache.onset_list(fp, area)
+
+                for hi, horizon in enumerate(args.horizons):
+                    category, lead_frames = horizon_category(
+                        norm_scores=norm_scores,
+                        onset_frames=onset_frames,
+                        start=start,
+                        history=args.history,
+                        horizon=horizon,
+                        score_threshold=args.score_threshold,
                     )
 
-                norm_scores = scalar_cache.sequence(candidate_file, area)
-                category = classify_window(
-                    norm_scores,
-                    start,
-                    args.history,
-                    args.horizons,
-                    args.score_threshold,
-                    args.min_anomaly_frames,
-                )
-                category_counts[(scenario, area, category)] += 1
-                sample_meta.append((scenario, area, category))
+                    if category == "invalid":
+                        continue
 
-            for b, (scenario, area, category) in enumerate(sample_meta):
-                group_pairs = [
-                    ("overall", "all"),
-                    ("scenario", scenario),
-                    ("area", area),
-                    ("scenario_area", f"{scenario}:{area}"),
-                ]
+                    category_counts[
+                        (scenario, area, int(horizon), category)
+                    ] += 1
 
-                for model_name in preds:
-                    for hi, horizon in enumerate(args.horizons):
+                    group_pairs = [
+                        ("overall", "all"),
+                        ("scenario", scenario),
+                        ("area", area),
+                        ("scenario_area", f"{scenario}:{area}"),
+                    ]
+
+                    for model_name in model_names:
                         for group_type, group_value in group_pairs:
                             for cat in ("all", category):
                                 key = (
@@ -324,23 +486,42 @@ def main():
                                     model_name,
                                     int(horizon),
                                 )
-                                metrics[key]["mae"].append(
+                                bucket = metrics[key]
+                                bucket["mae"].append(
                                     float(computed[model_name]["mae"][b, hi])
                                 )
-                                metrics[key]["iou"].append(
+                                bucket["iou"].append(
                                     float(computed[model_name]["iou"][b, hi])
                                 )
-                                metrics[key]["positive_iou"].append(
-                                    float(computed[model_name]["positive_iou"][b, hi])
+                                bucket["positive_iou"].append(
+                                    float(
+                                        computed[model_name]["positive_iou"][b, hi]
+                                    )
                                 )
-                                metrics[key]["count"] += 1
+                                if lead_frames is not None:
+                                    bucket["lead_frames"].append(
+                                        int(lead_frames)
+                                    )
+                                bucket["count"] += 1
 
             if (batch_idx + 1) % 50 == 0 or (batch_idx + 1) == len(loader):
                 print(f"[eval] {batch_idx + 1}/{len(loader)} batches")
 
+    # -----------------------------------------------------------------
+    # Save detailed metrics
+    # -----------------------------------------------------------------
+
     rows = []
     for key, vals in metrics.items():
         group_type, group_value, category, model_name, horizon = key
+
+        lead_mean_frames = safe_mean(vals["lead_frames"])
+        lead_mean_sec = (
+            lead_mean_frames / args.fps
+            if not np.isnan(lead_mean_frames)
+            else float("nan")
+        )
+
         rows.append({
             "group_type": group_type,
             "group_value": group_value,
@@ -349,39 +530,57 @@ def main():
             "horizon_frames": horizon,
             "horizon_seconds": horizon / args.fps,
             "n_windows": vals["count"],
+            "mean_lead_frames": lead_mean_frames,
+            "mean_lead_seconds": lead_mean_sec,
             "mae": safe_nanmean(vals["mae"]),
             "iou": safe_nanmean(vals["iou"]),
             "positive_target_iou": safe_nanmean(vals["positive_iou"]),
         })
 
-    rows.sort(key=lambda r: (
-        r["group_type"],
-        r["group_value"],
-        r["category"],
-        r["horizon_frames"],
-        r["model"],
-    ))
+    rows.sort(
+        key=lambda r: (
+            r["group_type"],
+            r["group_value"],
+            r["category"],
+            r["horizon_frames"],
+            r["model"],
+        )
+    )
 
-    metrics_csv = args.output_dir / "e1B_metrics.csv"
+    metrics_csv = args.output_dir / "e1B2_metrics.csv"
     with metrics_csv.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        writer = csv.DictWriter(
+            f,
+            fieldnames=list(rows[0].keys()),
+        )
         writer.writeheader()
         writer.writerows(rows)
 
-    count_rows = [
-        {
+    count_rows = []
+    for (scenario, area, horizon, category), n in sorted(
+        category_counts.items()
+    ):
+        count_rows.append({
             "scenario": scenario,
             "area": area,
+            "horizon_frames": horizon,
+            "horizon_seconds": horizon / args.fps,
             "category": category,
-            "n_windows": n,
-        }
-        for (scenario, area, category), n in sorted(category_counts.items())
-    ]
-    count_csv = args.output_dir / "e1B_window_categories.csv"
-    with count_csv.open("w", newline="", encoding="utf-8") as f:
+            "n_windows": int(n),
+        })
+
+    counts_csv = args.output_dir / "e1B2_window_categories.csv"
+    with counts_csv.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
             f,
-            fieldnames=["scenario", "area", "category", "n_windows"],
+            fieldnames=[
+                "scenario",
+                "area",
+                "horizon_frames",
+                "horizon_seconds",
+                "category",
+                "n_windows",
+            ],
         )
         writer.writeheader()
         writer.writerows(count_rows)
@@ -396,11 +595,37 @@ def main():
         "score_threshold": args.score_threshold,
         "min_anomaly_frames": args.min_anomaly_frames,
         "trend_window": args.trend_window,
+        "definition": {
+            "pre_onset": (
+                "Final history frame is normal and a stable anomaly onset "
+                "begins within the evaluated forecast horizon."
+            ),
+            "already_anomalous": (
+                "Final history frame is already above the normalized scalar "
+                "ADVIS threshold."
+            ),
+            "normal_to_normal": (
+                "History ends normal and no scalar threshold crossing occurs "
+                "inside the evaluated forecast horizon."
+            ),
+            "transition_other": (
+                "History ends normal and a transient threshold crossing occurs "
+                "inside the horizon without satisfying stable-onset duration."
+            ),
+        },
         "rows": rows,
         "window_categories": count_rows,
     }
-    summary_json = args.output_dir / "e1B_summary.json"
-    summary_json.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+
+    summary_json = args.output_dir / "e1B2_summary.json"
+    summary_json.write_text(
+        json.dumps(summary, indent=2),
+        encoding="utf-8",
+    )
+
+    # -----------------------------------------------------------------
+    # Console headline tables
+    # -----------------------------------------------------------------
 
     def lookup(category, model_name, horizon):
         for r in rows:
@@ -414,8 +639,12 @@ def main():
                 return r
         return None
 
-    print("\n=== OVERALL ===")
-    print("horizon,model_MAE,persistence_MAE,trend_MAE,model_IoU,persistence_IoU,trend_IoU")
+    print("\n=== E1-B2 OVERALL ===")
+    print(
+        "horizon,"
+        "model_MAE,persistence_MAE,trend_MAE,"
+        "model_IoU,persistence_IoU,trend_IoU"
+    )
     for h in args.horizons:
         m = lookup("all", "convlstm", h)
         p = lookup("all", "persistence", h)
@@ -426,32 +655,53 @@ def main():
             f"{m['iou']:.6f},{p['iou']:.6f},{t['iou']:.6f}"
         )
 
-    print("\n=== PRE-ONSET ONLY ===")
-    print("horizon,n_windows,model_MAE,persistence_MAE,trend_MAE,model_posIoU,persistence_posIoU,trend_posIoU")
+    print("\n=== HORIZON-SPECIFIC PRE-ONSET ===")
+    print(
+        "horizon,horizon_sec,n_windows,mean_lead_sec,"
+        "model_MAE,persistence_MAE,trend_MAE,"
+        "model_posIoU,persistence_posIoU,trend_posIoU"
+    )
     for h in args.horizons:
         m = lookup("pre_onset", "convlstm", h)
         p = lookup("pre_onset", "persistence", h)
         t = lookup("pre_onset", "linear_trend", h)
+
         if m is None:
-            print(f"{h},0,NA,NA,NA,NA,NA,NA")
+            print(
+                f"{h},{h / args.fps:.2f},0,NA,"
+                "NA,NA,NA,NA,NA,NA"
+            )
             continue
+
         print(
-            f"{h},{m['n_windows']},"
+            f"{h},{h / args.fps:.2f},{m['n_windows']},"
+            f"{m['mean_lead_seconds']:.3f},"
             f"{m['mae']:.6f},{p['mae']:.6f},{t['mae']:.6f},"
             f"{m['positive_target_iou']:.6f},"
             f"{p['positive_target_iou']:.6f},"
             f"{t['positive_target_iou']:.6f}"
         )
 
-    print("\n=== WINDOW CATEGORY COUNTS ===")
+    print("\n=== HORIZON-SPECIFIC WINDOW COUNTS ===")
     totals = defaultdict(int)
     for r in count_rows:
-        totals[r["category"]] += r["n_windows"]
-    for category, n in sorted(totals.items()):
-        print(f"{category:20s} {n:8d}")
+        totals[(r["horizon_frames"], r["category"])] += r["n_windows"]
+
+    for h in args.horizons:
+        print(f"\n+h={h} frames ({h / args.fps:.2f}s)")
+        for category in (
+            "normal_to_normal",
+            "pre_onset",
+            "already_anomalous",
+            "transition_other",
+        ):
+            print(
+                f"  {category:20s} "
+                f"{totals.get((h, category), 0):8d}"
+            )
 
     print(f"\n[save] {metrics_csv}")
-    print(f"[save] {count_csv}")
+    print(f"[save] {counts_csv}")
     print(f"[save] {summary_json}")
 
 
