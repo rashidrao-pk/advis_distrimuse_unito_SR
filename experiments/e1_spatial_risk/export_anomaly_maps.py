@@ -17,6 +17,7 @@ import cv2
 import numpy as np
 import torch
 import yaml
+from tqdm import tqdm
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = REPO_ROOT / "scripts"
@@ -71,6 +72,35 @@ def select_device(cpu: bool) -> torch.device:
 def load_config(path: Path) -> dict:
     with path.expanduser().resolve().open("r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
+
+
+def expected_export_frames(
+    video_path: Path, skip_first: int, frame_stride: int,
+    max_frames: int | None,
+) -> int | None:
+    """Estimate yielded frames so tqdm can report percentage and ETA."""
+    if skip_first < 0:
+        raise ValueError("--skip-first must be non-negative")
+    if frame_stride < 1:
+        raise ValueError("--frame-stride must be at least 1")
+    if max_frames is not None and max_frames < 1:
+        raise ValueError("--max-frames must be at least 1")
+
+    capture = cv2.VideoCapture(str(video_path))
+    try:
+        if not capture.isOpened():
+            return None
+        source_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+    finally:
+        capture.release()
+
+    if source_frames <= 0:
+        return None
+    usable_frames = max(0, source_frames - skip_first)
+    exported_frames = (usable_frames + frame_stride - 1) // frame_stride
+    if max_frames is not None:
+        exported_frames = min(exported_frames, max_frames)
+    return exported_frames
 
 
 def build_model_args(args: argparse.Namespace, config: dict) -> SimpleNamespace:
@@ -163,7 +193,16 @@ def main() -> None:
     sample_ids = []
     mask_geometries = None
 
-    for i, (sample_id, frame) in enumerate(offline.iter_video(iter_args)):
+    progress = tqdm(
+        offline.iter_video(iter_args),
+        total=expected_export_frames(
+            video_path, args.skip_first, args.frame_stride, args.max_frames
+        ),
+        desc=f"Exporting scenario {scenario_id}",
+        unit="frame",
+        dynamic_ncols=True,
+    )
+    for i, (sample_id, frame) in enumerate(progress):
         if mask_geometries is None:
             mask_geometries = OrderedDict(
                 (area, offline.prepare_mask_geometry(masks[area], frame.shape))
@@ -182,8 +221,10 @@ def main() -> None:
         score_rows.append(frame_scores)
         threshold_rows.append(frame_thresholds)
         sample_ids.append(str(sample_id))
+        progress.set_postfix(device=device.type, refresh=False)
         if args.max_frames is not None and (i + 1) >= args.max_frames:
             break
+    progress.close()
 
     if not map_rows:
         raise RuntimeError("No frames were exported")

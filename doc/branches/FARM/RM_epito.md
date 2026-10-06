@@ -22,7 +22,7 @@ cd /beegfs/home/mrashid/repos/advis_distrimuse_unito_SR
 
 ```bash
 python experiments/e1_spatial_risk/export_anomaly_maps.py \
-  --config configs/cf_dataset_mac.yaml \
+  --config configs/cf_dataset_epito.yaml \
   --scenario 13_1 \
   --threshold-calibration-mode val \
   --threshold-strategy percentile \
@@ -88,7 +88,7 @@ do
   echo "======================================"
 
   python experiments/e1_spatial_risk/export_anomaly_maps.py \
-    --config configs/cf_dataset_mac.yaml \
+    --config configs/cf_dataset_epito.yaml \
     --scenario "$sid" \
     --threshold-calibration-mode val \
     --threshold-strategy percentile \
