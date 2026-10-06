@@ -196,8 +196,8 @@ python experiments/e1_spatial_risk/train_e1.py \
   --window-stride 1 \
   --hidden 32 \
   --epochs 30 \
-  --batch-size 8 \
+  --batch-size 32 \
   --lr 0.001 \
-  --num-workers 0 \
+  --num-workers 4 \
   --output results/V6/e1_spatial_risk/e1A_convlstm.pt
 ```
