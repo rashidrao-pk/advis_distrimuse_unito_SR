@@ -28,6 +28,13 @@ LABEL_COLORS = {
 }
 
 
+def trapezoidal_area(y: np.ndarray, x: np.ndarray) -> float:
+    """Integrate with NumPy 1.x and 2.x compatible APIs."""
+    if hasattr(np, "trapezoid"):
+        return float(np.trapezoid(y, x))
+    return float(np.trapz(y, x))
+
+
 def boolean_series(series: pd.Series) -> pd.Series:
     if pd.api.types.is_bool_dtype(series):
         return series.fillna(False)
@@ -157,7 +164,7 @@ def ranking_curve_data(group: pd.DataFrame) -> dict:
     return {
         "fpr": fpr, "tpr": tpr,
         "recall": recall, "precision": precision,
-        "auroc": float(np.trapezoid(tpr, fpr)),
+        "auroc": trapezoidal_area(tpr, fpr),
         "auprc": float(np.sum(np.diff(recall) * precision[1:])),
     }
 
@@ -433,6 +440,50 @@ def safe_filename(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "-", str(value)).strip("-")
 
 
+def scenario_id_from_annotation_path(annotation_csv: Path) -> str | None:
+    """Extract IDs such as 8_16 from scenario_8_16_back_view_annotations.csv."""
+    match = re.match(
+        r"^scenario_(.+?)_(?:back|front)_view_annotations$",
+        annotation_csv.stem,
+    )
+    return match.group(1) if match else None
+
+
+def evaluation_plot_context(
+    data: pd.DataFrame, scenario_label: str | None = None,
+) -> str:
+    """Return a compact scenario and anomaly-score label for static plots."""
+    scenario_column = next(
+        (name for name in ("scenario_id", "source_scenario_id") if name in data),
+        None,
+    )
+    scenarios = (
+        list(dict.fromkeys(data[scenario_column].dropna().astype(str)))
+        if scenario_column else []
+    )
+    if scenario_label:
+        scenario_text = scenario_label
+    elif len(scenarios) > 4:
+        scenario_text = f"{scenarios[0]} … {scenarios[-1]} ({len(scenarios)} scenarios)"
+    else:
+        scenario_text = ", ".join(scenarios) or "unknown"
+
+    score_column = next(
+        (
+            name for name in (
+                "inference_score_func", "score_func", "calibration_score_func",
+            ) if name in data
+        ),
+        None,
+    )
+    score_names = (
+        list(dict.fromkeys(data[score_column].dropna().astype(str)))
+        if score_column else []
+    )
+    score_text = ", ".join(score_names) or "unknown score"
+    return f"Scenario {scenario_text} | {score_text}"
+
+
 def plot_confusion_matrix(path: Path, title: str, metrics: dict) -> None:
     matrix = np.array([[metrics["tn"], metrics["fp"]],
                        [metrics["fn"], metrics["tp"]]], dtype=int)
@@ -453,13 +504,16 @@ def plot_confusion_matrix(path: Path, title: str, metrics: dict) -> None:
     plt.close(figure)
 
 
-def save_evaluation_plots(data: pd.DataFrame, output_dir: Path) -> dict:
+def save_evaluation_plots(
+    data: pd.DataFrame, output_dir: Path, scenario_label: str | None = None,
+) -> dict:
     """Save per-area and cumulative diagnostic plots for each strategy."""
     output_dir.mkdir(parents=True, exist_ok=True)
     artifacts = {}
     metric_names = ("precision", "recall", "f1", "accuracy", "balanced_accuracy")
     for strategy, strategy_group in data.groupby("score_strategy", sort=False):
         strategy_name = safe_filename(strategy)
+        plot_context = evaluation_plot_context(strategy_group, scenario_label)
         groups = [(area, group) for area, group in strategy_group.groupby(
             "safety_area", sort=False
         )]
@@ -472,7 +526,9 @@ def save_evaluation_plots(data: pd.DataFrame, output_dir: Path) -> dict:
         for name, group in groups:
             path = output_dir / f"{strategy_name}_{safe_filename(name)}_confusion_matrix.png"
             plot_confusion_matrix(
-                path, f"{strategy} — {name} confusion matrix", binary_metrics(group)
+                path,
+                f"{strategy} — {name} confusion matrix\n{plot_context}",
+                binary_metrics(group),
             )
             strategy_artifacts["confusion_matrices"][name] = str(path.resolve())
 
@@ -494,9 +550,11 @@ def save_evaluation_plots(data: pd.DataFrame, output_dir: Path) -> dict:
                        label=f"{name} (AUPRC={curve['auprc']:.3f})")
         roc_ax.plot((0, 1), (0, 1), "--", color="#64748b", linewidth=1)
         roc_ax.set(xlabel="False-positive rate", ylabel="True-positive rate",
-                   title=f"ROC curves — {strategy}", xlim=(0, 1), ylim=(0, 1))
+                   title=f"ROC curves — {strategy}\n{plot_context}",
+                   xlim=(0, 1), ylim=(0, 1))
         pr_ax.set(xlabel="Recall", ylabel="Precision",
-                  title=f"Precision–recall curves — {strategy}", xlim=(0, 1), ylim=(0, 1))
+                  title=f"Precision–recall curves — {strategy}\n{plot_context}",
+                  xlim=(0, 1), ylim=(0, 1))
         for ax in (roc_ax, pr_ax):
             ax.grid(alpha=0.25)
             ax.legend(fontsize=8)
@@ -518,13 +576,18 @@ def save_evaluation_plots(data: pd.DataFrame, output_dir: Path) -> dict:
                     ax.hist(values, bins=70, density=True, alpha=0.48,
                             label=f"{label} (n={len(values):,})", color=color)
             ax.axvline(1.0, color="#111827", linestyle="--", label="Decision threshold")
-            ax.set(title=name, xlabel="Normalized anomaly score", ylabel="Density")
+            ax.set(
+                title=f"{name}\n{plot_context}",
+                xlabel="Normalized anomaly score", ylabel="Density",
+            )
             ax.grid(alpha=0.2)
             ax.legend(fontsize=8)
         for ax in axes.flat[len(groups):]:
             ax.set_visible(False)
         distributions_path = output_dir / f"{strategy_name}_score_distributions.png"
-        figure.suptitle(f"Normal versus anomalous score distributions — {strategy}")
+        figure.suptitle(
+            f"Normal versus anomalous score distributions — {strategy}\n{plot_context}"
+        )
         figure.savefig(distributions_path, dpi=180, bbox_inches="tight")
         plt.close(figure)
         strategy_artifacts["score_distributions"] = str(distributions_path.resolve())
@@ -541,7 +604,7 @@ def save_evaluation_plots(data: pd.DataFrame, output_dir: Path) -> dict:
         ax.set_xticks(x, labels)
         ax.set_ylim(0, 1.05)
         ax.set_ylabel("Metric value")
-        ax.set_title(f"Evaluation metric summary — {strategy}")
+        ax.set_title(f"Evaluation metric summary — {strategy}\n{plot_context}")
         ax.grid(axis="y", alpha=0.25)
         ax.legend(ncols=3)
         metrics_path = output_dir / f"{strategy_name}_metrics_summary.png"
@@ -825,7 +888,9 @@ def main():
         if args.plots_dir else
         evaluation_output.parent / "plots" / evaluation_output.stem
     )
-    plot_artifacts = save_evaluation_plots(data, plots_output)
+    plot_artifacts = save_evaluation_plots(
+        data, plots_output, scenario_id_from_annotation_path(annotations)
+    )
     write_evaluation_json(
         evaluation_output, data, annotations, scores, output, threshold_dir,
         plot_artifacts,

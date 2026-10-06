@@ -167,7 +167,7 @@ done
 # Process UnExpected Videos to frames
 pixi run python scripts/process_rosbags_to_dataset.py \
   --config configs/cf_dataset_mac.yaml \
-  --scenario 9_0 \
+  --scenario 4_0 \
   --camera back_view \
   --process-to frames \
   --stretch \

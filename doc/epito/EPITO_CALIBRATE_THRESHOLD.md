@@ -318,7 +318,8 @@ python scripts/calibrate_threshold.py \
   --offset 3 \
   --sigma 1.5 \
   --quantile 0.99 \
-  --taas_backend cython
+  --taas_backend cython \
+  --plot_test_distribution KDE_HIST
 ```
 
 #### RUN IN MAC
@@ -341,4 +342,26 @@ python scripts/calibrate_threshold.py \
   --offset_ls 3 \
   --sigma_ls 1.5 \
   --quantile_ls 0.99
+```
+
+```bash
+set -euo pipefail
+
+for safarea in PRight PLeft RoboArm ConvBelt; do
+  scenario_dir="results/V6/thresholds/${safarea}/calibration_plots/scenario-8_16"
+
+  if [[ ! -d "$scenario_dir/json" ]]; then
+    echo "[SKIP] Calibration results not found: $scenario_dir/json"
+    continue
+  fi
+
+  echo "=========================================================="
+  echo "Safety area: $safarea"
+  echo "=========================================================="
+
+  python scripts/compare_threshold_calibrations.py \
+    "$scenario_dir" \
+    --rank-by balanced_accuracy
+done
+
 ```

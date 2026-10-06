@@ -1,24 +1,24 @@
 set -euo pipefail
 
-total=12
+total=36
 current=0
 
 annotations="/Users/rashid/data/PhD/datacloud_data/repos/DistriMuSe/advis_distrimuse_unito_SR/reports/safety_area_annotations/saved_annotation/scenario_8_16_back_view_annotations.csv"
 
 scores_dir="/Users/rashid/data/PhD/datacloud_data/repos/DistriMuSe/advis_distrimuse_unito_SR/results/V6/offline_inference"
 
-for ooff in 1 2; do
-  for ss in 1.0 1.5; do
-    for qq in 0.99 0.98 0.97; do
+for ooff in 1 2 3; do
+  for ss in 1.0 1.5 2.0; do
+    for qq in 0.999 0.99 0.98 0.97; do
       ((current += 1))
 
-      scores="${scores_dir}/video_8_16_percentile_off${ooff}_sig${ss}_q${qq}_scores.csv"
-
+      # scores="${scores_dir}/video_8_16_percentile_off${ooff}_sig${ss}_q${qq}_scores.csv"
+      scores="${scores_dir}/video_8_16_percentile_off${ooff}_sig${ss}_q${qq}_cal-val_scores.csv"
       echo "================================================================"
       echo "Combination ${current}/${total}"
       echo "Offset=${ooff}, Sigma=${ss}, Quantile=${qq}"
       echo "Scores: ${scores}"
-      echo "================================================================"
+      echo "----------------------------------------------------------------"
 
       if [[ ! -f "$scores" ]]; then
         echo "[ERROR] Score CSV does not exist: $scores"

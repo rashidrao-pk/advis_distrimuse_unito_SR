@@ -90,6 +90,41 @@ def test_current_annotation_layout_supplies_binary_test_labels(tmp_path):
     assert metadata["source_scenarios"] == [{
         "scenario_id": "13_0", "description": "test scenario"
     }]
+    assert metadata["sample_order"] == "annotation_timeline"
+
+
+def test_test_discovery_preserves_annotation_event_order(tmp_path):
+    test_root = tmp_path / "test"
+    rows = []
+    event_labels = ("anomalous", "normal", "anomalous", "normal")
+    for frame_id, label in enumerate(event_labels):
+        filename = f"s-8_0_s-PRight_f-{frame_id:06d}.png"
+        folder = test_root / "8_16" / "PRight" / label
+        folder.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (128, 128), color=(frame_id, 0, 0)).save(
+            folder / filename
+        )
+        rows.append({
+            "scenario_id": "unified",
+            "camera": "back_view",
+            "safety_area": "PRight",
+            "frame_position": frame_id + 1,
+            "filename": filename,
+            "label": label.title(),
+        })
+
+    annotation = tmp_path / "scenario_8_16_back_view_annotations.csv"
+    pd.DataFrame(rows).to_csv(annotation, index=False)
+
+    samples, metadata = discover_annotated_test_samples(
+        test_root, "PRight", [annotation], requested_scenarios=["8_16"]
+    )
+
+    assert [Path(path).name for path, _ in samples] == [
+        row["filename"] for row in rows
+    ]
+    assert [label for _, label in samples] == [1, 0, 1, 0]
+    assert metadata["sample_order"] == "annotation_timeline"
 
 
 def test_unified_annotation_uses_scenario_id_from_csv_filename(tmp_path):
@@ -172,6 +207,24 @@ def test_singular_test_scenario_cli_alias():
     ])
     assert args.test_scenarios == ["13_1"]
     assert args.test_folder == "/Users/rashid/data/DS/SR/v6/Jul27/test"
+
+
+def test_test_distribution_cli_is_case_insensitive():
+    config = Path(__file__).resolve().parents[1] / "configs" / "cf_dataset_mac.yaml"
+    args = parse_args([
+        "--config", str(config),
+        "--plot_test_distribution", "kde_hist",
+    ])
+    assert args.plot_test_distribution == "KDE_HIST"
+
+
+def test_annotation_background_uses_contiguous_label_regions():
+    figure, axis = calibration.plt.subplots()
+    calibration._shade_annotation_background(axis, [0, 0, 1, 1, 0])
+    try:
+        assert len(axis.patches) == 3
+    finally:
+        calibration.plt.close(figure)
 
 
 def test_test_scenario_reports_expected_annotation_filename(tmp_path):
@@ -402,11 +455,34 @@ def test_combination_results_save_every_candidate_and_mark_winner(tmp_path):
     assert saved["TAAS_OFF1-s_1.0-q_0.99"]["rank"] == 2
 
 
-def test_anomalous_only_area_is_skipped_without_overwriting_threshold(tmp_path):
+def test_anomalous_only_test_calibration_uses_lower_tail_threshold(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setattr(
+        calibration,
+        "_compute_scores_for_loader",
+        lambda *unused: (
+            [0.1, 0.2, 0.3],
+            [1, 1, 1],
+            ["a.png", "b.png", "c.png"],
+        ),
+    )
+    args = SimpleNamespace(
+        mode="test",
+        offset=1,
+        sigma=1.0,
+        quantile=0.99,
+        taas_variant="canonical",
+        taas_backend="numpy",
+        threshold_strategy="percentile",
+        threshold_percentile=90.0,
+        threshold_n_sigma=3.0,
+        threshold_method="f1c",
+        plot_test_distribution="HIST",
+        monitor_score="binormal_auc",
+    )
     area_out = tmp_path / "PLeft"
     area_out.mkdir()
-    existing_threshold = area_out / "threshold_PLeft_f1c_off1_sig1.0_q0.99.json"
-    existing_threshold.write_text('{"threshold": 0.42}', encoding="utf-8")
     metadata = {
         "scenarios": ["13_1"],
         "source_scenarios": [{
@@ -415,18 +491,35 @@ def test_anomalous_only_area_is_skipped_without_overwriting_threshold(tmp_path):
         "annotation_csvs": ["scenario_13_1_back_view_annotations.csv"],
         "test_root": "/data/test",
         "normal": 0,
-        "anomalous": 215,
-        "verify_excluded": 401,
+        "anomalous": 3,
+        "verify_excluded": 0,
     }
 
-    summary = calibration._skip_test_calibration_without_normal(
-        "PLeft", metadata, str(area_out), "_scenario-13_1"
+    summary = calibration._run_anomalous_only_test_calibration(
+        "PLeft", args, torch.device("cpu"), None, None, metadata,
+        None, None, "PLeft_64", 12, str(area_out), str(tmp_path),
+        "_scenario-13_1",
     )
 
-    assert summary["status"] == "skipped"
-    assert summary["threshold"] is None
-    assert summary["threshold_written"] is False
-    assert existing_threshold.read_text(encoding="utf-8") == '{"threshold": 0.42}'
-    assert (
-        area_out / "calibration_skipped_PLeft_scenario-13_1_no-normal.json"
-    ).is_file()
+    assert summary["threshold"] == pytest.approx(0.12)
+    assert summary["threshold_strategy"] == "percentile"
+    assert summary["threshold_tail"] == "lower"
+    assert summary["calibration_mode"] == "anomalous_only_fallback"
+    assert summary["supervised_metrics_available"] is False
+    assert summary["one_class_recall_available"] is True
+    assert summary["n_normal"] == 0
+    assert summary["n_anomalous"] == 3
+    assert summary["best_recall"] == pytest.approx(2 / 3)
+    metrics = pd.read_csv(
+        area_out / "anomaly_metrics_PLeft_scenario-13_1.csv"
+    )
+    assert metrics.loc[0, "Status"] == "anomalous_only_recall_available"
+    artifact_dir = area_out / "calibration_plots" / "scenario-13_1"
+    assert list((artifact_dir / "plots").glob("*.png"))
+    combination_jsons = list((artifact_dir / "json").glob("*.json"))
+    assert len(combination_jsons) == 1
+    payload = json.loads(combination_jsons[0].read_text(encoding="utf-8"))
+    assert payload["is_best"] is True
+    assert payload["calibration_mode"] == "anomalous_only_fallback"
+    assert payload["metrics"]["true_positive"] == 2
+    assert payload["metrics"]["false_negative"] == 1
