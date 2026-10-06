@@ -1,0 +1,181 @@
+```bash
+python experiments/e1_spatial_risk/export_anomaly_maps.py \
+  --config configs/cf_dataset_mac.yaml \
+  --scenario 13_1 \
+  --threshold-calibration-mode val \
+  --threshold-strategy percentile \
+  --offset 3 \
+  --sigma 2.0 \
+  --quantile 0.99 \
+  --threshold-amplification 1.5 1.15 1.2 1.2 \
+  --taas-backend cython \
+  --effective-fps 5
+```
+
+```bash
+python - <<'PY'
+import numpy as np
+
+p = "results/V6/e1_spatial_risk/exports/scenario_13_1_maps.npz"
+d = np.load(p, allow_pickle=True)
+
+print("Keys:", d.files)
+for k in d.files:
+    x = d[k]
+    print(f"{k:15s} shape={x.shape} dtype={x.dtype}")
+
+print("\nAreas:", d["areas"])
+
+risk = d["risk_maps"]
+scores = d["scores"]
+
+print("\nRisk statistics")
+print("min :", risk.min())
+print("mean:", risk.mean())
+print("max :", risk.max())
+
+print("\nScore statistics by area")
+for i, area in enumerate(d["areas"]):
+    print(
+        area,
+        "min=", scores[:, i].min(),
+        "mean=", scores[:, i].mean(),
+        "max=", scores[:, i].max(),
+    )
+PY
+```
+
+## Run for All Scenarios
+
+```bash
+for sid in \
+8_0 8_1 8_2 \
+8_3 8_4 \
+9_0 \
+10_0 10_1 \
+11_0 11_1 \
+12_0 12_1 \
+13_0 \
+14_0 14_1 \
+15_0 \
+16_0 16_1
+do
+
+  echo "======================================"
+  echo "E1 export scenario: $sid"
+  echo "======================================"
+
+  python experiments/e1_spatial_risk/export_anomaly_maps.py \
+    --config configs/cf_dataset_mac.yaml \
+    --scenario "$sid" \
+    --threshold-calibration-mode val \
+    --threshold-strategy percentile \
+    --offset 3 \
+    --sigma 2.0 \
+    --quantile 0.99 \
+    --threshold-amplification 1.5 1.15 1.2 1.2 \
+    --taas-backend cython \
+    --effective-fps 5
+
+done
+```
+
+```bash
+python - <<'PY'
+import numpy as np
+
+p = "results/V6/e1_spatial_risk/exports/scenario_13_1_maps.npz"
+d = np.load(p, allow_pickle=True)
+
+scores = d["scores"]
+thresholds = d["thresholds"]
+areas = d["areas"]
+
+norm = scores / thresholds
+
+print("\n=== E1.0 threshold crossing analysis ===")
+
+for i, area in enumerate(areas):
+    x = norm[:, i]
+
+    anomalous = x > 1.0
+    idx = np.where(anomalous)[0]
+
+    print(f"\n{area}")
+    print(f"  min norm : {x.min():.3f}")
+    print(f"  mean norm: {x.mean():.3f}")
+    print(f"  max norm : {x.max():.3f}")
+    print(f"  anomalous frames: {anomalous.sum()} / {len(x)} "
+          f"({100*anomalous.mean():.1f}%)")
+
+    if len(idx):
+        print(f"  first threshold crossing: frame {idx[0]}")
+        print(f"  last threshold crossing : frame {idx[-1]}")
+
+        # contiguous anomaly starts
+        starts = np.where(
+            anomalous & np.r_[True, ~anomalous[:-1]]
+        )[0]
+
+        print(f"  anomaly episode starts: {starts[:20]}")
+    else:
+        print("  no threshold crossing")
+PY
+```
+
+### PLOT
+
+```bash
+python experiments/e1_spatial_risk/plot_e1_precursors.py \
+  --input-dir results/V6/e1_spatial_risk/exports \
+  --fps 5
+
+open results/V6/e1_spatial_risk/precursor_plots
+```
+
+```bash
+ls -lh results/V6/e1_spatial_risk/exports/
+```
+
+## TRAIN:
+
+### Smoke test
+
+```bash
+python experiments/e1_spatial_risk/train_e1.py \
+  --train \
+    results/V6/e1_spatial_risk/exports/scenario_8_0_maps.npz \
+    results/V6/e1_spatial_risk/exports/scenario_8_1_maps.npz \
+    results/V6/e1_spatial_risk/exports/scenario_13_0_maps.npz \
+  --val \
+    results/V6/e1_spatial_risk/exports/scenario_8_3_maps.npz \
+    results/V6/e1_spatial_risk/exports/scenario_12_1_maps.npz \
+  --history 15 \
+  --horizons 3 5 10 15 \
+  --epochs 2 \
+  --batch-size 4 \
+  --num-workers 0
+```
+
+```bash
+python experiments/e1_spatial_risk/train_e1.py \
+  --train \
+    results/V6/e1_spatial_risk/exports/scenario_8_0_maps.npz \
+    results/V6/e1_spatial_risk/exports/scenario_8_1_maps.npz \
+    results/V6/e1_spatial_risk/exports/scenario_8_2_maps.npz \
+    results/V6/e1_spatial_risk/exports/scenario_9_0_maps.npz \
+    results/V6/e1_spatial_risk/exports/scenario_12_0_maps.npz \
+    results/V6/e1_spatial_risk/exports/scenario_15_0_maps.npz \
+  --val \
+    results/V6/e1_spatial_risk/exports/scenario_8_3_maps.npz \
+    results/V6/e1_spatial_risk/exports/scenario_12_1_maps.npz \
+  --history 15 \
+  --horizons 3 5 10 15 \
+  --window-stride 1 \
+  --hidden 32 \
+  --epochs 30 \
+  --batch-size 8 \
+  --lr 0.001 \
+  --num-workers 0 \
+  --output results/V6/e1_spatial_risk/e1A_convlstm.pt
+```
