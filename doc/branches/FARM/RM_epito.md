@@ -231,3 +231,75 @@ python experiments/e1_spatial_risk/evaluate_e1.py \
   --trend-window 5 \
   --output-dir results/V6/e1_spatial_risk/eval_e1B
 ```
+
+- pre-onset horizon-specific
+
+```bash
+python experiments/e1_spatial_risk/evaluate_e1.py \
+  --checkpoint results/V6/e1_spatial_risk/e1A_convlstm.pt \
+  --test \
+    results/V6/e1_spatial_risk/exports/scenario_8_4_maps.npz \
+    results/V6/e1_spatial_risk/exports/scenario_16_0_maps.npz \
+  --history 15 \
+  --horizons 3 5 10 15 \
+  --batch-size 32 \
+  --num-workers 4 \
+  --fps 5 \
+  --score-threshold 1.0 \
+  --min-anomaly-frames 3 \
+  --trend-window 5 \
+  --output-dir results/V6/e1_spatial_risk/eval_e1B2
+```
+
+```bash
+python experiments/e1_spatial_risk/train_e1c.py \
+  --train \
+    results/V6/e1_spatial_risk/exports/scenario_8_0_maps.npz \
+    results/V6/e1_spatial_risk/exports/scenario_8_1_maps.npz \
+    results/V6/e1_spatial_risk/exports/scenario_8_2_maps.npz \
+    results/V6/e1_spatial_risk/exports/scenario_9_0_maps.npz \
+    results/V6/e1_spatial_risk/exports/scenario_12_0_maps.npz \
+    results/V6/e1_spatial_risk/exports/scenario_15_0_maps.npz \
+  --val \
+    results/V6/e1_spatial_risk/exports/scenario_8_3_maps.npz \
+    results/V6/e1_spatial_risk/exports/scenario_12_1_maps.npz \
+  --history 15 \
+  --horizons 3 5 10 15 \
+  --window-stride 1 \
+  --hidden 32 \
+  --epochs 30 \
+  --batch-size 32 \
+  --lr 0.001 \
+  --num-workers 4 \
+  --risk-threshold 0.5 \
+  --loss-mode l1_bce_dice \
+  --lambda-l1 1.0 \
+  --lambda-high-risk 2.0 \
+  --lambda-bce 0.5 \
+  --lambda-dice 0.5 \
+  --high-risk-weight 4.0 \
+  --amp \
+  --amp-dtype float16 \
+  --early-stop-patience 7 \
+  --verbose 2 \
+  --output results/V6/e1_spatial_risk/e1C_convlstm_localization.pt
+```
+
+- Validation of new training
+
+```bash
+python experiments/e1_spatial_risk/evaluate_e1.py \
+  --checkpoint results/V6/e1_spatial_risk/e1C_convlstm_localization.pt \
+  --test \
+    results/V6/e1_spatial_risk/exports/scenario_8_4_maps.npz \
+    results/V6/e1_spatial_risk/exports/scenario_16_0_maps.npz \
+  --history 15 \
+  --horizons 3 5 10 15 \
+  --batch-size 32 \
+  --num-workers 4 \
+  --fps 5 \
+  --score-threshold 1.0 \
+  --min-anomaly-frames 3 \
+  --trend-window 5 \
+  --output-dir results/V6/e1_spatial_risk/eval_e1C
+```
