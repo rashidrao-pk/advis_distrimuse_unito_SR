@@ -66,9 +66,16 @@ class LocalizationAwareLoss(nn.Module):
                            "bce":zero,"dice_loss":zero}
 
         temperature=0.10
-        pred_prob=torch.sigmoid((pred-self.risk_threshold)/temperature)
+        logits=(pred-self.risk_threshold)/temperature
+        pred_prob=torch.sigmoid(logits)
         target_binary=high_mask
-        bce=nn.functional.binary_cross_entropy(pred_prob,target_binary)
+
+        # AMP-safe BCE: operate on logits rather than sigmoid probabilities.
+        bce=nn.functional.binary_cross_entropy_with_logits(
+            logits,
+            target_binary,
+        )
+
         dims=tuple(range(2,pred_prob.ndim))
         inter=(pred_prob*target_binary).sum(dim=dims)
         denom=pred_prob.sum(dim=dims)+target_binary.sum(dim=dims)
