@@ -1,7 +1,7 @@
 ## Inference
 
 ```bash
-pixi run python scripts/inference_live_shifted.py   --config configs/cf_dataset_hp.yaml   --camera_topic /camera/back_view/image_raw   --message_type auto   --safety_areas ALL   --threshold_strategy percentile   --offset 3   --sigma 2.0   --quantile 0.99   --taas_backend cython   --rolling min   --rolling_window 10   --detections_topic /advis/detections   --log_every_n 1   --profile_timing   --publish_zenoh   --debug_mode --add_score_name   --zenoh_endpoint tcp/127.0.0.1:7447   --frame_shift_y -20   --frame_shift_fill replicate --threshold_amplification 3 3.1 3.5 8
+pixi run python scripts/inference_live_shifted.py   --config configs/cf_dataset_hp.yaml   --camera_topic /camera/back_view/image_raw   --message_type auto   --safety_areas ALL   --threshold_strategy percentile   --offset 3   --sigma 2.0   --quantile 0.99   --taas_backend cython   --rolling min   --rolling_window 10   --detections_topic /advis/detections   --log_every_n 1   --profile_timing   --publish_zenoh   --debug_mode --add_score_name   --zenoh_endpoint tcp/127.0.0.1:7447 --dashboard_topic /advis/dashboard/image/compressed   --frame_shift_y -20   --frame_shift_fill replicate --threshold_amplification 3 3.1 3.5 8
 ```
 
 ## Zenoh Dashboard
@@ -29,7 +29,8 @@ exec ros2 bag record \
   --topics \
   /camera/back_view/image_raw \
   /advis/detections \
-  /rulex/data
+  /rulex/data \
+  /advis/dashboard/image/compressed
 '
 ```
 
