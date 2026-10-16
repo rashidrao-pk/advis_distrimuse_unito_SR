@@ -242,3 +242,20 @@ training:
 models:
   checkpoints: results/V6/train/models
   latent_dims: 64
+
+#
+r2ad:
+  dataset_version: V6
+
+  # Original full-resolution frame directories
+  normal_source: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/sources/normal
+  unexpected_source: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/sources/unexpected
+
+  safety_zone_mask: /beegfs/home/mrashid/datasets/AD/SR/V6/masks/Mask_Generation_v6_SafetyZone.png
+
+  preprocessed_dir: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/full_frames
+
+  train_frames: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/full_frames/train/normal
+  val_frames: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/full_frames/val/normal
+  test_frames: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/full_frames/test
+  normal_test_frames: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/full_frames/test/normal
