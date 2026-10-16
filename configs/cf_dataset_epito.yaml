@@ -1,5 +1,5 @@
 data:
-  dataset_base: /beegfs/home/mrashid/datasets/AD/SR/V6
+  dataset_base: /beegfs/home/mrashid/datasets/AD/SR/V6/rosbags
   masks: /beegfs/home/mrashid/datasets/AD/SR/V6/masks
   mask_types:
     PLeft: /beegfs/home/mrashid/datasets/AD/SR/V6/masks/Mask_Generation_v6_PLeft.png
@@ -246,7 +246,7 @@ models:
 #
 r2ad:
   dataset_version: V6
-
+  rosbag_basepath: /beegfs/home/mrashid/datasets/AD/SR/V6/rosbags
   # Original full-resolution frame directories
   normal_source: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/sources/normal
   unexpected_source: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/sources/unexpected
