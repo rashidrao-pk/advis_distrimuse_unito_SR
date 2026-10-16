@@ -225,7 +225,7 @@ playback_options:
   camera: "back_view"
 
 results:
-  output_dir: "/beegfs/home/mrashid/repos/advis_distrimuse_unito_SR/results"
+  output_dir: "/beegfs/home/mrashid/repos/DistriMuSe/advis_distrimuse_unito_SR/results"
   output_filename: "results.json"
 
 training:
