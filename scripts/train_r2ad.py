@@ -11,7 +11,7 @@ from r2ad.core import build_models
 from r2ad.dataset import RectangleDataset
 from r2ad.mcap_data import McapRectangleDataset
 from r2ad.config import resolve, DEFAULT_CONFIG
-
+from tqdm.auto import tqdm
 def main():
     p=argparse.ArgumentParser(description='Train R2AD VAE-GAN using normal full-resolution images')
     p.add_argument('--dataset-source',choices=('images','mcap'),default='images')
@@ -58,9 +58,9 @@ def main():
     opt_d=torch.optim.Adam(disc.parameters(),lr=args.lr/2)
     bce=nn.BCEWithLogitsLoss();best=float('inf');out=Path(args.output);out.parent.mkdir(parents=True,exist_ok=True)
     print(f'[data] train frames={len(train.rows) if args.dataset_source=="mcap" else len(train.paths)}, val frames={len(val.rows) if args.dataset_source=="mcap" else len(val.paths)}, train patches/epoch={len(train)}')
-    for epoch in range(1,args.epochs+1):
+    for epoch in tqdm(range(1,args.epochs+1), desc = "Epochs"):
         enc.train();dec.train();disc.train();running=[]
-        for x in tr:
+        for x in tqdm(tr, desc='Batch'):
             x=x.to(device,non_blocking=True)
             mu,logvar=enc(x)
             z=mu+torch.randn_like(mu)*torch.exp(.5*logvar)
