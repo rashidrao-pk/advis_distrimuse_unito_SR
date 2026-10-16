@@ -4,11 +4,13 @@ from pathlib import Path
 import cv2,numpy as np,torch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from r2ad.core import images,read_mask,load_models,infer_map,save_map,transform_frame
+from r2ad.config import resolve, DEFAULT_CONFIG
 
 def main():
     p=argparse.ArgumentParser(description='R2AD inference, validation threshold calibration and shift tests')
-    p.add_argument('--input',required=True);p.add_argument('--mask',required=True);p.add_argument('--checkpoint',required=True)
-    p.add_argument('--output-dir',required=True);p.add_argument('--threshold-json')
+    p.add_argument('--config',default=str(DEFAULT_CONFIG));p.add_argument('--safety-area',required=True,choices=('PLeft','PRight','RoboArm','ConvBelt','SafetyZone'))
+    p.add_argument('--input');p.add_argument('--mask');p.add_argument('--checkpoint')
+    p.add_argument('--output-dir');p.add_argument('--threshold-json')
     p.add_argument('--calibrate',action='store_true',help='Compute a normal-only percentile threshold')
     p.add_argument('--threshold-percentile',type=float,default=99.0)
     p.add_argument('--patch-size',type=int,default=224);p.add_argument('--stride',type=int,default=64)
@@ -18,6 +20,7 @@ def main():
     p.add_argument('--angle',type=float,default=0);p.add_argument('--scale',type=float,default=1)
     p.add_argument('--device',default='auto');p.add_argument('--max-frames',type=int,default=0)
     args=p.parse_args()
+    args=resolve(args,'calibrate' if args.calibrate else 'evaluate')
     device=('cuda' if torch.cuda.is_available() else 'cpu') if args.device=='auto' else args.device
     enc,dec,ck=load_models(args.checkpoint,device)
     paths=images(args.input)

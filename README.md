@@ -130,3 +130,56 @@ scripts/stress_test_r2ad.py
 scripts/compare_scores.py
 tests/test_core.py
 ```
+
+## R²AD V1: Using the existing ADVIS configuration
+
+The V1 scripts now read `configs/cf_dataset_epito.yaml` with `--config` (default)
+plus `--safety-area PLeft|PRight|RoboArm|ConvBelt`.
+
+Existing configuration keys used **without duplication**:
+- `data.dataset_base`: root for relative R2AD image directories.
+- `data.mask_types.<area>`: the actual full-frame binary mask.
+- `models.latent_dims`: model latent dimensions.
+- `training.epochs`, `training.batch_size`, `training.num_workers`: training defaults.
+- `results.output_dir`: base output directory.
+
+Add this **small block** to the *end* of your existing `configs/cf_dataset_epito.yaml`, replacing only the `REPLACE_ME` paths. These must point to actual full-resolution original frames, not 128×128 crops. Paths may be absolute or relative to `data.dataset_base`:
+
+```yaml
+r2ad:
+  dataset_version: V6
+  train_frames: REPLACE_ME/full_frames/train/normal
+  val_frames: REPLACE_ME/full_frames/val/normal
+  test_frames: REPLACE_ME/full_frames/test
+  normal_test_frames: REPLACE_ME/full_frames/test/normal
+```
+
+**Do not** replace `data.training` or `data.testing`: the production ADVIS code
+still needs those existing cropped datasets. For meaningful metrics split recordings
+by scenario (not adjacent frames) and train/calibrate only on normal recordings.
+
+Run in repository root:
+
+```bash
+python scripts/train_r2ad.py --config configs/cf_dataset_epito.yaml --safety-area PLeft \
+  --patch-size 224 --samples-per-frame 6 --epochs 50 --batch-size 32
+
+python scripts/evaluate_r2ad.py --config configs/cf_dataset_epito.yaml --safety-area PLeft \
+  --calibrate --patch-size 224 --stride 64
+
+python scripts/evaluate_r2ad.py --config configs/cf_dataset_epito.yaml --safety-area PLeft \
+  --patch-size 224 --stride 64 --save-maps
+
+python scripts/stress_test_r2ad.py --config configs/cf_dataset_epito.yaml \
+  --safety-area PLeft --max-frames 30
+```
+
+Defaults resolve to these destinations under `results.output_dir`:
+`<result_base>/V6/r2ad/<area>/model_r2ad.pt`,
+`.../calibration/threshold.json`, `.../test/`, and `.../robustness/`.
+You can override all resolved paths with `--train-dir`, `--val-dir`, `--input`,
+`--mask`, `--checkpoint`, `--output`, `--output-dir`, or `--threshold-json`.
+
+**The earlier commands using explicit paths still work** when `--safety-area`
+is supplied. The R²AD output score is the original suite's stitched reconstruction
+residual, *not* existing TAAS, and needs its own validation threshold.

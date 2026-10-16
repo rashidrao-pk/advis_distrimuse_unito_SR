@@ -5,15 +5,17 @@ from pathlib import Path
 import cv2,numpy as np,torch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from r2ad.core import images,read_mask,load_models,infer_map,transform_frame
+from r2ad.config import resolve, DEFAULT_CONFIG
 
 def main():
     p=argparse.ArgumentParser()
-    for a in ('input','mask','checkpoint','threshold-json','output-dir'):p.add_argument('--'+a,required=True)
+    p.add_argument('--config',default=str(DEFAULT_CONFIG));p.add_argument('--safety-area',required=True,choices=('PLeft','PRight','RoboArm','ConvBelt','SafetyZone'))
+    for a in ('input','mask','checkpoint','threshold-json','output-dir'):p.add_argument('--'+a)
     p.add_argument('--max-frames',type=int,default=30);p.add_argument('--batch-size',type=int,default=32)
     p.add_argument('--device',default='auto');p.add_argument('--translate',nargs='+',type=float,default=[0,5,10,20,30])
     p.add_argument('--rotate',nargs='+',type=float,default=[0,1,2,3])
     p.add_argument('--scale',nargs='+',type=float,default=[1,.95,1.05])
-    args=p.parse_args();cfg=json.loads(Path(args.threshold_json).read_text())
+    args=resolve(p.parse_args(),'stress');cfg=json.loads(Path(args.threshold_json).read_text())
     device=('cuda' if torch.cuda.is_available() else 'cpu') if args.device=='auto' else args.device
     enc,dec,_=load_models(args.checkpoint,device)
     paths=images(args.input)[:args.max_frames];out=Path(args.output_dir);out.mkdir(parents=True,exist_ok=True)

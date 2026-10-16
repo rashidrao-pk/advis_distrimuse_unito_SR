@@ -215,8 +215,7 @@ pixi run python scripts/inference_live.py \
   --debug_mode \
   --zenoh_endpoint tcp/127.0.0.1:7447 \
   --publish_rulex \
-  --rulex_topic /rulex/data \
-  --dashboard_topic /advis/dashboard/image/compressed
+  --rulex_topic /rulex/data
 ```
 
 The startup log must list one model and one threshold for every requested

@@ -9,17 +9,19 @@ from torch.utils.data import DataLoader
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from r2ad.core import build_models
 from r2ad.dataset import RectangleDataset
+from r2ad.config import resolve, DEFAULT_CONFIG
 
 def main():
     p=argparse.ArgumentParser(description='Train R2AD VAE-GAN using normal full-resolution images')
-    for flag in ('train-dir','val-dir','mask','output'):p.add_argument('--'+flag,required=True)
-    p.add_argument('--epochs',type=int,default=50);p.add_argument('--batch-size',type=int,default=32)
+    p.add_argument('--config',default=str(DEFAULT_CONFIG));p.add_argument('--safety-area',required=True,choices=('PLeft','PRight','RoboArm','ConvBelt','SafetyZone'))
+    for flag in ('train-dir','val-dir','mask','output'):p.add_argument('--'+flag)
+    p.add_argument('--epochs',type=int);p.add_argument('--batch-size',type=int)
     p.add_argument('--patch-size',type=int,default=224);p.add_argument('--min-coverage',type=float,default=.85)
-    p.add_argument('--samples-per-frame',type=int,default=6);p.add_argument('--latent-dims',type=int,default=64)
-    p.add_argument('--lr',type=float,default=.0002);p.add_argument('--workers',type=int,default=4)
+    p.add_argument('--samples-per-frame',type=int,default=6);p.add_argument('--latent-dims',type=int)
+    p.add_argument('--lr',type=float,default=.0002);p.add_argument('--workers',type=int)
     p.add_argument('--kl-weight',type=float,default=.0001);p.add_argument('--adv-weight',type=float,default=.01)
     p.add_argument('--seed',type=int,default=42);p.add_argument('--device',default='auto')
-    args=p.parse_args();random.seed(args.seed);np.random.seed(args.seed);torch.manual_seed(args.seed)
+    args=resolve(p.parse_args(),'train');random.seed(args.seed);np.random.seed(args.seed);torch.manual_seed(args.seed)
     device=('cuda' if torch.cuda.is_available() else 'cpu') if args.device=='auto' else args.device
     train=RectangleDataset(args.train_dir,args.mask,args.patch_size,args.min_coverage,args.samples_per_frame,True,args.seed)
     val=RectangleDataset(args.val_dir,args.mask,args.patch_size,args.min_coverage,1,False,args.seed)

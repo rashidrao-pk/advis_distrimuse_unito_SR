@@ -1,6 +1,7 @@
 # These may already exist in your ADVIS/Pixi environment.
 numpy
 opencv-python
+PyYAML
 Pillow
 torch
 pandas

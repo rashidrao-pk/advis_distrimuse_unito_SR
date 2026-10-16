@@ -1,0 +1,14 @@
+# Add to your existing configs/cf_dataset_epito.yaml (do not replace existing keys).
+# FULL camera-frame source directories should have one subfolder per recording/scenario:
+# normal_frames/scenario_1/frame_0001.png ...
+# The 4 existing masks under data.mask_types will be united automatically.
+r2ad:
+  dataset_version: V6
+  normal_source: /path/to/full_resolution/normal_frames
+  unexpected_source: /path/to/full_resolution/unexpected_frames
+  safety_zone_mask: /beegfs/home/mrashid/datasets/AD/SR/V6/masks/Mask_Generation_v6_SafetyZone.png
+  preprocessed_dir: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/full_frames
+  train_frames: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/full_frames/train/normal
+  val_frames: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/full_frames/val/normal
+  test_frames: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/full_frames/test
+  normal_test_frames: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/full_frames/test/normal
