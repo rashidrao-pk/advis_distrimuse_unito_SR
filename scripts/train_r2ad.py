@@ -9,10 +9,13 @@ from torch.utils.data import DataLoader
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from r2ad.core import build_models
 from r2ad.dataset import RectangleDataset
+from r2ad.mcap_data import McapRectangleDataset
 from r2ad.config import resolve, DEFAULT_CONFIG
 
 def main():
     p=argparse.ArgumentParser(description='Train R2AD VAE-GAN using normal full-resolution images')
+    p.add_argument('--dataset-source',choices=('images','mcap'),default='images')
+    p.add_argument('--manifest',help='MCAP manifest from index_rosbags_r2ad.py')
     p.add_argument('--config',default=str(DEFAULT_CONFIG));p.add_argument('--safety-area',required=True,choices=('PLeft','PRight','RoboArm','ConvBelt','SafetyZone'))
     for flag in ('train-dir','val-dir','mask','output'):p.add_argument('--'+flag)
     p.add_argument('--epochs',type=int);p.add_argument('--batch-size',type=int)
@@ -21,17 +24,40 @@ def main():
     p.add_argument('--lr',type=float,default=.0002);p.add_argument('--workers',type=int)
     p.add_argument('--kl-weight',type=float,default=.0001);p.add_argument('--adv-weight',type=float,default=.01)
     p.add_argument('--seed',type=int,default=42);p.add_argument('--device',default='auto')
-    args=resolve(p.parse_args(),'train');random.seed(args.seed);np.random.seed(args.seed);torch.manual_seed(args.seed)
+    args=p.parse_args()
+    if args.dataset_source=='mcap':
+        from r2ad.config import load_config
+        cfg=load_config(args.config);root=Path(cfg['data']['dataset_base']).expanduser();rcfg=cfg.get('r2ad') or {}
+        mask_cfg=(rcfg.get('safety_zone_mask') or cfg.get('data',{}).get('mask_types',{}).get('SafetyZone')) if args.safety_area=='SafetyZone' else cfg['data']['mask_types'].get(args.safety_area)
+        args.mask=args.mask or mask_cfg
+        if not args.mask:raise ValueError('Missing safety mask in config')
+        args.mask=str((root/args.mask) if not Path(args.mask).is_absolute() else args.mask)
+        args.manifest=args.manifest or rcfg.get('manifest') or str(root/'r2ad'/'manifest.csv')
+        args.manifest=str((root/args.manifest) if not Path(args.manifest).is_absolute() else args.manifest)
+        base=Path(cfg.get('results',{}).get('output_dir','results'))/str(rcfg.get('dataset_version','V6'))/'r2ad'/args.safety_area
+        args.output=args.output or str(base/'model_r2ad.pt')
+        args.latent_dims=args.latent_dims or int(cfg.get('models',{}).get('latent_dims',64))
+        args.epochs=args.epochs or int(cfg.get('training',{}).get('epochs',50))
+        args.batch_size=args.batch_size or int(cfg.get('training',{}).get('batch_size',32))
+        args.workers=args.workers if args.workers is not None else int(cfg.get('training',{}).get('num_workers',4))
+        if not Path(args.manifest).is_file():raise FileNotFoundError(args.manifest)
+        if not Path(args.mask).is_file():raise FileNotFoundError(args.mask)
+    else:args=resolve(args,'train')
+    random.seed(args.seed);np.random.seed(args.seed);torch.manual_seed(args.seed)
     device=('cuda' if torch.cuda.is_available() else 'cpu') if args.device=='auto' else args.device
-    train=RectangleDataset(args.train_dir,args.mask,args.patch_size,args.min_coverage,args.samples_per_frame,True,args.seed)
-    val=RectangleDataset(args.val_dir,args.mask,args.patch_size,args.min_coverage,1,False,args.seed)
+    if args.dataset_source=='mcap':
+        train=McapRectangleDataset(args.manifest,'train',args.mask,args.patch_size,args.min_coverage,args.samples_per_frame,True,args.seed)
+        val=McapRectangleDataset(args.manifest,'val',args.mask,args.patch_size,args.min_coverage,1,False,args.seed)
+    else:
+        train=RectangleDataset(args.train_dir,args.mask,args.patch_size,args.min_coverage,args.samples_per_frame,True,args.seed)
+        val=RectangleDataset(args.val_dir,args.mask,args.patch_size,args.min_coverage,1,False,args.seed)
     tr=DataLoader(train,batch_size=args.batch_size,shuffle=True,num_workers=args.workers,pin_memory=device=='cuda')
     va=DataLoader(val,batch_size=args.batch_size,shuffle=False,num_workers=args.workers,pin_memory=device=='cuda')
     enc,dec,disc=build_models(args.latent_dims,device)
     opt_g=torch.optim.Adam(list(enc.parameters())+list(dec.parameters()),lr=args.lr)
     opt_d=torch.optim.Adam(disc.parameters(),lr=args.lr/2)
     bce=nn.BCEWithLogitsLoss();best=float('inf');out=Path(args.output);out.parent.mkdir(parents=True,exist_ok=True)
-    print(f'[data] train frames={len(train.paths)}, val frames={len(val.paths)}, train patches/epoch={len(train)}')
+    print(f'[data] train frames={len(train.rows) if args.dataset_source=="mcap" else len(train.paths)}, val frames={len(val.rows) if args.dataset_source=="mcap" else len(val.paths)}, train patches/epoch={len(train)}')
     for epoch in range(1,args.epochs+1):
         enc.train();dec.train();disc.train();running=[]
         for x in tr:

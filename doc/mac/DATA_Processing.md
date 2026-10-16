@@ -1,3 +1,19 @@
+# Upload Data to Epito
+
+````bash
+zip /Users/rashid/data/DS/SR/v6/Jul27/Jul27_Scenario_1_0_2026-07-27_10-25-24
+
+scp /Users/rashid/data/DS/SR/v6/Jul27/Jul27_Scenario_1_0_2026-07-27_10-25-24
+
+# zip /Users/rashid/data/DS/SR/v6/Jul27/test
+
+unzip -o /beegfs/home/mrashid/datasets/AD/SR/V6/test.zip \
+  -d /beegfs/home/mrashid/datasets/AD/SR/V6/test \
+  -x "__MACOSX/*"
+
+
+scp /Users/rashid/data/DS/SR/v6/Jul27/Jul27_Scenario_1_0_2026-07-27_10-25-24 mrashid@slurm.hpc4ai.unito.it:/beegfs/home/mrashid/datasets/AD/SR/V6/rosbags
+
 # Process Dataset
 
 ## Rosbag to Frames
@@ -12,7 +28,7 @@ pixi run python scripts/process_rosbags_to_dataset.py \
   --progress \
   --image-format png \
   --max-frames 50
-```
+````
 
 ## 2. Run for one scenario
 
