@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Export original-resolution MCAP camera frames for R2AD grouped scenario splits.
+"""Export original-size ROS2 MCAP camera frames into R2AD scenario folders.
 
-Reuses the ROS2/MCAP readers from process_rosbags_from_config.py.
-No masks, ROI cropping, or image resizing are applied.
+No ROS2, rclpy, rosbag2_py or cv_bridge required. Python packages:
+  pip install mcap mcap-ros2-support pyyaml opencv-python-headless numpy
 """
-
 import argparse
 import json
 import math
@@ -13,180 +12,189 @@ import sys
 from pathlib import Path
 
 import cv2
-from cv_bridge import CvBridge
-
-from process_rosbags_from_config import (
-    IMAGE_TYPES, ProgressBar, camera_topic, decode_frame, inspect_bag,
-    load_config, resolve_bag_path, resolve_scenarios, topic_message_counts,
-)
+import numpy as np
+import yaml
 
 
-def resolve_category(scenario_id, config):
-    """Use scenario_categories, e.g. {'1-7': 'normal', '8-16': 'anomalous'}."""
-    major = int(scenario_id.split("_", 1)[0])
-    for key, value in (config.get("scenario_categories") or {}).items():
-        match = re.fullmatch(r"\s*(\d+)\s*(?:-\s*(\d+)\s*)?", str(key))
-        if not match:
-            continue
-        low = int(match.group(1))
-        high = int(match.group(2) or low)
-        if low <= major <= high:
-            category = str(value).strip().lower()
-            if category in ("normal", "expected"):
-                return "normal"
-            if category in ("anomalous", "anomaly", "unexpected", "abnormal"):
-                return "unexpected"
-            raise ValueError(f"Unsupported category {value!r} for {key!r}")
-    raise ValueError(
-        f"No scenario_categories mapping for scenario {scenario_id}. "
-        "Add it to the YAML or use --category normal/unexpected."
-    )
+def category_for(scenario, config):
+    idx = int(scenario.split('_')[0])
+    for k, value in (config.get('scenario_categories') or {}).items():
+        match = re.fullmatch(r'\s*(\d+)\s*(?:-\s*(\d+)\s*)?', str(k))
+        if match and int(match.group(1)) <= idx <= int(match.group(2) or match.group(1)):
+            label = str(value).lower()
+            if label in ('normal', 'expected'):
+                return 'normal'
+            if label in ('anomalous', 'anomaly', 'abnormal', 'unexpected'):
+                return 'unexpected'
+            raise ValueError(f'Unknown scenario category: {value}')
+    raise ValueError(f'Scenario {scenario} missing from scenario_categories')
 
 
-def get_source_root(config, category, output_dir):
-    """Use existing YAML paths when present, without changing the source config."""
-    base = Path(config["data"]["dataset_base"]).expanduser()
-    if output_dir:
-        return Path(output_dir).expanduser() / category
-    r2ad = config.get("r2ad") or {}
-    configured = r2ad.get("normal_source" if category == "normal" else "unexpected_source")
-    if configured and "REPLACE_ME" not in str(configured):
-        path = Path(configured).expanduser()
+def resolve_root(config, kind, override):
+    base = Path(config['data']['dataset_base']).expanduser()
+    if override:
+        return Path(override).expanduser() / kind
+    value = (config.get('r2ad') or {}).get('normal_source' if kind == 'normal' else 'unexpected_source')
+    if value and 'REPLACE_ME' not in str(value):
+        path = Path(value).expanduser()
         return path if path.is_absolute() else base / path
-    return base / "r2ad" / "sources" / category
+    return base / 'r2ad' / 'sources' / kind
 
 
-def process_one(config, scenario_id, args):
-    category = args.category if args.category != "auto" else resolve_category(scenario_id, config)
-    bag_path = resolve_bag_path(config, scenario_id)
+def decode_ros_image(msg, msg_type):
+    """Decode common ROS sensor_msgs Image/CompressedImage types without cv_bridge."""
+    typ = msg_type.replace('/msg/', '/')
+    if typ.endswith('/CompressedImage'):
+        arr = np.frombuffer(msg.data, dtype=np.uint8)
+        image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if image is None:
+            raise ValueError('Compressed image cannot be decoded')
+        return image
+    if not typ.endswith('/Image'):
+        raise ValueError(f'Unsupported message type: {msg_type}')
+    encoding = str(msg.encoding).lower()
+    encodings = {
+        'bgr8': (np.uint8, 3, None),
+        'rgb8': (np.uint8, 3, cv2.COLOR_RGB2BGR),
+        'bgra8': (np.uint8, 4, cv2.COLOR_BGRA2BGR),
+        'rgba8': (np.uint8, 4, cv2.COLOR_RGBA2BGR),
+        'mono8': (np.uint8, 1, cv2.COLOR_GRAY2BGR),
+        '8uc1': (np.uint8, 1, cv2.COLOR_GRAY2BGR),
+        'mono16': (np.uint16, 1, None),
+        '16uc1': (np.uint16, 1, None),
+    }
+    if encoding not in encodings:
+        raise ValueError(f'Unsupported Image encoding {encoding!r}')
+    dtype, channels, conversion = encodings[encoding]
+    if dtype == np.uint16:
+        dtype = np.dtype('>u2' if msg.is_bigendian else '<u2')
+    else:
+        dtype = np.dtype(dtype)
+    height, width, step = int(msg.height), int(msg.width), int(msg.step)
+    required = width * channels * dtype.itemsize
+    if step < required:
+        raise ValueError(f'Image row stride {step} smaller than {required}')
+    data = np.frombuffer(msg.data, dtype=np.uint8)
+    if data.size < step * height:
+        raise ValueError('Truncated Image message')
+    rows = data[:step * height].reshape(height, step)
+    valid = np.ascontiguousarray(rows[:, :required])
+    decoded = valid.view(dtype).reshape(height, width, channels)
+    if channels == 1:
+        decoded = decoded[:, :, 0]
+    if conversion is not None:
+        decoded = cv2.cvtColor(decoded, conversion)
+    return decoded
+
+
+def run_scenario(config, sid, args):
+    from mcap.reader import make_reader
+    from mcap_ros2.decoder import DecoderFactory
+
+    opts = config['scenario_options']
+    bag_path = Path(opts[sid]['rosbag_path']).expanduser()
+    if not bag_path.is_absolute():
+        bag_path = Path(config['data']['dataset_base']).expanduser() / bag_path
     if not bag_path.is_file():
-        print(f"[ERROR] {scenario_id}: MCAP not found: {bag_path}", file=sys.stderr)
-        return False
-
-    reader, types = inspect_bag(bag_path)
-    requested = {camera_topic(c): c for c in args.camera}
-    available = {topic: types[topic] for topic in requested if types.get(topic) in IMAGE_TYPES}
-    if not available:
-        print(f"[ERROR] {scenario_id}: requested camera topics not found. Bag has: {list(types)}", file=sys.stderr)
-        return False
-
-    source_root = get_source_root(config, category, args.output_dir)
-    dirs = {}
-    for topic, camera in requested.items():
-        if topic not in available:
-            continue
-        # Keep the grouped folder exactly one level below normal_source/unexpected_source.
-        # For multiple cameras, encode the camera in file names to avoid collisions.
-        path = source_root / f"scenario_{scenario_id}"
-        path.mkdir(parents=True, exist_ok=True)
-        dirs[topic] = path
-        print(f"[{scenario_id}] {category} / {camera}: {path}")
-
-    counts = topic_message_counts(bag_path)
-    total = sum(min(math.ceil(counts.get(t, 0) / args.save_every_n),
-                    args.max_frames or math.inf) for t in available)
-    progress = ProgressBar(total, f"[{scenario_id}] full-resolution frames", enabled=args.progress)
-    bridge = CvBridge()
-    seen = {t: 0 for t in available}
-    saved = {t: 0 for t in available}
-    failed = {t: 0 for t in available}
-    first_shape = {}
-    try:
-        while reader.has_next():
-            topic, data, _timestamp = reader.read_next()
-            if topic not in available:
+        raise FileNotFoundError(bag_path)
+    group = args.category if args.category != 'auto' else category_for(sid, config)
+    out_root = resolve_root(config, group, args.output_dir)
+    out_dir = out_root / f'scenario_{sid}'
+    out_dir.mkdir(parents=True, exist_ok=True)
+    topics = [c if c.startswith('/') else f'/camera/{c}/image_raw' for c in args.camera]
+    print(f'[R2AD] scenario={sid} class={group} bag={bag_path}')
+    print(f'[R2AD] topics={topics} output={out_dir}')
+    seen = {t: 0 for t in topics}
+    saved = {t: 0 for t in topics}
+    failures = {t: 0 for t in topics}
+    last_shape = {}
+    with bag_path.open('rb') as f:
+        reader = make_reader(f, decoder_factories=[DecoderFactory()])
+        for schema, channel, message, decoded in reader.iter_decoded_messages(topics=topics):
+            topic = channel.topic
+            if topic not in seen:
                 continue
+            index = seen[topic]
             seen[topic] += 1
-            if (seen[topic] - 1) % args.save_every_n != 0:
+            if index % args.save_every_n:
                 continue
-            if args.max_frames is not None and saved[topic] >= args.max_frames:
-                if all(saved[t] >= args.max_frames for t in available):
+            if args.max_frames and saved[topic] >= args.max_frames:
+                if all(saved[t] >= args.max_frames for t in topics):
                     break
                 continue
-            sample_idx = (seen[topic] - 1) // args.save_every_n
+            filename_prefix = 'frame' if len(topics) == 1 else topic.split('/')[2] + '_frame'
+            path = out_dir / f'{filename_prefix}_{index:06d}.{args.image_format}'
             try:
-                frame, _ = decode_frame(data, available[topic], bridge)
-                first_shape.setdefault(topic, list(frame.shape))
-                cam_name = requested[topic].strip("/").split("/")[-1]
-                # Bare frame_000001.png for a single camera.
-                prefix = "frame" if len(available) == 1 else f"{cam_name}_frame"
-                path = dirs[topic] / f"{prefix}_{sample_idx:06d}.{args.image_format}"
                 if path.exists() and not args.overwrite:
-                    raise FileExistsError(f"{path} exists (use --overwrite to replace it)")
-                options = [cv2.IMWRITE_JPEG_QUALITY, args.jpeg_quality] if args.image_format == "jpg" else []
-                if not cv2.imwrite(str(path), frame, options):
-                    raise OSError(f"Cannot write {path}")
+                    raise FileExistsError(f'{path} exists; use --overwrite')
+                image = decode_ros_image(decoded, schema.name)
+                last_shape[topic] = image.shape
+                params = ([cv2.IMWRITE_JPEG_QUALITY, args.jpeg_quality]
+                          if args.image_format == 'jpg' else [])
+                if not cv2.imwrite(str(path), image, params):
+                    raise IOError(f'Failed saving {path}')
                 saved[topic] += 1
+                if args.progress and (saved[topic] % 10 == 0 or saved[topic] == 1):
+                    print(f'  {topic}: saved {saved[topic]}', flush=True)
             except Exception as exc:
-                failed[topic] += 1
-                print(f"\n[ERROR] {scenario_id} {topic} sample {sample_idx}: {exc}", file=sys.stderr)
-            finally:
-                progress.update()
-            if args.max_frames is not None and all(saved[t] >= args.max_frames for t in available):
+                failures[topic] += 1
+                print(f'[ERROR] {sid} {topic} frame {index}: {exc}', file=sys.stderr)
+            if args.max_frames and all(saved[t] >= args.max_frames for t in topics):
                 break
-    finally:
-        progress.close()
-
-    for topic in available:
-        print(f"[{scenario_id}] {topic}: seen={seen[topic]} saved={saved[topic]} failed={failed[topic]}, shape={first_shape.get(topic)}")
-    if any(failed.values()):
-        print("[WARNING] Some frames failed; inspect errors before using this scenario.", file=sys.stderr)
-    metadata = {
-        "scenario": scenario_id,
-        "category": category,
-        "bag": str(bag_path),
-        "camera_topics": list(available),
-        "frame_shapes": first_shape,
-        "saved_counts": saved,
-        "failed_counts": failed,
-        "save_every_n": args.save_every_n,
-        "original_resolution": True,
-    }
-    # Metadata is outside scenario images to avoid interfering with frame readers.
-    metadata_dir = source_root / "_metadata"
-    metadata_dir.mkdir(parents=True, exist_ok=True)
-    (metadata_dir / f"scenario_{scenario_id}.json").write_text(json.dumps(metadata, indent=2))
-    return bool(sum(saved.values())) and not any(failed.values())
-
-
-def parse_args():
-    p = argparse.ArgumentParser(description="Extract full-size MCAP images into grouped R2AD scenarios.")
-    p.add_argument("--config", default="configs/cf_dataset_mac.yaml")
-    group = p.add_mutually_exclusive_group()
-    group.add_argument("--scenario", nargs="+")
-    group.add_argument("--all", action="store_true")
-    p.add_argument("--camera", nargs="+", default=None)
-    p.add_argument("--process-to", choices=["frames"], default="frames",
-                   help="Compatibility with original script; only full frames are supported.")
-    p.add_argument("--target-size", type=int, default=None,
-                   help="Ignored deliberately: R2AD requires unresized full-resolution frames.")
-    p.add_argument("--category", choices=["auto", "normal", "unexpected"], default="auto")
-    p.add_argument("--output-dir", default=None,
-                   help="Optional common parent for normal/ and unexpected/. Otherwise use r2ad.*_source.")
-    p.add_argument("--save-every-n", type=int, default=1)
-    p.add_argument("--max-frames", type=int, default=None)
-    p.add_argument("--image-format", choices=["png", "jpg"], default="png")
-    p.add_argument("--jpeg-quality", type=int, default=95)
-    p.add_argument("--overwrite", action="store_true")
-    p.add_argument("--progress", action="store_true")
-    args = p.parse_args()
-    if args.save_every_n < 1 or (args.max_frames is not None and args.max_frames < 1):
-        p.error("--save-every-n and --max-frames must be positive")
-    if args.target_size is not None:
-        print("[INFO] --target-size is ignored: R2AD keeps the original camera resolution.")
-    return args
+    metadata_root = out_root / '_metadata'
+    metadata_root.mkdir(parents=True, exist_ok=True)
+    metadata = {'scenario': sid, 'category': group, 'bag': str(bag_path),
+                'camera_topics': topics, 'seen': seen, 'saved': saved,
+                'failures': failures, 'frame_shape_hwc': last_shape,
+                'source_resolution_preserved': True, 'save_every_n': args.save_every_n}
+    (metadata_root / f'scenario_{sid}.json').write_text(json.dumps(metadata, indent=2))
+    print(f'[R2AD] completed {sid}: saved={saved} failures={failures} shapes={last_shape}')
+    if not sum(saved.values()) or any(failures.values()):
+        return False
+    return True
 
 
 def main():
-    args = parse_args()
-    config = load_config(args.config)
-    scenarios = resolve_scenarios(config, args.scenario, args.all)
-    args.camera = args.camera or [config.get("playback_options", {}).get("camera", "back_view")]
-    print(f"[R2AD] scenarios={scenarios} cameras={args.camera} classification={args.category}")
-    status = [process_one(config, scenario, args) for scenario in scenarios]
-    if not all(status):
-        raise SystemExit(1)
+    p = argparse.ArgumentParser(description='ROS-free R2AD full-frame extraction from MCAP.')
+    p.add_argument('--config', default='configs/cf_dataset_epito.yaml')
+    group = p.add_mutually_exclusive_group()
+    group.add_argument('--scenario', nargs='+')
+    group.add_argument('--all', action='store_true')
+    p.add_argument('--camera', nargs='+')
+    p.add_argument('--process-to', choices=['frames'], default='frames')
+    p.add_argument('--category', choices=['auto', 'normal', 'unexpected'], default='auto')
+    p.add_argument('--output-dir', default=None)
+    p.add_argument('--save-every-n', type=int, default=1)
+    p.add_argument('--max-frames', type=int, default=None)
+    p.add_argument('--image-format', choices=['png', 'jpg'], default='png')
+    p.add_argument('--jpeg-quality', type=int, default=95)
+    p.add_argument('--progress', action='store_true')
+    p.add_argument('--overwrite', action='store_true')
+    p.add_argument('--target-size', type=int, default=None,
+                   help='Accepted for CLI compatibility but ignored (original resolution retained).')
+    args = p.parse_args()
+    if args.save_every_n < 1 or (args.max_frames is not None and args.max_frames < 1):
+        p.error('save-every-n and max-frames must be positive')
+    if args.target_size:
+        print('[R2AD] ignoring --target-size; preserving native camera resolution')
+    with Path(args.config).open() as f:
+        config = yaml.safe_load(f)
+    ids = (list(config['scenario_options']) if args.all else
+           args.scenario or [str(config['scenario']['id'])])
+    unknown = [sid for sid in ids if sid not in config['scenario_options']]
+    if unknown:
+        p.error(f'Unknown scenario IDs: {unknown}')
+    args.camera = args.camera or [config.get('playback_options', {}).get('camera', 'back_view')]
+    ok = True
+    for sid in ids:
+        try:
+            ok = run_scenario(config, sid, args) and ok
+        except Exception as exc:
+            print(f'[ERROR] scenario={sid}: {exc}', file=sys.stderr)
+            ok = False
+    if not ok:
+        sys.exit(1)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
