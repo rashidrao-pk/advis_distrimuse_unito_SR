@@ -20,10 +20,17 @@ results/*
 __MACOSX/
 __MACOSX/*
 
+.DS_Store
+
 # any zip files
 *.zip
 
-.DS_Store.DS_Store
+.DS_Store
+.DS_Store/
+.DS_Store/**
+scripts/.DS_Store
+scripts/.DS_Store/
+scripts/.DS_Store/**
 
 scripts/*.txt
 

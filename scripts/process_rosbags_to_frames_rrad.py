@@ -9,11 +9,61 @@ import json
 import math
 import re
 import sys
+import time
 from pathlib import Path
 
 import cv2
 import numpy as np
 import yaml
+
+
+def frame_counts(reader, topics):
+    """Count source frames without decoding images; prefer the MCAP index."""
+    counts = dict.fromkeys(topics, 0)
+    summary = reader.get_summary()
+    if summary is not None and summary.statistics is not None:
+        for cid, count in summary.statistics.channel_message_counts.items():
+            topic = summary.channels[cid].topic
+            if topic in counts:
+                counts[topic] += count
+    else:
+        for _, channel, _ in reader.iter_messages(topics=topics):
+            counts[channel.topic] += 1
+    return counts
+
+
+class FrameProgress:
+    """Throttled terminal progress, also usable in redirected job logs."""
+
+    def __init__(self, sid, counts, seen, saved, failures):
+        self.sid, self.counts = sid, counts
+        self.seen, self.saved, self.failures = seen, saved, failures
+        self.started = time.monotonic()
+        self.updated = 0
+        self.width = 0
+        self.terminal = sys.stderr.isatty()
+
+    def show(self, topic=None, index=None, final=False):
+        now = time.monotonic()
+        if not final and now - self.updated < (0.2 if self.terminal else 5):
+            return
+        self.updated = now
+        done, total = sum(self.seen.values()), sum(self.counts.values())
+        elapsed = now - self.started
+        rate = done / elapsed if elapsed else 0
+        fraction = min(done / total, 1) if total else 0
+        filled = int(24 * fraction)
+        eta = time.strftime('%H:%M:%S', time.gmtime((total - done) / rate)) if rate else '--:--:--'
+        current = f' {topic} frame_index={index}' if topic is not None else ''
+        line = (f'Scenario {self.sid} [{"#" * filled}{"-" * (24 - filled)}] '
+                f'{fraction:6.1%} source_frames={done}/{total}{current} '
+                f'saved={sum(self.saved.values())} errors={sum(self.failures.values())} '
+                f'{rate:.1f} frames/s elapsed={elapsed:.0f}s ETA={eta}')
+        if final and done < total:
+            line += ' (stopped before end of bag)'
+        print(('\r' if self.terminal else '') + line.ljust(self.width),
+              end='\n' if final or not self.terminal else '', file=sys.stderr, flush=True)
+        self.width = len(line)
 
 
 def category_for(scenario, config):
@@ -110,12 +160,21 @@ def run_scenario(config, sid, args):
     last_shape = {}
     with bag_path.open('rb') as f:
         reader = make_reader(f, decoder_factories=[DecoderFactory()])
+        progress = None
+        if args.progress:
+            print(f'[R2AD] scenario={sid}: counting source frames...', flush=True)
+            counts = frame_counts(reader, topics)
+            print(f'[R2AD] source frames per topic: {counts}', flush=True)
+            progress = FrameProgress(sid, counts, seen, saved, failures)
+            progress.show()
         for schema, channel, message, decoded in reader.iter_decoded_messages(topics=topics):
             topic = channel.topic
             if topic not in seen:
                 continue
             index = seen[topic]
             seen[topic] += 1
+            if progress:
+                progress.show(topic, index)
             if index % args.save_every_n:
                 continue
             if args.max_frames and saved[topic] >= args.max_frames:
@@ -134,13 +193,13 @@ def run_scenario(config, sid, args):
                 if not cv2.imwrite(str(path), image, params):
                     raise IOError(f'Failed saving {path}')
                 saved[topic] += 1
-                if args.progress and (saved[topic] % 10 == 0 or saved[topic] == 1):
-                    print(f'  {topic}: saved {saved[topic]}', flush=True)
             except Exception as exc:
                 failures[topic] += 1
-                print(f'[ERROR] {sid} {topic} frame {index}: {exc}', file=sys.stderr)
+                print(f'\n[ERROR] {sid} {topic} frame {index}: {exc}', file=sys.stderr)
             if args.max_frames and all(saved[t] >= args.max_frames for t in topics):
                 break
+        if progress:
+            progress.show(final=True)
     metadata_root = out_root / '_metadata'
     metadata_root.mkdir(parents=True, exist_ok=True)
     metadata = {'scenario': sid, 'category': group, 'bag': str(bag_path),
@@ -168,7 +227,8 @@ def main():
     p.add_argument('--max-frames', type=int, default=None)
     p.add_argument('--image-format', choices=['png', 'jpg'], default='png')
     p.add_argument('--jpeg-quality', type=int, default=95)
-    p.add_argument('--progress', action='store_true')
+    p.add_argument('--progress', action='store_true',
+                   help='Show source-frame progress, current frame index, saved/errors, speed and ETA.')
     p.add_argument('--overwrite', action='store_true')
     p.add_argument('--target-size', type=int, default=None,
                    help='Accepted for CLI compatibility but ignored (original resolution retained).')
@@ -186,7 +246,8 @@ def main():
         p.error(f'Unknown scenario IDs: {unknown}')
     args.camera = args.camera or [config.get('playback_options', {}).get('camera', 'back_view')]
     ok = True
-    for sid in ids:
+    for scenario_number, sid in enumerate(ids, 1):
+        print(f'[R2AD] scenario {scenario_number}/{len(ids)}: {sid}', flush=True)
         try:
             ok = run_scenario(config, sid, args) and ok
         except Exception as exc:
