@@ -82,8 +82,12 @@ def split_normal(paths, source, val_fraction, test_fraction, seed, mode):
 
 
 def transfer(paths, source_root, target, mode, manifest, label, split, mask_hw):
-    target.mkdir(parents=True, exist_ok=True)
+    if mode != 'manifest':
+        target.mkdir(parents=True, exist_ok=True)
     for idx, src in enumerate(progress(paths, f'{mode} {split}/{label}')):
+        if mode == 'manifest':
+            manifest.append(dict(split=split, label=label, source=str(src.resolve()), processed=''))
+            continue
         # Names are unique even when multiple scenarios contain frame_0001.png.
         rel = str(src.relative_to(source_root))
         digest = hashlib.sha1(rel.encode()).hexdigest()[:12]
@@ -115,7 +119,8 @@ def main():
     p.add_argument('--test-fraction', type=float, default=.2)
     p.add_argument('--seed', type=int, default=42)
     p.add_argument('--split-mode', choices=['grouped', 'temporal'], default='grouped')
-    p.add_argument('--transfer', choices=['symlink', 'copy'], default='symlink')
+    p.add_argument('--transfer', choices=['manifest', 'symlink', 'copy'], default='manifest',
+                   help='manifest (default) writes CSV references only; symlink/copy create image trees')
     p.add_argument('--mask-only', action='store_true', help='Build union mask without preparing datasets')
     args = p.parse_args()
     started = time.monotonic()
@@ -139,7 +144,7 @@ def main():
         report(f'[Plan] Output: {output}')
         report(f'[Plan] Split: {args.split_mode}; validation={args.val_fraction:.0%}, '
                f'test={args.test_fraction:.0%}, seed={args.seed}')
-        report(f'[Plan] Validate every original frame, then {args.transfer} files; '
+        report(f'[Plan] Validate every original frame, then prepare {args.transfer} split; '
                'write manifest.csv and metadata.json. No resizing.')
     report('[SafetyZone] Creating mask and preview...')
     info = create_safety_zone(args.config, output=mask_out)
@@ -170,6 +175,7 @@ def main():
     report('[Split] ' + json.dumps(provenance))
     manifest = []
     counts = {}
+    output.mkdir(parents=True, exist_ok=True)
     for split, files in splits.items():
         counts[split] = transfer(files, normal_source, output / split / 'normal', args.transfer, manifest, 'normal', split, shape_hw)
     if unexpected:
@@ -178,6 +184,17 @@ def main():
     with (output / 'manifest.csv').open('w', newline='', encoding='utf-8') as file:
         writer = csv.DictWriter(file, fieldnames=['split', 'label', 'source', 'processed'])
         writer.writeheader(); writer.writerows(manifest)
+    if args.transfer == 'manifest':
+        selections = {
+            'train': [row for row in manifest if row['split'] == 'train'],
+            'val': [row for row in manifest if row['split'] == 'val'],
+            'test': [row for row in manifest if row['split'] == 'test'],
+            'normal_test': [row for row in manifest if row['split'] == 'test' and row['label'] == 'normal'],
+        }
+        for name, rows in selections.items():
+            with (output / f'{name}.csv').open('w', newline='', encoding='utf-8') as file:
+                writer = csv.DictWriter(file, fieldnames=['split', 'label', 'source', 'processed'])
+                writer.writeheader(); writer.writerows(rows)
     metadata = dict(safety_zone=info, split_strategy=args.split_mode, provenance=provenance, counts=counts,
                     transfer=args.transfer, seed=args.seed, normal_source=str(normal_source),
                     unexpected_source=str(abnormal_source) if abnormal_source else None)
@@ -186,10 +203,15 @@ def main():
     print('[data]', json.dumps(counts, indent=2))
     print('[output]', output)
     print('Set r2ad.train_frames / val_frames / test_frames / normal_test_frames to:')
-    print('  train_frames: ' + str(output / 'train' / 'normal'))
-    print('  val_frames: ' + str(output / 'val' / 'normal'))
-    print('  test_frames: ' + str(output / 'test'))
-    print('  normal_test_frames: ' + str(output / 'test' / 'normal'))
+    if args.transfer == 'manifest':
+        for key, name in [('train_frames', 'train'), ('val_frames', 'val'),
+                          ('test_frames', 'test'), ('normal_test_frames', 'normal_test')]:
+            print(f'  {key}: {output / (name + ".csv")}')
+    else:
+        print('  train_frames: ' + str(output / 'train' / 'normal'))
+        print('  val_frames: ' + str(output / 'val' / 'normal'))
+        print('  test_frames: ' + str(output / 'test'))
+        print('  normal_test_frames: ' + str(output / 'test' / 'normal'))
     print('  safety_zone_mask: ' + info['output'])
 
 if __name__ == '__main__': main()

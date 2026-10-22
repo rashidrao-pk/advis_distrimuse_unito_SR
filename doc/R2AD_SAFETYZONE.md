@@ -30,9 +30,21 @@ There must be at least three independent first-level scenario folders. Entire sc
 python scripts/preprocess_r2ad.py --config configs/cf_dataset_epito.yaml
 ```
 
-No 128x128 resizing takes place during preprocessing. By default the script creates **symlinks**, so it is efficient on Epito. Move/copy the original data carefully if symlinks will not be portable. To physically copy use `--transfer copy`.
+No resizing takes place during preprocessing. The default `--transfer manifest` writes CSV references to original frames, without copying images or creating symlinks. The original files must remain available at their recorded absolute paths. `--transfer symlink` creates linked image trees; `--transfer copy` physically copies images.
 
-Output under `V6/r2ad/full_frames/`: train/normal, val/normal, test/normal, optionally test/unexpected, manifest.csv, metadata.json. The four original masks and the existing V6 train/test directories remain intact. Existing outputs must be empty to prevent accidentally combining experiment runs.
+Manifest output under `V6/r2ad/full_frames/`: `train.csv`, `val.csv`, `test.csv`, `normal_test.csv`, combined `manifest.csv`, and `metadata.json`. Each row records its split, label, and original source path. Unexpected frames occur only in `test.csv`; `normal_test.csv` contains the normal held-out test frames. Existing outputs must be empty to prevent accidentally combining experiment runs; use a new `--output-dir` for a new split.
+
+Set the existing `r2ad` YAML keys to the generated lists (the script prints their full paths):
+
+```yaml
+r2ad:
+  train_frames: r2ad/full_frames/train.csv
+  val_frames: r2ad/full_frames/val.csv
+  test_frames: r2ad/full_frames/test.csv
+  normal_test_frames: r2ad/full_frames/normal_test.csv
+```
+
+These relative paths resolve under `data.dataset_base`. Training, calibration, evaluation, and stress testing accept these CSV files through the same settings and CLI path arguments as image directories. Keep `--dataset-source images` (the default); the MCAP manifest is a separate format. CSV source paths can also be relative to the CSV file. Use the individual split files for training/evaluation, rather than the combined manifest.
 
 If there are no separate normal recording folders, use `--split-mode temporal` only for a smoke test. **Do not claim statistically independent test results** from temporally neighboring frames. Prefer physically distinct sequences for a publication.
 

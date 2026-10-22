@@ -28,6 +28,7 @@ python scripts/preprocess_r2ad.py \
   --config configs/cf_dataset_mac.yaml \
   --val-fraction 0.20 \
   --test-fraction 0.20 \
+  --transfer manifest \
   --split-mode grouped
 ```
 
@@ -36,5 +37,11 @@ python scripts/preprocess_r2ad.py \
   --config configs/cf_dataset_mac.yaml \
   --val-fraction 0.20 \
   --test-fraction 0.20 \
+  --transfer manifest \
   --split-mode temporal
 ```
+
+This writes virtual split CSVs without duplicating frames. Set `r2ad.train_frames`,
+`val_frames`, `test_frames`, and `normal_test_frames` to the generated `train.csv`,
+`val.csv`, `test.csv`, and `normal_test.csv` paths printed by the command.
+Use a fresh `--output-dir` if the previous split directory is already populated.

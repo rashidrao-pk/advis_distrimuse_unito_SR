@@ -16,6 +16,9 @@ IMAGE_EXT={'.png','.jpg','.jpeg','.bmp','.tif','.tiff'}
 
 def images(root):
     p=Path(root)
+    if p.is_file() and p.suffix.lower() == '.csv':
+        from .frame_manifest import read_frame_manifest
+        return read_frame_manifest(p)
     if p.is_file(): return [p]
     if not p.exists(): raise FileNotFoundError(p)
     return sorted(x for x in p.rglob('*') if x.suffix.lower() in IMAGE_EXT)
