@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 import torch
 import yaml
+import pytest
 from torch import nn
 
 from r2ad.core import infer_map
@@ -72,6 +73,38 @@ def test_animation_writes_playable_gif_and_raw_map(tmp_path,monkeypatch):
     assert report['patches']==4 and report['animation_frames']==3
     assert output.with_suffix('.png').is_file()
     assert (tmp_path/'animation_overlay.npy').is_file()
+
+
+def test_training_animation_reuses_samples_across_epochs(tmp_path,monkeypatch):
+    from PIL import Image
+    from scripts import animate_r2ad_training as animation
+    frame=tmp_path/'frame.png';mask=tmp_path/'mask.png'
+    cv2.imwrite(str(frame),np.full((48,48,3),80,np.uint8))
+    cv2.imwrite(str(mask),np.full((48,48),255,np.uint8))
+    config=tmp_path/'config.yaml'
+    config.write_text(yaml.safe_dump({'r2ad':{'safety_zone_mask':str(mask)}}))
+    manifest=tmp_path/'train.csv'
+    manifest.write_text(f'source,split,label\n{frame},train,normal\n')
+    paths=[tmp_path/'epoch1.pt',tmp_path/'epoch2.pt']
+    for path in paths:path.touch()
+    monkeypatch.setattr(animation,'load_models',lambda path,*args:(MeanEncoder(),MeanDecoder(),{'epoch':int(path.stem[-1])}))
+    output=tmp_path/'training.gif'
+    command=['animate','--config',str(config),'--train-csv',str(manifest),
+        '--checkpoints',*[str(p) for p in paths],'--output',str(output),'--device','cpu',
+        '--patch-size','32','--num-patches','2','--width','720']
+    monkeypatch.setattr(sys,'argv',command)
+    animation.main()
+    with Image.open(output) as gif:
+        assert gif.n_frames==4
+    report=json.loads(output.with_suffix('.json').read_text())
+    assert len(report['samples'])==4
+    for a,b in zip(report['samples'][:2],report['samples'][2:]):
+        assert a['box']==b['box']
+        assert a['augmentation']==b['augmentation']
+        assert a['source']==b['source']
+    monkeypatch.setattr(sys,'argv',command+['--image',str(tmp_path/'not_in_train.png')])
+    with pytest.raises(ValueError,match='not a member'):
+        animation.main()
 
 
 def test_inspection_uses_same_two_classes_for_each_checkpoint(tmp_path,monkeypatch):

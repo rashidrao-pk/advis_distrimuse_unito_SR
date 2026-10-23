@@ -35,8 +35,8 @@ def render_step(frame, mask, state, visited, width, vmin, vmax):
     heat[mask==0]=(30,30,30)
     heat[(mask>0)&~state['covered']]=(140,140,140)
     half=width//2;scene_h=round(frame.shape[0]*half/frame.shape[1])
-    top=np.hstack([panel(scene,'Grid: yellow=current, green=processed',half,scene_h),
-                   panel(heat,f'Accumulated Reds map [{vmin:g}, {vmax:g}]',half,scene_h)])
+    top=np.hstack([panel(scene,state.get('scene_title','Grid: yellow=current, green=processed'),half,scene_h),
+                   panel(heat,state.get('map_title',f'Accumulated Reds map [{vmin:g}, {vmax:g}]'),half,scene_h)])
     tile=width//3;tile_h=min(tile,224)
     inputs=(state['input_rgb']*255).astype(np.uint8)[...,::-1]
     reconstruction=(state['reconstruction_rgb']*255).astype(np.uint8)[...,::-1]
@@ -48,10 +48,10 @@ def render_step(frame, mask, state, visited, width, vmin, vmax):
     canvas=cv2.copyMakeBorder(canvas,68,0,0,0,cv2.BORDER_CONSTANT,value=(25,25,25))
     coverage=state['covered'].sum()/max(int(mask.sum()),1)
     score=float(np.quantile(state['map'][state['covered']],.99))
-    for i,text in enumerate([
+    for i,text in enumerate(state.get('status_lines',[
         f'Patch {state["index"]}/{state["total"]} | box=({x},{y},{w},{h}) | mask covered={coverage:.1%} | partial q99={score:.5f}',
         'Blend: sum(smoothed error x Hann weight) / sum(weights); gray = not covered yet. Playback is not runtime.',
-    ]):
+    ])):
         cv2.putText(canvas,text,(10,25+i*27),cv2.FONT_HERSHEY_SIMPLEX,.48,(255,255,255),1,cv2.LINE_AA)
     return Image.fromarray(cv2.cvtColor(canvas,cv2.COLOR_BGR2RGB))
 

@@ -307,6 +307,25 @@ To retain periodic model snapshots, add `--save-cp-k 1` (alias `--save_cp_k 1`) 
 
 ## A100 performance configuration (before starting a new run)
 
+### Animate random training patches and learning across epochs
+
+```bash
+python scripts/animate_r2ad_training.py \
+  --config "$R2AD_CONFIG" --train-csv "$R2AD_SPLIT/train.csv" \
+  --checkpoint results/r2ad/SafetyZone_fast_b32/checkpoints/model_r2ad_epoch_0003.pt \
+  --output reports/r2ad_training_epoch3.gif --device cuda \
+  --patch-size 224 --min-coverage 0.85 --num-patches 24 --seed 42 \
+  --fps 3 --map-vmin 0 --map-vmax 0.5
+```
+
+The GIF shows normal training scenes with matched geometric/brightness augmentation, the sampled random rectangle, its 128×128 input, latent-mean reconstruction and Reds residual. It calls the same sampler as the image-training dataset. Each frame shows one patch's error; training does not stitch a full-frame anomaly map. No stride is used for random sampling.
+
+By default it samples different source frames from the normal training CSV. To focus on one scene, add `--image /path/to/frame.png`; the image must belong to that normal training split. Use `--no-augment` to inspect random rectangles without the training transformations. `--augmentation-mode full` selects the legacy full-frame rendering path if that is how the checkpoint was trained; the default is `crop`.
+
+To animate learning over saved epochs, use `--checkpoints epoch1.pt epoch2.pt epoch3.pt` with the actual checkpoint paths, in the desired order. Each checkpoint reuses the same source frames, random rectangles and augmentation parameters, so differences reflect the model snapshot rather than changed inputs. Checkpoint epoch and patch number are displayed. A companion JSON records exact sources, boxes, transformations and mean patch errors; a PNG captures the final animation frame. The GIF is a frozen-checkpoint visualization, not live optimization or an exact replay of training steps. It does not modify checkpoints. Its latent-mean reconstruction is deterministic; actual VAE training samples the latent distribution.
+
+### Performance settings
+
 The optimized trainer defaults to `--precision auto`, selecting BF16 on supported CUDA devices and FP32 elsewhere. Convolution/linear forwards use autocast; reconstruction, KL, variance exponentiation and BCE loss arithmetic remain FP32. Parameters/checkpoints remain FP32. BF16 changes numerical behavior, so retain the precision in experiment provenance and compare validation quality as well as speed. Use `--precision fp32` for a numerical reference. The implementation follows [PyTorch autocast guidance](https://docs.pytorch.org/docs/stable/notes/amp_examples.html).
 
 Image datasets now cache masks by frame dimensions per worker. `--augmentation-mode crop` (default) applies the original geometric transform to the mask, samples in that transformed coordinate system, then renders only the chosen image rectangle and applies brightness/contrast there. It retains patch count, sampling/augmentation distributions and full-resolution sources. OpenCV interpolation coordinate rounding can produce small pixel differences from `--augmentation-mode full`, the legacy comparison path. Full PNG decoding is still required for each sample; no unlimited full-frame RAM cache or copied dataset is created. The direct-MCAP dataset retains its full-frame augmentation implementation.

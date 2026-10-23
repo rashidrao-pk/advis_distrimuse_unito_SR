@@ -4,6 +4,38 @@ import numpy as np
 from torch.utils.data import Dataset
 from .core import images,read_mask,random_boxes,extract,transform_frame
 
+
+def sample_training_patch(frame,mask,patch,coverage,rng,augment=True,augmentation_mode='crop',details=False):
+    """Shared training sampler; optional geometry for explanatory animations."""
+    original=frame
+    if augment:
+        tx=float(rng.uniform(-.03,.03)*frame.shape[1]);ty=float(rng.uniform(-.03,.03)*frame.shape[0]);angle=float(rng.uniform(-2,2))
+        h,w=frame.shape[:2];M=cv2.getRotationMatrix2D((w/2,h/2),angle,1.)
+        M[:,2]+=(tx,ty)
+        mask=cv2.warpAffine(mask,M,(w,h),flags=cv2.INTER_NEAREST,borderMode=cv2.BORDER_CONSTANT)
+        alpha=float(rng.uniform(.85,1.15));beta=float(rng.uniform(-12,12))
+        if augmentation_mode=='full':
+            frame=cv2.warpAffine(frame,M,(w,h),borderMode=cv2.BORDER_REFLECT_101)
+            frame=np.uint8(np.clip(frame.astype(np.float32)*alpha+beta,0,255))
+    box=random_boxes(mask,patch,1,rng,coverage)[0]
+    extraction_box=box
+    if augment and augmentation_mode=='crop':
+        x,y,w,h=box
+        local=M.copy();local[:,2]-=(x,y)
+        frame=cv2.warpAffine(frame,local,(w,h),borderMode=cv2.BORDER_REFLECT_101)
+        frame=np.uint8(np.clip(frame.astype(np.float32)*alpha+beta,0,255))
+        extraction_box=(0,0,w,h)
+    tensor=extract(frame,extraction_box)
+    if not details:
+        return tensor
+    scene=original
+    if augment:
+        scene=cv2.warpAffine(original,M,(original.shape[1],original.shape[0]),borderMode=cv2.BORDER_REFLECT_101)
+        scene=np.uint8(np.clip(scene.astype(np.float32)*alpha+beta,0,255))
+    return tensor,dict(scene=scene,mask=mask,box=box,
+                       augmentation=dict(tx=tx,ty=ty,angle=angle,alpha=alpha,beta=beta) if augment else {})
+
+
 class RectangleDataset(Dataset):
     def __init__(self,root,mask_path,patch=224,coverage=.85,samples_per_frame=6,augment=True,seed=42,augmentation_mode='crop'):
         self.paths=images(root)
@@ -25,23 +57,4 @@ class RectangleDataset(Dataset):
         mask=self._mask_cache[shape]
         # Non-deterministic across epochs/workers but reproducible by worker RNG state.
         rng=np.random.default_rng(np.random.randint(0,2**31))
-        if self.augment:
-            # Apply matched geometric transform to image AND mask, so sampling region stays valid.
-            tx=float(rng.uniform(-.03,.03)*frame.shape[1]);ty=float(rng.uniform(-.03,.03)*frame.shape[0]);angle=float(rng.uniform(-2,2))
-            # Image and mask alignment must remain identical. Use affine matrix manually for binary mask.
-            h,w=frame.shape[:2];M=cv2.getRotationMatrix2D((w/2,h/2),angle,1.)
-            M[:,2]+=(tx,ty)
-            mask=cv2.warpAffine(mask,M,(w,h),flags=cv2.INTER_NEAREST,borderMode=cv2.BORDER_CONSTANT)
-            alpha=float(rng.uniform(.85,1.15)); beta=float(rng.uniform(-12,12))
-            if self.augmentation_mode == 'full':
-                frame=cv2.warpAffine(frame,M,(w,h),borderMode=cv2.BORDER_REFLECT_101)
-                frame=np.uint8(np.clip(frame.astype(np.float32)*alpha+beta,0,255))
-        box=random_boxes(mask,self.patch,1,rng,self.coverage)[0]
-        if self.augment and self.augmentation_mode == 'crop':
-            # Same transformed-frame coordinates and mask, but render only the selected ROI.
-            x,y,w,h=box
-            local=M.copy();local[:,2]-=(x,y)
-            frame=cv2.warpAffine(frame,local,(w,h),borderMode=cv2.BORDER_REFLECT_101)
-            frame=np.uint8(np.clip(frame.astype(np.float32)*alpha+beta,0,255))
-            box=(0,0,w,h)
-        return extract(frame,box)
+        return sample_training_patch(frame,mask,self.patch,self.coverage,rng,self.augment,self.augmentation_mode)
