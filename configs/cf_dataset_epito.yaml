@@ -255,7 +255,12 @@ r2ad:
 
   preprocessed_dir: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/full_frames
 
-  train_frames: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/full_frames/train.csv
-  val_frames: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/full_frames/val.csv
-  test_frames: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/full_frames/test.csv
-  normal_test_frames: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/full_frames/normal_test.csv
+  # train_frames: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/full_frames/train.csv
+  # val_frames: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/full_frames/val.csv
+  # test_frames: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/full_frames/test.csv
+  # normal_test_frames: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/full_frames/normal_test.csv
+  train_frames: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/annotated_split/train.csv
+  val_frames: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/annotated_split/val.csv
+  test_frames: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/annotated_split/test.csv
+  normal_test_frames: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/annotated_split/normal_test.csv
+  
