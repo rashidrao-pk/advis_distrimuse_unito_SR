@@ -122,10 +122,11 @@ def transform_frame(frame, tx=0,ty=0,angle=0,scale=1):
     M[:,2] += (tx,ty)
     return cv2.warpAffine(frame,M,(w,h),flags=cv2.INTER_LINEAR,borderMode=cv2.BORDER_REFLECT_101)
 
-def infer_map(frame,mask,enc,dec,device,patch=224,stride=64,coverage=.85,batch=32,sigma=1.):
+def infer_map(frame,mask,enc,dec,device,patch=224,stride=64,coverage=.85,batch=32,sigma=1.,return_reconstruction=False):
     h,w=frame.shape[:2]
     coords=boxes(mask,patch,stride,coverage)
     accum=np.zeros((h,w),np.float32);weights=np.zeros((h,w),np.float32)
+    reconstructed=np.zeros((h,w,3),np.float32) if return_reconstruction else None
     # Keep window weights strictly positive at boundaries; no divide-by-zero seams.
     hann=np.outer(np.hanning(patch),np.hanning(patch)).astype(np.float32)
     hann=np.maximum(hann,.01)
@@ -136,19 +137,28 @@ def infer_map(frame,mask,enc,dec,device,patch=224,stride=64,coverage=.85,batch=3
         with torch.inference_mode():
             mu,_=enc(inp); pred=dec(mu)
             residual=(inp-pred).abs().mean(1).cpu().numpy()/2.0
-        for b,res in zip(chunk,residual):
+            if return_reconstruction:
+                rgb=((pred.float().permute(0,2,3,1).cpu().numpy()+1)/2).clip(0,1)
+        for index,(b,res) in enumerate(zip(chunk,residual)):
             x,y,p,_=b
             resized=cv2.resize(res,(p,p),interpolation=cv2.INTER_LINEAR)
             if sigma>0:resized=cv2.GaussianBlur(resized,(0,0),sigma)
             accum[y:y+p,x:x+p] += resized*hann[:p,:p] if p==patch else resized*np.maximum(np.outer(np.hanning(p),np.hanning(p)),.01)
             weights[y:y+p,x:x+p] += hann[:p,:p] if p==patch else np.maximum(np.outer(np.hanning(p),np.hanning(p)),.01)
+            if return_reconstruction:
+                reconstructed[y:y+p,x:x+p]+=cv2.resize(rgb[index],(p,p),interpolation=cv2.INTER_LINEAR)*hann[...,None]
             patch_scores.append(float(np.quantile(res,.99)))
     valid=(weights>0)&(mask>0)
     amap=np.divide(accum,weights,out=np.zeros_like(accum),where=weights>0)
     amap[mask==0]=0
     if not valid.any():raise ValueError('No valid pixels after patch stitching')
     score=float(np.quantile(amap[valid],.99))
-    return {'score':score,'map':amap,'covered':valid,'boxes':coords,'patch_scores':patch_scores,'coverage_ratio':float(valid.sum()/max(mask.sum(),1))}
+    result={'score':score,'map':amap,'covered':valid,'boxes':coords,'patch_scores':patch_scores,'coverage_ratio':float(valid.sum()/max(mask.sum(),1))}
+    if return_reconstruction:
+        reconstructed=np.divide(reconstructed,weights[...,None],out=np.zeros_like(reconstructed),where=weights[...,None]>0)
+        reconstructed[~valid]=0
+        result['reconstruction']=np.ascontiguousarray((reconstructed[...,::-1]*255).clip(0,255).astype(np.uint8))
+    return result
 
 def save_map(out,frame,mask,result,vmin=0.,vmax=.5):
     from matplotlib import colormaps

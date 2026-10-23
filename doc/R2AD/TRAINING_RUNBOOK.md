@@ -351,6 +351,22 @@ This baseline uses the validation recordings for both checkpoint selection and c
 
 ## 9. Evaluate the labeled test frames
 
+For a visual comparison of trained checkpoints on the **same** diverse normal/anomalous scenes, run:
+
+```bash
+python scripts/inspect_r2ad_checkpoints.py \
+  --config "$R2AD_CONFIG" --split-dir "$R2AD_SPLIT" \
+  --checkpoint-dir "$R2AD_RUN" \
+  --output-dir "$R2AD_RUN/checkpoint_inspection" \
+  --samples-per-class 6 --max-checkpoints 4 --seed 42 --device cuda \
+  --patch-size 224 --stride 64 --min-coverage 0.85 \
+  --map-vmin 0 --map-vmax 0.5
+```
+
+Use `$R2AD_RUN/smoke` for `--checkpoint-dir` if the checkpoint is inside that subdirectory. The tool inspects `model_r2ad.pt` plus evenly spaced periodic checkpoints (up to four total by default), or explicit `--checkpoints path1.pt path2.pt`. Selection is fixed across checkpoints and spread across scenarios within each class. Open `checkpoint_inspection/index.html` for original scene, original masked region, stitched reconstruction and Reds residual maps. The reconstruction uses the same fixed-grid patches/Hann blending as inference. Black outside the covered region is not a prediction; gray marks uncovered/unscored locations in the comparisons.
+
+`selected_frames.json` records the sample, `scores.csv` retains per-scene scores, errors, coverage and area labels, and `class_summary.csv` summarizes the selected normal/anomalous groups for each checkpoint. This is an exploratory subset without calibrated decisions; it cannot replace full labeled evaluation or establish performance. Select checkpoints by validation, not these test comparisons. A visually good reconstruction of an anomalous scene can mean the model also reconstructs the anomaly, so inspect localized residuals and eventual false negatives rather than judging sharpness alone.
+
 First inspect a few maps in a separate directory if needed. `--max-frames 20 --save-maps` selects the first 20 CSV entries; this is a visual diagnostic and may contain only normal frames. For full scoring omit the frame limit:
 
 ```bash
