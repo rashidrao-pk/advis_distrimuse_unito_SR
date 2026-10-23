@@ -248,7 +248,7 @@ python -u scripts/train_r2ad.py \
   2>&1 | tee "$R2AD_RUN/smoke/train.log"
 ```
 
-The script has no `--resume` option and starts a new model each invocation. It saves best validation checkpoints, not optimizer state for resuming interrupted training. If you deliberately create a tiny smoke subset, select it from the existing train/val CSVs without mixing scenario groups and retain the original split for the full run.
+Without `--resume`, each invocation initializes a new model. Updated checkpoints support full training resume; older snapshots support a weights-only warm start. See the pause/resume instructions below. If you deliberately create a tiny smoke subset, select it from the existing train/val CSVs without mixing scenario groups and retain the original split for the full run.
 
 **Completion gate:** final `[done] best validation MSE` appears, finite losses and validation MSE are printed, checkpoint exists, and `smoke/live_monitor/` contains probe images and loss plots. Check that reconstructions are spatially aligned and not uniformly blank; one epoch is not a quality benchmark. If CUDA runs out of memory, reduce batch size; if worker loading fails, try `--workers 0` to diagnose.
 
@@ -271,7 +271,7 @@ python -u scripts/train_r2ad.py \
 
 Monitoring outputs are `live_monitor/batch_losses.csv`, `batch_losses.png`, original/reconstructed/error grids per monitoring step, and epoch probe grids. Each patch is now a **column**, and original, latent-mean reconstruction, and absolute error form three rows. By default the image has four fixed validation columns and two fresh random augmented training columns. Change these with `--monitor-probes 4 --monitor-random-probes 2`; set the latter to 0 to show only fixed probes. Fresh training examples change at each monitoring event, while fixed validation examples allow comparisons of identical inputs over time. Error maps keep the same 0–0.5 color range.
 
-`live_monitor/fixed_probes.pt` preserves the fixed input tensors. Existing PNGs and an already running Python process are not retroactively updated by a source edit. Old fixed tensors were not saved by earlier versions, so an old PNG alone cannot reproduce the exact original monitoring calculation. A new training invocation starts from scratch; there is no resume option.
+`live_monitor/fixed_probes.pt` preserves the fixed input tensors. Existing PNGs and an already running Python process are not retroactively updated by a source edit. Old fixed tensors were not saved by earlier versions, so an old PNG alone cannot reproduce the exact original monitoring calculation. Use `--resume` to continue a saved model rather than starting from scratch.
 
 Training prints source-frame counts, train/validation patches and batches per epoch, total planned optimizer steps, sampling/augmentation behavior and output locations before model initialization. Batch progress includes elapsed time and estimated remaining run time. The first-epoch estimate excludes unmeasured validation/epoch overhead and is marked accordingly. Later estimates use measured epoch overhead. Validation has its own progress bar. Each completed epoch reports training, validation and total epoch times, total elapsed and estimated remaining/projected total time. These are wall-clock estimates for the observed workload, not promises about cluster scheduling or other hardware.
 
@@ -301,7 +301,36 @@ Both training absolute-error maps and evaluation heatmaps now use **`Reds` with 
 
 The checkpoint is overwritten only on improved validation MSE; its stored `epoch` can be smaller than the completed training epoch. No early-stopping rule is implemented. Loss improvement alone does not establish anomaly-detection performance.
 
-To retain periodic model snapshots, add `--save-cp-k 1` (alias `--save_cp_k 1`) to save every completed epoch, or `--save-cp-k 5` for epochs 5, 10, 15, etc. The default `0` disables periodic snapshots. They are stored under `checkpoints/model_r2ad_epoch_0001.pt` beside the best-model file (the name follows your `--output` stem). The best-validation `model_r2ad.pt` is still maintained independently. Epoch metrics record each periodic checkpoint path. These contain model weights and epoch/config/MSE information, not optimizer/RNG state; they do not add training resume support. Periodic snapshots accumulate on disk, so choose the interval for your storage budget.
+To retain periodic model snapshots, add `--save-cp-k 1` (alias `--save_cp_k 1`) to save every completed epoch, or `--save-cp-k 5` for epochs 5, 10, 15, etc. The default `0` disables periodic snapshots. They are stored under `checkpoints/model_r2ad_epoch_0001.pt` beside the best-model file (the name follows your `--output` stem). The best-validation `model_r2ad.pt` is still maintained independently. Epoch metrics record each periodic checkpoint path. New best, periodic and latest checkpoints include optimizer and resume state. They are larger than older weights-only snapshots and accumulate on disk; choose the periodic interval for your storage budget.
+
+### Pause, recover and resume training
+
+The updated trainer writes **`last_checkpoint.pt`** beside the best-model output every completed epoch and every `--save-every-steps 1000` optimizer steps by default. Set a smaller step interval for less potential lost work, or `0` for epoch/pause saves only. Writes use a temporary file followed by atomic replacement. `model_r2ad.pt` is the best validation checkpoint; `last_checkpoint.pt` is the latest recovery state, which need not be the best model.
+
+To pause an updated process, press **Ctrl+C once**, then wait for `[paused] Saved ...`. The first SIGTERM or SIGUSR1 also requests a graceful pause. Both discriminator and generator optimizer updates finish before saving. A second interrupt aborts immediately and can lose work since the previous completed snapshot. The startup log prints the process ID; from another shell on the same node use `kill -USR1 <PID>` when appropriate for your job. A scheduler's SIGKILL, node failure, or insufficient termination grace period cannot trigger a new save: resume the latest completed snapshot instead.
+
+Resume the same run:
+
+```bash
+python -u scripts/train_r2ad.py \
+  --resume results/r2ad/SafetyZone_fast_b32/last_checkpoint.pt \
+  --epochs 50 --device cuda --save-cp-k 1
+```
+
+Saved arguments (config, split paths, safety area, output, batch size, sampling settings, etc.) are inherited unless overridden. `--epochs 50` means a **total target of 50 epochs**, not 50 additional epochs. A finished epoch 3 continues at epoch 4; a mid-epoch pause continues after the saved completed batch. Updates performed since the last recovery save are lost after a hard interruption. If paused during validation, training batches remain completed and validation restarts. Dataset inventory, manifest contents and mask are fingerprinted; full resume rejects changed data or incompatible batch/model/objective settings. Original image contents are not individually hashed, so do not edit source frames in place.
+
+Resume state contains all three models, both Adam optimizers, main-process Python/NumPy/Torch/CUDA RNG states, epoch permutation/cursor, partial-epoch loss/confusion totals, global optimizer step, prior epoch metrics, best validation MSE/epoch, fixed probes and monitoring history. Checkpoint state is authoritative: a later trailing batch CSV is rewritten to that saved history. Main-process CPU tests verify a paused/resumed run matches uninterrupted model weights. Worker process RNG state and prefetched random augmentations are **not** serialized; with multiprocessing, resumed patch content can differ even though completed sample indices are not repeated. Cross-device/BF16 nondeterminism also prevents a promise of bitwise replay.
+
+Your older epoch snapshots can continue learning with the same option:
+
+```bash
+python -u scripts/train_r2ad.py \
+  --resume results/r2ad/SafetyZone_fast_b32/checkpoints/model_r2ad_epoch_0003.pt \
+  --output results/r2ad/SafetyZone_continued/model_r2ad.pt \
+  --epochs 50 --device cuda --save-cp-k 1
+```
+
+For old snapshots the log explicitly reports a **legacy weights-only warm start**: epoch numbering continues from the saved epoch, but optimizers are fresh and prior RNG/progress/metrics cannot be recovered. New saves from that point contain full resume state. Updating code does not add pause handlers or optimizer state retroactively to an already running old process. Prefer the same output directory for full resume; use a fresh directory for a legacy warm start or a deliberate experimental branch, and retain the previous run's best checkpoint separately.
 
 **Completion gate:** the planned epoch budget and final completion line are present, monitor outputs are reviewed, and the best checkpoint is retained with code/config/environment/split provenance. Do not tune hyperparameters on test scores.
 
@@ -349,7 +378,7 @@ python -u scripts/train_r2ad.py \
 
 Compare epoch training/validation seconds and `patches_per_second` with the prior run. `data_wait_seconds` is observed host time obtaining the next batch, not a complete GPU/CPU profiler or proof of a storage bottleneck. After this baseline, try batch size 64 with another output directory; compare throughput and validation losses without changing the learning rate automatically. Fifty epochs still sample the same total patches, but a larger batch changes the number of optimizer updates and may affect quality. Eight workers need sufficient allocated CPUs; more workers are not always faster on shared BeeGFS storage.
 
-`--tf32` and `--cudnn-benchmark` are optional, off by default; enable explicitly for a recorded performance experiment. No A100 speedup is guaranteed from local CPU tests. Changes apply only to new Python processes, and the trainer still cannot resume an already running/finished checkpoint.
+`--tf32` and `--cudnn-benchmark` are optional, off by default; enable explicitly for a recorded performance experiment. No A100 speedup is guaranteed from local CPU tests. Changes apply only to new Python processes. Resume new checkpoints with `--resume`; old checkpoints provide weights-only continuation.
 
 ## 8. Calibrate the anomaly threshold on normal validation frames
 
@@ -487,7 +516,7 @@ Only then compare with existing ADVIS on the same held-out frames/labels, with e
 | No rectangles satisfy coverage | Inspect mask; test smaller patch/lower occupancy in previews, then record and recalibrate the chosen settings |
 | Out of GPU memory | Lower batch size; architecture contains large fully connected layers |
 | Calibration/test parameter mismatch | Use identical patch size, stride, occupancy and sigma, or recalibrate |
-| Checkpoint exists but run stopped | Check final training log; best checkpoints can exist before a full run completes; no resume is implemented |
+| Checkpoint exists but run stopped | Resume `last_checkpoint.pt` with a larger total epoch target as needed; old snapshots only support weights-only continuation |
 | A newer run appears to reuse old metrics | Use separate run directories and explicit checkpoint/threshold/output paths |
 
 Related: [mask and split details](../R2AD_SAFETYZONE.md), [direct-MCAP alternative](../R2AD_MCAP_NATIVE.md), [legacy R2AD overview](../R2AD.md).

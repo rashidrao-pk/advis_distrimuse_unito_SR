@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import argparse,sys,json,random,csv,time
+import argparse,sys,json,random,csv,time,hashlib,os,signal
 from datetime import datetime, timezone
 from pathlib import Path
 import numpy as np
@@ -15,9 +15,13 @@ from r2ad.mcap_data import McapRectangleDataset
 from r2ad.config import resolve, DEFAULT_CONFIG
 from tqdm.auto import tqdm
 from contextlib import nullcontext
+from r2ad.training_state import atomic_save,capture_rng,restore_rng,ResumableBatches,PauseSignals
 
 
 def initialize_worker(worker_id):
+    signal.signal(signal.SIGINT,signal.SIG_IGN)
+    signal.signal(signal.SIGTERM,signal.SIG_DFL)
+    if hasattr(signal,'SIGUSR1'):signal.signal(signal.SIGUSR1,signal.SIG_IGN)
     cv2.setNumThreads(1)
     seed=torch.initial_seed() % (2**32)
     np.random.seed(seed);random.seed(seed)
@@ -181,13 +185,13 @@ def save_metrics(records, path, written=0):
         w.writerows(records[written:])
     return len(records)
 
-def main():
+def train(pause):
     run_started = time.monotonic()
     started_at = datetime.now(timezone.utc).isoformat()
     p=argparse.ArgumentParser(description='Train R2AD VAE-GAN using normal full-resolution images')
     p.add_argument('--dataset-source',choices=('images','mcap'),default='images')
     p.add_argument('--manifest',help='MCAP manifest from index_rosbags_r2ad.py')
-    p.add_argument('--config',default=str(DEFAULT_CONFIG));p.add_argument('--safety-area',required=True,choices=('PLeft','PRight','RoboArm','ConvBelt','SafetyZone'))
+    p.add_argument('--config',default=str(DEFAULT_CONFIG));p.add_argument('--safety-area',choices=('PLeft','PRight','RoboArm','ConvBelt','SafetyZone'))
     for flag in ('train-dir','val-dir','mask','output'):p.add_argument('--'+flag)
     p.add_argument('--epochs',type=int);p.add_argument('--batch-size',type=int)
     p.add_argument('--patch-size',type=int,default=224);p.add_argument('--min-coverage',type=float,default=.85)
@@ -208,9 +212,27 @@ def main():
     p.add_argument('--monitor-dir',default=None,help='Defaults to checkpoint parent/live_monitor')
     p.add_argument('--save-cp-k','--save_cp_k',type=int,default=0,
                    help='Save a separate checkpoint every K completed epochs; 0 disables (best model is always saved)')
+    p.add_argument('--resume',type=Path,help='Continue a resumable checkpoint; legacy model snapshots load weights with fresh optimizers')
+    p.add_argument('--save-every-steps',type=int,default=1000,help='Refresh last_checkpoint.pt every N optimizer steps; 0 means epoch/pause saves only')
     p.add_argument('--map-vmin',type=float,default=0.)
     p.add_argument('--map-vmax',type=float,default=.5,help='Fixed Reds error-map maximum on RGB 0..1 residual scale')
     args=p.parse_args()
+    resume=None
+    if args.resume:
+        resume=torch.load(args.resume,map_location='cpu',weights_only=False)
+        saved=resume.get('config',{})
+        supplied={token.split('=')[0].replace('-','_').lstrip('_') for token in sys.argv[1:] if token.startswith('--')}
+        for name,value in saved.items():
+            if hasattr(args,name) and name not in supplied and name not in ('resume','save_every_steps'):
+                setattr(args,name,value)
+        args.latent_dims=resume.get('latent_dims',args.latent_dims)
+        if resume.get('training_state'):
+            for name in ('dataset_source','safety_area','latent_dims','batch_size','patch_size','min_coverage',
+                         'samples_per_frame','augmentation_mode','kl_weight','adv_weight','lr','seed','train_dir','val_dir','manifest','mask'):
+                if name in saved and getattr(args,name,None)!=saved[name]:
+                    p.error(f'Full resume requires unchanged {name}; checkpoint={saved[name]!r}')
+    if not args.safety_area:
+        p.error('--safety-area is required for a new run (or must be present in resume metadata)')
     if args.dataset_source=='mcap':
         from r2ad.config import load_config
         cfg=load_config(args.config);root=Path(cfg['data']['dataset_base']).expanduser();rcfg=cfg.get('r2ad') or {}
@@ -231,8 +253,8 @@ def main():
     else:args=resolve(args,'train')
     if args.epochs < 1 or args.batch_size < 1 or args.samples_per_frame < 1:
         p.error('epochs, batch-size and samples-per-frame must be positive')
-    if args.save_cp_k < 0:
-        p.error('--save-cp-k must be >= 0')
+    if args.save_cp_k < 0 or args.save_every_steps < 0:
+        p.error('--save-cp-k and --save-every-steps must be >= 0')
     if args.monitor_every < 0 or args.monitor_probes < 1 or args.monitor_random_probes < 0:
         p.error('Require monitor-every >= 0, monitor-probes >= 1 and monitor-random-probes >= 0')
     if args.workers < 0 or args.prefetch_factor < 1 or args.opencv_threads < 0:
@@ -259,32 +281,60 @@ def main():
     else:
         train=RectangleDataset(args.train_dir,args.mask,args.patch_size,args.min_coverage,args.samples_per_frame,True,args.seed,args.augmentation_mode)
         val=RectangleDataset(args.val_dir,args.mask,args.patch_size,args.min_coverage,1,False,args.seed)
-    loader_options=dict(num_workers=args.workers,pin_memory=is_cuda,worker_init_fn=initialize_worker)
+    digest=hashlib.sha256()
+    for dataset in (train,val):
+        digest.update(json.dumps(dataset.rows if hasattr(dataset,'rows') else [str(path.resolve()) for path in dataset.paths],sort_keys=True).encode())
+    for value in (args.mask,getattr(args,'train_dir',None),getattr(args,'val_dir',None),args.manifest):
+        if value and Path(value).is_file():digest.update(Path(value).read_bytes())
+    data_signature=digest.hexdigest()
+    if resume and resume.get('training_state',{}).get('data_signature',data_signature)!=data_signature:
+        p.error('Training/validation manifest, image inventory or mask changed since checkpoint')
+    loader_options=dict(num_workers=args.workers,pin_memory=is_cuda,worker_init_fn=initialize_worker,
+                        generator=torch.Generator().manual_seed(args.seed+2468))
     if args.workers:
         loader_options.update(persistent_workers=args.persistent_workers,prefetch_factor=args.prefetch_factor)
-    tr=DataLoader(train,batch_size=args.batch_size,shuffle=True,**loader_options)
+    sampler=ResumableBatches(len(train),args.batch_size,args.seed)
+    total_batches=(len(train)+args.batch_size-1)//args.batch_size
+    tr=DataLoader(train,batch_sampler=sampler,**loader_options)
     va=DataLoader(val,batch_size=args.batch_size,shuffle=False,**loader_options)
     out=Path(args.output);out.parent.mkdir(parents=True,exist_ok=True)
     train_frames = len(train.rows) if args.dataset_source == 'mcap' else len(train.paths)
     val_frames = len(val.rows) if args.dataset_source == 'mcap' else len(val.paths)
-    summary = dict(status='initializing', started_at=started_at, config=vars(args), device=device,precision=precision,
+    summary = dict(status='initializing', started_at=started_at, config={k:str(v) if isinstance(v,Path) else v for k,v in vars(args).items()}, device=device,precision=precision,
                    data=dict(train_frames=train_frames, validation_frames=val_frames,
                              train_patches_per_epoch=len(train), validation_patches_per_epoch=len(val),
-                             train_batches_per_epoch=len(tr), validation_batches_per_epoch=len(va),
+                             train_batches_per_epoch=total_batches, validation_batches_per_epoch=len(va),
                              source_patch_size=args.patch_size, network_input_size=128,
                              min_coverage=args.min_coverage, samples_per_frame=args.samples_per_frame),
                    epochs=[], elapsed_seconds=0, estimated_remaining_seconds=None,
                    timing_note='ETA includes measured epoch overhead after the first epoch; first-epoch ETA estimates training batches only.')
     summary_path=out.parent/'training_summary.json'
+    start_epoch=1;resume_batch=0;resume_epoch_state=None;resume_order=None
+    if resume and resume.get('training_state'):
+        state=resume['training_state']
+        start_epoch=state['next_epoch'];resume_batch=state['next_batch']
+        resume_epoch_state=state.get('epoch_state');resume_order=state.get('order')
+        previous=state['summary']
+        run_started-=previous.get('elapsed_seconds',0)
+        summary.update(epochs=previous['epochs'],started_at=previous['started_at'])
+        for key in ('best_epoch','best_validation_mse'):
+            if key in previous:summary[key]=previous[key]
+    elif resume:
+        start_epoch=int(resume.get('epoch',0))+1
+        print('[resume] Legacy weights-only snapshot: optimizer and RNG state are unavailable; this is a warm start.',flush=True)
+    if args.epochs < start_epoch:
+        p.error(f'--epochs is the TOTAL target; set it >= {start_epoch} to continue')
     write_training_summary(summary, summary_path)
     print(f'[data] source={args.dataset_source} area={args.safety_area} mask={args.mask}',flush=True)
     print(f'[data] train frames={train_frames}, val frames={val_frames}; '
           f'patches/epoch={len(train)} train + {len(val)} validation; '
-          f'batches/epoch={len(tr)} train + {len(va)} validation',flush=True)
-    print(f'[plan] epochs={args.epochs} total optimizer steps={args.epochs*len(tr)} '
+          f'batches/epoch={total_batches} train + {len(va)} validation',flush=True)
+    print(f'[plan] epochs={args.epochs} total optimizer steps={args.epochs*total_batches} '
           f'device={device} source patch~{args.patch_size}px -> network=128px; '
           'normal-only training, fresh random patches and augmentation; validation uses random unaugmented patches',flush=True)
     print(f'[output] checkpoint={out} summary={summary_path}',flush=True)
+    print(f'[control] pid={os.getpid()} | Ctrl+C or SIGUSR1/SIGTERM requests pause; '
+          f'latest={out.parent/"last_checkpoint.pt"} | recovery interval={args.save_every_steps} steps + every epoch',flush=True)
     print(f'[performance] precision={precision} workers={args.workers} persistent={bool(args.workers and args.persistent_workers)} '
           f'prefetch={args.prefetch_factor if args.workers else 0} augmentation={args.augmentation_mode if args.dataset_source == "images" else "full (MCAP)"} '
           f'TF32={args.tf32} cudnn_benchmark={args.cudnn_benchmark}',flush=True)
@@ -294,26 +344,66 @@ def main():
     bce=nn.BCEWithLogitsLoss();best=float('inf')
     mon_dir=Path(args.monitor_dir) if args.monitor_dir else out.parent/'live_monitor'
     history=[]; global_step=0; probe=None;written_metrics=0
+    if resume:
+        for model,key in [(enc,'encoder_state_dict'),(dec,'decoder_state_dict'),(disc,'discriminator_state_dict')]:
+            model.load_state_dict(resume[key])
+        best=float(resume.get('best_val_mse',resume.get('val_mse',float('inf'))))
+        if resume.get('training_state'):
+            opt_g.load_state_dict(resume['optimizer_g_state_dict']);opt_d.load_state_dict(resume['optimizer_d_state_dict'])
+            global_step=resume['training_state']['global_step']
+            history=resume['training_state'].get('history',[])
+            probe=resume['training_state'].get('fixed_probes')
+        else:
+            global_step=(start_epoch-1)*total_batches
+            summary.update(best_epoch=resume.get('epoch'),best_validation_mse=best)
+        print(f'[resume] {args.resume}: epoch={start_epoch} completed_batches={resume_batch} optimizer_step={global_step}',flush=True)
+    latest=out.parent/'last_checkpoint.pt'
+    def save_resume(epoch,batch,epoch_state=None,complete=False,status='training'):
+        summary.update(status=status,elapsed_seconds=time.monotonic()-run_started,optimizer_steps=global_step)
+        snapshot=dict(encoder_state_dict=enc.state_dict(),decoder_state_dict=dec.state_dict(),
+                      discriminator_state_dict=disc.state_dict(),optimizer_g_state_dict=opt_g.state_dict(),
+                      optimizer_d_state_dict=opt_d.state_dict(),latent_dims=args.latent_dims,
+                      epoch=epoch,val_mse=summary['epochs'][-1]['validation_mse'] if complete else None,best_val_mse=best,
+                      config=summary['config'],model_kind='r2ad_rectangles',checkpoint_version=2,
+                      training_state=dict(next_epoch=epoch+1 if complete else epoch,next_batch=0 if complete else batch,
+                          epoch_state=epoch_state,order=None if complete else sampler.order,global_step=global_step,
+                          rng=capture_rng(),summary=summary,history=history,fixed_probes=probe,data_signature=data_signature))
+        atomic_save(snapshot,latest)
+        write_training_summary(summary,summary_path)
+        return snapshot
     if args.monitor_every:
         mon_dir.mkdir(parents=True,exist_ok=True)
         # The same patches are held in memory for the entire run.
         probe_count=min(args.monitor_probes,len(val))
-        probe=random_monitor_patches(val,probe_count,args.seed)
+        if probe is None:probe=random_monitor_patches(val,probe_count,args.seed)
+        if history:written_metrics=save_metrics(history,mon_dir/'batch_losses.csv')
         torch.save(probe,mon_dir/'fixed_probes.pt')
         fresh=random_monitor_patches(train,args.monitor_random_probes,args.seed+1) if args.monitor_random_probes else None
-        save_probe_grid(probe,enc,dec,device,mon_dir/'probe_step_000000.png',fresh,
+        save_probe_grid(probe,enc,dec,device,mon_dir/f'probe_step_{global_step:06d}.png',fresh,
                         'Before training | fixed validation probes + fresh augmented training patches',args.map_vmin,args.map_vmax)
         print(f'[monitor] fixed probes={probe_count} random train probes={args.monitor_random_probes} | output={mon_dir}',flush=True)
     setup_seconds=time.monotonic()-run_started
     summary.update(status='training', setup_seconds=setup_seconds)
-    for epoch in tqdm(range(1,args.epochs+1),desc='Epochs'):
+    if resume and resume.get('training_state'):restore_rng(resume['training_state']['rng'])
+    for epoch in tqdm(range(start_epoch,args.epochs+1),desc='Epochs'):
+        continuing=epoch==start_epoch and resume_epoch_state is not None
+        saved_epoch=resume_epoch_state if continuing else {}
+        batch_offset=resume_batch if epoch==start_epoch else 0
+        sampler.set_epoch(epoch,resume_order if epoch==start_epoch else None,batch_offset)
         epoch_started=time.monotonic()
-        warmup_finished=None;warmup_batches=min(10,max(0,len(tr)-1))
-        data_wait_seconds=0.;last_batch_end=time.monotonic();samples_processed=0
+        epoch_started-=saved_epoch.get('train_seconds',0)
+        warmup_finished=None;warmup_batches=batch_offset+min(10,max(0,total_batches-batch_offset-1))
+        data_wait_seconds=saved_epoch.get('data_wait_seconds',0.);last_batch_end=time.monotonic();samples_processed=saved_epoch.get('samples_processed',0)
         enc.train();dec.train();disc.train();running=[]
         loss_sums=torch.zeros(5,device=device);discriminator_counts=torch.zeros(4,device=device)
-        batches=tqdm(tr,desc=f'Epoch {epoch} batches',leave=False)
-        for batch_idx,x in enumerate(batches,start=1):
+        if continuing:
+            loss_sums=saved_epoch['loss_sums'].to(device);discriminator_counts=saved_epoch['counts'].to(device)
+        def partial_state():
+            return dict(train_seconds=time.monotonic()-epoch_started,data_wait_seconds=data_wait_seconds,
+                        samples_processed=samples_processed,loss_sums=loss_sums.detach().cpu(),counts=discriminator_counts.detach().cpu())
+        completed_batch=batch_offset
+        batches=tqdm(pause_aware_batches(tr,pause),total=len(tr),desc=f'Epoch {epoch} batches',leave=False)
+        for batch_idx,x in enumerate(batches,start=batch_offset+1):
             data_wait_seconds+=time.monotonic()-last_batch_end
             samples_processed+=len(x)
             x=x.to(device,non_blocking=True)
@@ -345,6 +435,7 @@ def main():
             discriminator_counts+=torch.stack([(logits_real.detach()>=0).sum(),(logits_real.detach()<0).sum(),
                                                (logits_fake.detach()<0).sum(),(logits_fake.detach()>=0).sum()])
             global_step+=1
+            completed_batch=batch_idx
             if args.monitor_every:
                 rec=dict(epoch=epoch,step=global_step,batch=batch_idx,
                          reconstruction=float(rloss.detach()),kl=float(kl.detach()),
@@ -364,33 +455,52 @@ def main():
                           f'G={rec["generator_total"]:.5f} | {mon_dir}',flush=True)
             if batch_idx == warmup_batches:
                 warmup_finished=time.monotonic()
-            if batch_idx == 1 or batch_idx % 100 == 0 or batch_idx == len(tr):
+            if batch_idx == 1 or batch_idx % 100 == 0 or batch_idx == total_batches:
                 batch_seconds=((time.monotonic()-warmup_finished)/(batch_idx-warmup_batches)
                                if warmup_finished is not None and batch_idx > warmup_batches else None)
                 epoch_overhead=(np.mean([r['epoch_seconds']-r['train_seconds'] for r in summary['epochs']])
                                 if summary['epochs'] else 0)
-                remaining_steps=(len(tr)-batch_idx)+(args.epochs-epoch)*len(tr)
+                remaining_steps=(total_batches-batch_idx)+(args.epochs-epoch)*total_batches
                 eta=float(batch_seconds*remaining_steps+epoch_overhead*(args.epochs-epoch+1)) if batch_seconds is not None else None
                 elapsed=time.monotonic()-run_started
                 batches.set_postfix(rec=f'{running[-1]:.5f}',elapsed=duration(elapsed),run_ETA=duration(eta))
-                print(f'[progress] epoch={epoch}/{args.epochs} batch={batch_idx}/{len(tr)} '
-                      f'step={global_step}/{args.epochs*len(tr)} elapsed={duration(elapsed)} '
+                print(f'[progress] epoch={epoch}/{args.epochs} batch={batch_idx}/{total_batches} '
+                      f'step={global_step}/{args.epochs*total_batches} elapsed={duration(elapsed)} '
                       f'patches/s={samples_processed/max(time.monotonic()-epoch_started,1e-9):.1f} '
                       f'run_ETA~{duration(eta)}'+(' (warming up)' if eta is None else ' (training-only estimate until first epoch completes)' if not summary['epochs'] else ''),flush=True)
                 summary.update(elapsed_seconds=elapsed, estimated_remaining_seconds=eta,
                                current_epoch=epoch, optimizer_steps=global_step)
                 write_training_summary(summary,summary_path)
+            if pause.requested or args.save_every_steps and global_step % args.save_every_steps==0:
+                save_resume(epoch,batch_idx,partial_state(),status='paused' if pause.requested else 'training')
+                if pause.requested:
+                    print(f'[paused] Saved {latest}; resume with --resume {latest}',flush=True)
+                    return
             last_batch_end=time.monotonic()
+        if pause.requested:
+            save_resume(epoch,completed_batch,partial_state(),status='paused')
+            print(f'[paused] Saved {latest}',flush=True)
+            return
         train_seconds=time.monotonic()-epoch_started
         validation_started=time.monotonic()
         print(f'[validation] epoch={epoch} batches={len(va)}',flush=True)
         enc.eval();dec.eval();vals=[]
         with torch.inference_mode():
-            for x in tqdm(va,desc=f'Epoch {epoch} validation',leave=False):
+            for x in tqdm(pause_aware_batches(va,pause),total=len(va),desc=f'Epoch {epoch} validation',leave=False):
+                if pause.requested:
+                    state=partial_state();state['train_seconds']=train_seconds
+                    save_resume(epoch,total_batches,state,status='paused')
+                    print(f'[paused] Saved {latest}; validation restarts on resume.',flush=True)
+                    return
                 x=x.to(device,non_blocking=True)
                 with precision_context(device,precision):
                     mu,_=enc(x);recon=dec(mu)
                 vals.append((F.mse_loss(recon.float(),x,reduction='none').mean((1,2,3))).cpu())
+        if pause.requested:
+            state=partial_state();state['train_seconds']=train_seconds
+            save_resume(epoch,total_batches,state,status='paused')
+            print(f'[paused] Saved {latest}; validation restarts on resume.',flush=True)
+            return
         v=float(torch.cat(vals).mean());t=float(loss_sums[0].item()/samples_processed)
         validation_seconds=time.monotonic()-validation_started
         print(f'[epoch {epoch:03d}] train_rec={t:.6f} val_mse={v:.6f}')
@@ -404,19 +514,9 @@ def main():
         periodic_path=None
         if args.save_cp_k and epoch % args.save_cp_k == 0:
             periodic_path=out.parent/'checkpoints'/f'{out.stem}_epoch_{epoch:04d}{out.suffix or ".pt"}'
-        if improved or periodic_path is not None:
-            checkpoint={'encoder_state_dict':enc.state_dict(),'decoder_state_dict':dec.state_dict(),
-                'discriminator_state_dict':disc.state_dict(),'latent_dims':args.latent_dims,
-                'epoch':epoch,'val_mse':v,'config':vars(args),'model_kind':'r2ad_rectangles'}
         if improved:
             best=v
-            torch.save(checkpoint,out)
-            print('[saved]',out)
             summary['best_epoch']=epoch
-        if periodic_path is not None:
-            periodic_path.parent.mkdir(parents=True,exist_ok=True)
-            torch.save(checkpoint,periodic_path)
-            print('[saved periodic]',periodic_path,flush=True)
         epoch_seconds=time.monotonic()-epoch_started
         summary['epochs'].append(dict(epoch=epoch,train_mse=t,validation_mse=v,
                                       **epoch_learning_metrics(loss_sums,discriminator_counts,samples_processed,args.kl_weight,args.adv_weight),
@@ -435,6 +535,18 @@ def main():
         with (out.parent/'epoch_metrics.csv').open('w',newline='') as fp:
             writer=csv.DictWriter(fp,fieldnames=list(summary['epochs'][0]))
             writer.writeheader();writer.writerows(summary['epochs'])
+        snapshot=save_resume(epoch,total_batches,complete=True,
+                             status='paused' if pause.requested else 'completed' if epoch==args.epochs else 'training')
+        snapshot['val_mse']=v
+        if improved:
+            atomic_save(snapshot,out)
+            print('[saved best]',out,flush=True)
+        if periodic_path is not None:
+            atomic_save(snapshot,periodic_path)
+            print('[saved periodic]',periodic_path,flush=True)
+        if pause.requested:
+            print(f'[paused] Saved {latest}',flush=True)
+            return
         print(f'[timing] epoch={duration(epoch_seconds)} train={duration(train_seconds)} '
               f'patches/s={samples_processed/max(train_seconds,1e-9):.1f} loader_wait={duration(data_wait_seconds)} '
               f'validation={duration(validation_seconds)} total={duration(elapsed)} '
@@ -444,4 +556,22 @@ def main():
     write_training_summary(summary,summary_path)
     print(f'[done] best validation MSE={best:.6f} best_epoch={summary["best_epoch"]} '
           f'total_time={duration(summary["elapsed_seconds"])} summary={summary_path}',flush=True)
+def main():
+    with PauseSignals() as pause:
+        return train(pause)
+
+
+def pause_aware_batches(loader,pause):
+    iterator=iter(loader)
+    while not pause.requested:
+        try:
+            batch=next(iterator)
+        except StopIteration:
+            return
+        except RuntimeError:
+            if pause.requested:return
+            raise
+        yield batch
+
+
 if __name__=='__main__':main()
