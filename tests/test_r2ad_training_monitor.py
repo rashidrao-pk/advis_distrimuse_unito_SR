@@ -55,7 +55,7 @@ def test_training_reports_and_transposed_random_probes(tmp_path, monkeypatch, wo
     monkeypatch.setattr(sys, 'argv', ['train_r2ad.py', '--config', str(config), '--safety-area', 'SafetyZone',
         '--output', str(output), '--epochs', '1', '--batch-size', '1', '--workers', str(workers), '--device', 'cpu',
         '--latent-dims', '2', '--patch-size', '16', '--samples-per-frame', '1',
-        '--monitor-every', '1', '--monitor-probes', '1'])
+        '--monitor-every', '1', '--monitor-probes', '1', '--save-cp-k', '1'])
     training.main()
     summary = json.loads((output.parent / 'training_summary.json').read_text())
     assert summary['status'] == 'completed'
@@ -73,6 +73,11 @@ def test_training_reports_and_transposed_random_probes(tmp_path, monkeypatch, wo
     assert epoch['weighted_gan'] == pytest.approx(epoch['generator_adversarial'] * .01)
     assert 'normal training frames' in (output.parent / 'training_report.md').read_text()
     assert output.is_file()
+    periodic = output.parent / 'checkpoints' / 'model_r2ad_epoch_0001.pt'
+    assert periodic.is_file()
+    saved = torch.load(periodic, map_location='cpu', weights_only=False)
+    assert saved['epoch'] == 1 and saved['config']['save_cp_k'] == 1
+    assert epoch['periodic_checkpoint'] == str(periodic)
     monitor = output.parent / 'live_monitor'
     assert (monitor / 'fixed_probes.pt').is_file()
     grid = cv2.imread(str(monitor / 'probe_step_000001.png'))

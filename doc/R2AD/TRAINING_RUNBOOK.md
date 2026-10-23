@@ -301,6 +301,8 @@ Both training absolute-error maps and evaluation heatmaps now use **`Reds` with 
 
 The checkpoint is overwritten only on improved validation MSE; its stored `epoch` can be smaller than the completed training epoch. No early-stopping rule is implemented. Loss improvement alone does not establish anomaly-detection performance.
 
+To retain periodic model snapshots, add `--save-cp-k 1` (alias `--save_cp_k 1`) to save every completed epoch, or `--save-cp-k 5` for epochs 5, 10, 15, etc. The default `0` disables periodic snapshots. They are stored under `checkpoints/model_r2ad_epoch_0001.pt` beside the best-model file (the name follows your `--output` stem). The best-validation `model_r2ad.pt` is still maintained independently. Epoch metrics record each periodic checkpoint path. These contain model weights and epoch/config/MSE information, not optimizer/RNG state; they do not add training resume support. Periodic snapshots accumulate on disk, so choose the interval for your storage budget.
+
 **Completion gate:** the planned epoch budget and final completion line are present, monitor outputs are reviewed, and the best checkpoint is retained with code/config/environment/split provenance. Do not tune hyperparameters on test scores.
 
 ## A100 performance configuration (before starting a new run)

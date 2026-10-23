@@ -206,6 +206,8 @@ def main():
     p.add_argument('--monitor-probes',type=int,default=4,help='Number of fixed validation patches to display')
     p.add_argument('--monitor-random-probes',type=int,default=2,help='Fresh augmented random training patches per monitoring image; 0 disables')
     p.add_argument('--monitor-dir',default=None,help='Defaults to checkpoint parent/live_monitor')
+    p.add_argument('--save-cp-k','--save_cp_k',type=int,default=0,
+                   help='Save a separate checkpoint every K completed epochs; 0 disables (best model is always saved)')
     p.add_argument('--map-vmin',type=float,default=0.)
     p.add_argument('--map-vmax',type=float,default=.5,help='Fixed Reds error-map maximum on RGB 0..1 residual scale')
     args=p.parse_args()
@@ -229,6 +231,8 @@ def main():
     else:args=resolve(args,'train')
     if args.epochs < 1 or args.batch_size < 1 or args.samples_per_frame < 1:
         p.error('epochs, batch-size and samples-per-frame must be positive')
+    if args.save_cp_k < 0:
+        p.error('--save-cp-k must be >= 0')
     if args.monitor_every < 0 or args.monitor_probes < 1 or args.monitor_random_probes < 0:
         p.error('Require monitor-every >= 0, monitor-probes >= 1 and monitor-random-probes >= 0')
     if args.workers < 0 or args.prefetch_factor < 1 or args.opencv_threads < 0:
@@ -397,20 +401,30 @@ def main():
             written_metrics=save_metrics(history,mon_dir/'batch_losses.csv',written_metrics)
             save_loss_plot(history,mon_dir/'batch_losses.png')
         improved=v<best
+        periodic_path=None
+        if args.save_cp_k and epoch % args.save_cp_k == 0:
+            periodic_path=out.parent/'checkpoints'/f'{out.stem}_epoch_{epoch:04d}{out.suffix or ".pt"}'
+        if improved or periodic_path is not None:
+            checkpoint={'encoder_state_dict':enc.state_dict(),'decoder_state_dict':dec.state_dict(),
+                'discriminator_state_dict':disc.state_dict(),'latent_dims':args.latent_dims,
+                'epoch':epoch,'val_mse':v,'config':vars(args),'model_kind':'r2ad_rectangles'}
         if improved:
             best=v
-            torch.save({'encoder_state_dict':enc.state_dict(),'decoder_state_dict':dec.state_dict(),
-                'discriminator_state_dict':disc.state_dict(),'latent_dims':args.latent_dims,
-                'epoch':epoch,'val_mse':v,'config':vars(args),'model_kind':'r2ad_rectangles'},out)
+            torch.save(checkpoint,out)
             print('[saved]',out)
             summary['best_epoch']=epoch
+        if periodic_path is not None:
+            periodic_path.parent.mkdir(parents=True,exist_ok=True)
+            torch.save(checkpoint,periodic_path)
+            print('[saved periodic]',periodic_path,flush=True)
         epoch_seconds=time.monotonic()-epoch_started
         summary['epochs'].append(dict(epoch=epoch,train_mse=t,validation_mse=v,
                                       **epoch_learning_metrics(loss_sums,discriminator_counts,samples_processed,args.kl_weight,args.adv_weight),
                                       train_seconds=train_seconds,validation_seconds=validation_seconds,
                                       patches_per_second=samples_processed/max(train_seconds,1e-9),
                                       data_wait_seconds=data_wait_seconds,
-                                      epoch_seconds=epoch_seconds,checkpoint_saved=improved))
+                                      epoch_seconds=epoch_seconds,checkpoint_saved=improved,
+                                      periodic_checkpoint=str(periodic_path) if periodic_path else ''))
         save_training_dashboard(summary,out.parent/'training_progress.png')
         epoch_seconds=time.monotonic()-epoch_started
         summary['epochs'][-1]['epoch_seconds']=epoch_seconds
