@@ -4,7 +4,7 @@ This is the current workflow for **V6, back_view, combined SafetyZone, extracted
 
 ## Progress tracker
 
-Update this table after each gate below passes. Status recorded on 2026-10-22 is based on this checkout and the outputs shared in chat. Epito storage and training jobs are not accessible from this local session.
+Update this table after each gate below passes. Status updated on 2026-10-23 is based on this checkout and the outputs shared in chat. Epito storage and training jobs are not accessible from this local session.
 
 | Step | Current status | Evidence required to mark complete |
 |---|---|---|
@@ -15,7 +15,7 @@ Update this table after each gate below passes. Status recorded on 2026-10-22 is
 | Grid and random patch previews | Complete locally; review Epito inputs | Local grid covered 91.53% of mask; 48 random patches with seed 42 covered 95.54%; source frame was scenario 1_0 |
 | Annotation/frame alignment | Pending verification | Several normal/anomalous transitions visually match the same source frame IDs |
 | Annotated virtual split | Implementation tested; Epito generation unverified | Fresh annotated split, nonempty CSVs, source paths exist, scenario separation passes |
-| One-epoch smoke training | Pending | Finite losses, checkpoint, monitoring images, final completion log |
+| One-epoch smoke training | Monitoring at step 1900 reported; completion unverified | Finite losses, checkpoint, monitoring images, final completion log |
 | Full training | Pending | Chosen epoch budget completes; retained best checkpoint and run provenance |
 | Threshold calibration | Pending | Normal validation scores and matching `threshold.json` |
 | Labeled test evaluation | Pending | Complete scores with ground truth, coverage inspected, both classes represented |
@@ -269,7 +269,23 @@ python -u scripts/train_r2ad.py \
   2>&1 | tee "$R2AD_RUN/train.log"
 ```
 
-Monitoring outputs are `live_monitor/batch_losses.csv`, `batch_losses.png`, fixed original/reconstructed/error grids per monitoring step, and epoch probe grids. The checkpoint is overwritten only on improved validation MSE; its stored `epoch` can be smaller than the completed training epoch. No early-stopping rule is implemented. Loss improvement alone does not establish anomaly-detection performance.
+Monitoring outputs are `live_monitor/batch_losses.csv`, `batch_losses.png`, original/reconstructed/error grids per monitoring step, and epoch probe grids. Each patch is now a **column**, and original, latent-mean reconstruction, and absolute error form three rows. By default the image has four fixed validation columns and two fresh random augmented training columns. Change these with `--monitor-probes 4 --monitor-random-probes 2`; set the latter to 0 to show only fixed probes. Fresh training examples change at each monitoring event, while fixed validation examples allow comparisons of identical inputs over time. Error maps keep the same 0–0.5 color range.
+
+`live_monitor/fixed_probes.pt` preserves the fixed input tensors. Existing PNGs and an already running Python process are not retroactively updated by a source edit. Old fixed tensors were not saved by earlier versions, so an old PNG alone cannot reproduce the exact original monitoring calculation. A new training invocation starts from scratch; there is no resume option.
+
+Training prints source-frame counts, train/validation patches and batches per epoch, total planned optimizer steps, sampling/augmentation behavior and output locations before model initialization. Batch progress includes elapsed time and estimated remaining run time. The first-epoch estimate excludes unmeasured validation/epoch overhead and is marked accordingly. Later estimates use measured epoch overhead. Validation has its own progress bar. Each completed epoch reports training, validation and total epoch times, total elapsed and estimated remaining/projected total time. These are wall-clock estimates for the observed workload, not promises about cluster scheduling or other hardware.
+
+The checkpoint directory also contains:
+
+| Artifact | Contents |
+|---|---|
+| `training_summary.json` | Resolved arguments, data counts, status, epoch history, best epoch/MSE, elapsed and estimated remaining seconds |
+| `training_report.md` | Human-readable account of data, sampling, losses, monitoring and epoch timing/results |
+| `epoch_metrics.csv` | Train/validation MSE, phase/epoch timing and checkpoint improvement per completed epoch |
+
+Reports update during training even when images are disabled with `--monitor-every 0`. `status=completed` is written only after the training loop finishes normally; an interrupted run can leave a stale `training` status and earlier elapsed-time estimate. Training phase time includes batch loading, optimization and step monitoring; total epoch time also includes validation, epoch plots and checkpoint saving. At completion the final message reports total run time including setup and the best epoch.
+
+The checkpoint is overwritten only on improved validation MSE; its stored `epoch` can be smaller than the completed training epoch. No early-stopping rule is implemented. Loss improvement alone does not establish anomaly-detection performance.
 
 **Completion gate:** the planned epoch budget and final completion line are present, monitor outputs are reviewed, and the best checkpoint is retained with code/config/environment/split provenance. Do not tune hyperparameters on test scores.
 
