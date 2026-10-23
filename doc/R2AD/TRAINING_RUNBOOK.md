@@ -215,6 +215,24 @@ sha256sum reports/safety_area_annotations/saved_annotation/scenario_8_16_back_vi
 
 ## 6. Run one smoke-training epoch
 
+Before training, preview normal train/validation frames and anomalous test frames:
+
+```bash
+python scripts/preview_r2ad_splits.py \
+  --config "$R2AD_CONFIG" --split-dir "$R2AD_SPLIT" \
+  --output-dir "$R2AD_RUN/split_preview" --samples 6 --seed 42
+```
+
+Open `split_preview/index.html` or the `train_normal.jpg`, `val_normal.jpg`, and
+`test_anomalous.jpg` contact sheets. Each sample shows the original frame beside
+the SafetyZone overlay, scenario/frame IDs, and four annotation labels. Sampling
+spreads across scenarios before selecting additional frames from a recording.
+The script checks full CSVs for source-file and scenario overlap, incorrect split
+assignments, and unexpected labels; findings and sample source paths are saved to
+`report.json`. A failed check exits with status 1. Missing anomalous examples can
+mean the first-50 extraction missed the anomaly; do not infer that all test frames
+are anomalous. Visual review is a spot check, not proof every annotation is correct.
+
 Use the actual split but isolate the checkpoint from the full run. This verifies execution; on a large dataset even one epoch can take time.
 
 ```bash
