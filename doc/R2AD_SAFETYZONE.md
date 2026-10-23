@@ -50,6 +50,23 @@ If there are no separate normal recording folders, use `--split-mode temporal` o
 
 ## 4. Train and evaluate on merged mask
 
+For frame-level ground truth in held-out unexpected recordings, use the authoritative combined annotations:
+
+```bash
+python scripts/preprocess_r2ad.py \
+  --config configs/cf_dataset_epito.yaml \
+  --transfer manifest --split-mode grouped \
+  --annotations reports/safety_area_annotations/saved_annotation/scenario_8_16_back_view_annotations.csv \
+  --camera back_view \
+  --output-dir /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/annotated_split
+```
+
+Update the four `r2ad.*frames` paths to the CSVs in this new output directory. The input CSV is matched by `source_scenario_id`, `source_frame_id`, and camera, never the cumulative frame ID or the machine-specific image paths. Extracted filenames must be `scenario_<id>/frame_<original-index>.png` (or another image extension). Use one camera per source directory and confirm the annotated and newly extracted images share original frame numbering; indices from downsampled or reordered annotation videos need an explicit mapping first.
+
+For SafetyZone, any anomalous area makes a frame anomalous; all four areas must be normal to make it normal. Other frames are unknown. All frames from the unexpected recording root remain test-only, even those annotated normal. `test.csv` contains known normal/anomalous frames, `unknown_test.csv` holds unresolved/missing annotations, and the combined manifest retains everything. All four area labels are preserved. `normal_test.csv` also includes confirmed normal frames from unexpected recordings. Evaluation exports ground truth and area labels alongside scores. Original normal-source recordings retain their configured normal labels.
+
+`--max-frames 50` during extraction selects only the first 50 frames of each recording, so it may miss later anomalies. Without `--annotations`, preprocessing retains its original scenario-level labels.
+
 ```bash
 python scripts/train_r2ad.py --config configs/cf_dataset_epito.yaml --safety-area SafetyZone --epochs 50 --batch-size 32 --patch-size 224 --samples-per-frame 6
 python scripts/evaluate_r2ad.py --config configs/cf_dataset_epito.yaml --safety-area SafetyZone --calibrate --patch-size 224 --stride 64

@@ -1,5 +1,7 @@
 # Process Dataset
 
+For the full current workflow and completion checks, use the [training runbook](TRAINING_RUNBOOK.md). The `--max-frames 50` examples below are extraction smoke tests only.
+
 ## 2. Run for one scenario
 
 ```bash

@@ -1,5 +1,7 @@
 # R²AD — Randomized Rectangle Anomaly Detection (experimental V1)
 
+For current annotation-aware virtual splits and the complete V6 SafetyZone training workflow, use the [training runbook and status checklist](R2AD/TRAINING_RUNBOOK.md). The examples below include historical directory-based setup instructions.
+
 **Status:** self-contained research prototype, designed to be copied into
 `rashidrao-pk/advis_distrimuse_unito_SR` on the
 `feature/r2ad-random-rectangles` branch. **Does not edit any existing source file.**

@@ -6,6 +6,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from r2ad.core import images,read_mask,load_models,infer_map,save_map,transform_frame
 from r2ad.config import resolve, DEFAULT_CONFIG, load_config
 from r2ad.mcap_data import load_manifest, McapFrameReader
+from r2ad.frame_manifest import read_frame_manifest
 
 def main():
     p=argparse.ArgumentParser(description='R2AD inference, validation threshold calibration and shift tests')
@@ -46,6 +47,9 @@ def main():
         if args.calibrate and any(r['label']!='normal' for r in paths):raise ValueError('Calibration must be normal-only')
         reader=McapFrameReader()
     else:paths=images(args.input)
+    frame_labels = {}
+    if args.dataset_source == 'images' and Path(args.input).suffix.lower() == '.csv':
+        frame_labels = {str(row['source']): row for row in read_frame_manifest(args.input, with_metadata=True)}
     if args.max_frames>0:paths=paths[:args.max_frames]
     if not paths:raise ValueError('No input frames')
     out=Path(args.output_dir);out.mkdir(parents=True,exist_ok=True)
@@ -68,6 +72,12 @@ def main():
         identifier=(f"{path['scenario']}:{path['ordinal']}" if args.dataset_source=='mcap' else str(path))
         rec={'file':identifier,'score':result['score'],'n_patches':len(result['boxes']),
              'covered_mask_fraction':result['coverage_ratio'],'tx':args.tx,'ty':args.ty,'angle':args.angle,'scale':args.scale}
+        if frame_labels:
+            annotation = frame_labels[identifier]
+            area_label = annotation.get(f'label_{args.safety_area}', annotation.get('label', 'unknown'))
+            rec.update(ground_truth=area_label,
+                       **{key: annotation.get(key, '') for key in
+                          ('scenario', 'camera', 'frame_id', 'label_PLeft', 'label_PRight', 'label_RoboArm', 'label_ConvBelt')})
         if tau is not None:rec.update(threshold=tau,anomalous=int(result['score']>tau))
         records.append(rec)
         if args.save_maps:save_map(out/f'{i:06d}_overlay.png',frame,mask,result)

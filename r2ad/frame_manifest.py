@@ -3,7 +3,7 @@ import csv
 from pathlib import Path
 
 
-def read_frame_manifest(path):
+def read_frame_manifest(path, with_metadata=False):
     """Return source paths in CSV order; relative paths are relative to the CSV."""
     path = Path(path).expanduser().resolve()
     paths = []
@@ -23,5 +23,5 @@ def read_frame_manifest(path):
             if source in seen:
                 raise ValueError(f'Duplicate source frame at {path}:{line}: {source}')
             seen.add(source)
-            paths.append(source)
+            paths.append(dict(row, source=source) if with_metadata else source)
     return paths

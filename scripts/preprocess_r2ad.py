@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from r2ad.config import load_config, DEFAULT_CONFIG
 from r2ad.core import images
 from r2ad.safetyzone import create_safety_zone
+from r2ad.annotations import load_area_annotations, annotate_manifest, ANNOTATION_FIELDS
 
 
 def report(message):
@@ -122,7 +123,12 @@ def main():
     p.add_argument('--transfer', choices=['manifest', 'symlink', 'copy'], default='manifest',
                    help='manifest (default) writes CSV references only; symlink/copy create image trees')
     p.add_argument('--mask-only', action='store_true', help='Build union mask without preparing datasets')
+    p.add_argument('--annotations', type=Path, help='Authoritative combined per-area annotation CSV')
+    p.add_argument('--camera', default='back_view', help='Camera used for annotation matching')
     args = p.parse_args()
+    if args.annotations and args.transfer != 'manifest':
+        p.error('--annotations requires --transfer manifest')
+    annotations = load_area_annotations(args.annotations, args.camera) if args.annotations else None
     started = time.monotonic()
     report(f'[R2AD] Loading configuration: {args.config}')
     cfg = load_config(args.config)
@@ -180,24 +186,35 @@ def main():
         counts[split] = transfer(files, normal_source, output / split / 'normal', args.transfer, manifest, 'normal', split, shape_hw)
     if unexpected:
         counts['unexpected'] = transfer(unexpected, abnormal_source, output / 'test' / 'unexpected', args.transfer, manifest, 'unexpected', 'test', shape_hw)
+    fields = ['split', 'label', 'source', 'processed']
+    if annotations is not None:
+        annotate_manifest(manifest, annotations, args.camera, abnormal_source or Path('/__no_unexpected_source__'))
+        fields += ANNOTATION_FIELDS
+        from collections import Counter
+        counts['test_labels'] = dict(Counter(row['label'] for row in manifest if row['split'] == 'test'))
+        report(f'[Annotations] Test labels: {counts["test_labels"]}; unknown frames excluded from test.csv')
     report('[Metadata] Writing manifest.csv and metadata.json...')
     with (output / 'manifest.csv').open('w', newline='', encoding='utf-8') as file:
-        writer = csv.DictWriter(file, fieldnames=['split', 'label', 'source', 'processed'])
+        writer = csv.DictWriter(file, fieldnames=fields)
         writer.writeheader(); writer.writerows(manifest)
     if args.transfer == 'manifest':
         selections = {
             'train': [row for row in manifest if row['split'] == 'train'],
             'val': [row for row in manifest if row['split'] == 'val'],
-            'test': [row for row in manifest if row['split'] == 'test'],
+            'test': [row for row in manifest if row['split'] == 'test' and row['label'] != 'unknown'],
             'normal_test': [row for row in manifest if row['split'] == 'test' and row['label'] == 'normal'],
         }
+        if annotations is not None:
+            selections['unknown_test'] = [row for row in manifest if row['split'] == 'test' and row['label'] == 'unknown']
         for name, rows in selections.items():
             with (output / f'{name}.csv').open('w', newline='', encoding='utf-8') as file:
-                writer = csv.DictWriter(file, fieldnames=['split', 'label', 'source', 'processed'])
+                writer = csv.DictWriter(file, fieldnames=fields)
                 writer.writeheader(); writer.writerows(rows)
     metadata = dict(safety_zone=info, split_strategy=args.split_mode, provenance=provenance, counts=counts,
                     transfer=args.transfer, seed=args.seed, normal_source=str(normal_source),
-                    unexpected_source=str(abnormal_source) if abnormal_source else None)
+                    unexpected_source=str(abnormal_source) if abnormal_source else None,
+                    annotations=str(args.annotations.resolve()) if args.annotations else None,
+                    annotation_camera=args.camera if annotations is not None else None)
     (output / 'metadata.json').write_text(json.dumps(metadata, indent=2), encoding='utf-8')
     report(f'[Done] Preprocessing completed in {time.monotonic() - started:.1f}s')
     print('[data]', json.dumps(counts, indent=2))
