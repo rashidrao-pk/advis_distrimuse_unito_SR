@@ -285,9 +285,50 @@ The checkpoint directory also contains:
 
 Reports update during training even when images are disabled with `--monitor-every 0`. `status=completed` is written only after the training loop finishes normally; an interrupted run can leave a stale `training` status and earlier elapsed-time estimate. Training phase time includes batch loading, optimization and step monitoring; total epoch time also includes validation, epoch plots and checkpoint saving. At completion the final message reports total run time including setup and the best epoch.
 
+### Learning dashboard and red error maps
+
+`training_progress.png` beside the checkpoint has three panels, similar to the loss-progression reference:
+
+1. Log-scale training/validation reconstruction MSE, raw KL, weighted KL, raw generator GAN loss, weighted GAN loss and generator total.
+2. Discriminator accuracy and real-class F1 computed from real/reconstruction logits at threshold zero (`sigmoid=0.5`). These are training diagnostics, **not anomaly-classification metrics**. A strong discriminator is not proof the autoencoder detects anomalies; balanced adversarial training can have discriminator accuracy near 50%.
+3. Generator adversarial loss and discriminator BCE to inspect adversarial balance.
+
+The latest plot updates at monitoring intervals using sample-weighted partial-epoch statistics (validation is marked pending), and after each epoch using completed metrics. The discriminator metrics use aggregated confusion counts across the whole epoch, rather than averages of batch F1 values. All epoch values are retained in `epoch_metrics.csv` and `training_summary.json`. The plot is generated after completed epochs even with `--monitor-every 0`. No annealing curve is shown because the trainer has no annealing schedule.
+
+Learning evidence is decreasing held-out reconstruction error together with better fixed-probe reconstructions, stable losses and later labeled anomaly evaluation. Fresh random patches help inspect generalization across content but are not directly comparable image-by-image over time. Validation patches themselves are resampled each epoch, so small MSE fluctuations need not reflect a model regression.
+
+Both training absolute-error maps and evaluation heatmaps now use **`Reds` with a fixed 0–0.5 range** on the RGB 0–1 residual scale. White means low error; increasingly dark red means larger error. Set `--map-vmin 0 --map-vmax 0.2` on training or evaluation for greater contrast, but keep the same range when comparing runs. Values outside the selected range saturate for display only; scores and saved raw `.npy` maps are unchanged. Evaluation saves an accompanying `*_scale.json` containing the colormap and limits. It no longer normalizes the heatmap separately to each frame's upper quantile. The display maximum is not the calibrated anomaly threshold.
+
 The checkpoint is overwritten only on improved validation MSE; its stored `epoch` can be smaller than the completed training epoch. No early-stopping rule is implemented. Loss improvement alone does not establish anomaly-detection performance.
 
 **Completion gate:** the planned epoch budget and final completion line are present, monitor outputs are reviewed, and the best checkpoint is retained with code/config/environment/split provenance. Do not tune hyperparameters on test scores.
+
+## A100 performance configuration (before starting a new run)
+
+The optimized trainer defaults to `--precision auto`, selecting BF16 on supported CUDA devices and FP32 elsewhere. Convolution/linear forwards use autocast; reconstruction, KL, variance exponentiation and BCE loss arithmetic remain FP32. Parameters/checkpoints remain FP32. BF16 changes numerical behavior, so retain the precision in experiment provenance and compare validation quality as well as speed. Use `--precision fp32` for a numerical reference. The implementation follows [PyTorch autocast guidance](https://docs.pytorch.org/docs/stable/notes/amp_examples.html).
+
+Image datasets now cache masks by frame dimensions per worker. `--augmentation-mode crop` (default) applies the original geometric transform to the mask, samples in that transformed coordinate system, then renders only the chosen image rectangle and applies brightness/contrast there. It retains patch count, sampling/augmentation distributions and full-resolution sources. OpenCV interpolation coordinate rounding can produce small pixel differences from `--augmentation-mode full`, the legacy comparison path. Full PNG decoding is still required for each sample; no unlimited full-frame RAM cache or copied dataset is created. The direct-MCAP dataset retains its full-frame augmentation implementation.
+
+Workers use one OpenCV thread each. `--persistent-workers` defaults on when workers are nonzero, and `--prefetch-factor 2` prepares up to two batches per worker. They are omitted from DataLoader when `--workers 0`. Persistent train and validation workers can both remain resident after the first epoch, so measure CPU/RAM use against the job's allocation. These controls follow [PyTorch DataLoader semantics](https://docs.pytorch.org/docs/stable/data.html). Exact random sequences differ from older runs with different worker lifecycles; this is not a bitwise reproducibility mode.
+
+Monitoring now defaults to every 1,000 steps. Batch metrics append only new rows instead of rewriting all previous rows; loss-plot rendering uses at most 2,000 displayed points while the CSV retains every recorded step. Progress still reports every 100 batches. ETA waits through up to 10 warm-up batches, excludes their startup delay from its per-batch estimate, and includes measured epoch overhead after one epoch finishes.
+
+For a comparable one-epoch A100 benchmark, preserve the current batch size 32 and use a new output directory:
+
+```bash
+python -u scripts/train_r2ad.py \
+  --config "$R2AD_CONFIG" --safety-area SafetyZone \
+  --train-dir "$R2AD_SPLIT/train.csv" --val-dir "$R2AD_SPLIT/val.csv" \
+  --output results/r2ad/SafetyZone_fast_b32/model_r2ad.pt \
+  --patch-size 224 --samples-per-frame 6 --epochs 1 \
+  --batch-size 32 --workers 8 --device cuda \
+  --precision bf16 --augmentation-mode crop \
+  --persistent-workers --prefetch-factor 2 --monitor-every 1000
+```
+
+Compare epoch training/validation seconds and `patches_per_second` with the prior run. `data_wait_seconds` is observed host time obtaining the next batch, not a complete GPU/CPU profiler or proof of a storage bottleneck. After this baseline, try batch size 64 with another output directory; compare throughput and validation losses without changing the learning rate automatically. Fifty epochs still sample the same total patches, but a larger batch changes the number of optimizer updates and may affect quality. Eight workers need sufficient allocated CPUs; more workers are not always faster on shared BeeGFS storage.
+
+`--tf32` and `--cudnn-benchmark` are optional, off by default; enable explicitly for a recorded performance experiment. No A100 speedup is guaranteed from local CPU tests. Changes apply only to new Python processes, and the trainer still cannot resume an already running/finished checkpoint.
 
 ## 8. Calibrate the anomaly threshold on normal validation frames
 

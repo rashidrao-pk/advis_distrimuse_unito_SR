@@ -21,10 +21,14 @@ def main():
     p.add_argument('--patch-size',type=int,default=224);p.add_argument('--stride',type=int,default=64)
     p.add_argument('--min-coverage',type=float,default=.85);p.add_argument('--batch-size',type=int,default=32)
     p.add_argument('--sigma',type=float,default=1.);p.add_argument('--save-maps',action='store_true')
+    p.add_argument('--map-vmin',type=float,default=0.)
+    p.add_argument('--map-vmax',type=float,default=.5)
     p.add_argument('--tx',type=float,default=0);p.add_argument('--ty',type=float,default=0)
     p.add_argument('--angle',type=float,default=0);p.add_argument('--scale',type=float,default=1)
     p.add_argument('--device',default='auto');p.add_argument('--max-frames',type=int,default=0)
     args=p.parse_args()
+    if not 0 <= args.map_vmin < args.map_vmax <= 1:
+        p.error('Require 0 <= map-vmin < map-vmax <= 1')
     if args.dataset_source=='mcap':
         cfg=load_config(args.config);root=Path(cfg['data']['dataset_base']).expanduser();rcfg=cfg.get('r2ad') or {}
         mask_cfg=(rcfg.get('safety_zone_mask') or cfg.get('data',{}).get('mask_types',{}).get('SafetyZone')) if args.safety_area=='SafetyZone' else cfg['data']['mask_types'].get(args.safety_area)
@@ -80,7 +84,7 @@ def main():
                           ('scenario', 'camera', 'frame_id', 'label_PLeft', 'label_PRight', 'label_RoboArm', 'label_ConvBelt')})
         if tau is not None:rec.update(threshold=tau,anomalous=int(result['score']>tau))
         records.append(rec)
-        if args.save_maps:save_map(out/f'{i:06d}_overlay.png',frame,mask,result)
+        if args.save_maps:save_map(out/f'{i:06d}_overlay.png',frame,mask,result,args.map_vmin,args.map_vmax)
         print(f'[{i+1}/{len(paths)}] {identifier} score={result["score"]:.6f} coverage={result["coverage_ratio"]:.3f}')
     with (out/'scores.csv').open('w',newline='') as f:
         writer=csv.DictWriter(f,fieldnames=list(records[0]));writer.writeheader();writer.writerows(records)

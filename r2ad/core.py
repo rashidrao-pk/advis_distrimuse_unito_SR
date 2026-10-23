@@ -150,12 +150,17 @@ def infer_map(frame,mask,enc,dec,device,patch=224,stride=64,coverage=.85,batch=3
     score=float(np.quantile(amap[valid],.99))
     return {'score':score,'map':amap,'covered':valid,'boxes':coords,'patch_scores':patch_scores,'coverage_ratio':float(valid.sum()/max(mask.sum(),1))}
 
-def save_map(out,frame,mask,result):
+def save_map(out,frame,mask,result,vmin=0.,vmax=.5):
+    from matplotlib import colormaps
+    if not 0 <= vmin < vmax <= 1:
+        raise ValueError('Require 0 <= vmin < vmax <= 1')
     out=Path(out);out.parent.mkdir(parents=True,exist_ok=True)
     amap=result['map'];valid=result['covered']
-    p99=float(np.quantile(amap[valid],.995)) if valid.any() else 1
-    heat=cv2.applyColorMap(np.uint8(np.clip(amap/max(p99,1e-9),0,1)*255),cv2.COLORMAP_JET)
+    # Fixed RGB residual scale permits comparison across frames; no per-image normalization.
+    rgb=colormaps['Reds'](np.clip((amap-vmin)/(vmax-vmin),0,1),bytes=True)[...,:3]
+    heat=np.ascontiguousarray(rgb[...,::-1])
     overlay=frame.copy(); overlay[valid]=cv2.addWeighted(frame,.6,heat,.4,0)[valid]
     cv2.imwrite(str(out),overlay)
     cv2.imwrite(str(out.with_name(out.stem+'_heat.png')),heat)
     np.save(str(out.with_suffix('.npy')),amap)
+    out.with_name(out.stem+'_scale.json').write_text(json.dumps(dict(cmap='Reds',vmin=vmin,vmax=vmax)))
