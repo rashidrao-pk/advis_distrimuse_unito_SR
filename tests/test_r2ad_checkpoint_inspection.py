@@ -35,6 +35,45 @@ def test_optional_stitched_reconstruction_preserves_scores():
     assert np.abs(result['reconstruction'].astype(float)-100).max()<=1
 
 
+def test_patch_animation_callback_preserves_final_inference():
+    image=np.random.default_rng(7).integers(0,256,(48,48,3),dtype=np.uint8)
+    mask=np.ones((48,48),np.uint8)
+    snapshots=[]
+    base=infer_map(image,mask,MeanEncoder(),MeanDecoder(),'cpu',patch=32,stride=16,sigma=1)
+    animated=infer_map(image,mask,MeanEncoder(),MeanDecoder(),'cpu',patch=32,stride=16,sigma=1,
+                      on_patch=lambda state:snapshots.append(state))
+    assert len(snapshots)==len(base['boxes'])==4
+    assert [s['index'] for s in snapshots]==[1,2,3,4]
+    assert np.array_equal(snapshots[-1]['map'],base['map'])
+    assert np.array_equal(animated['map'],base['map'])
+    assert animated['score']==base['score']
+    assert snapshots[0]['covered'].sum()<snapshots[-1]['covered'].sum()
+
+
+def test_animation_writes_playable_gif_and_raw_map(tmp_path,monkeypatch):
+    from PIL import Image
+    from scripts import animate_r2ad_inference as animation
+    frame=tmp_path/'frame.png';mask=tmp_path/'mask.png'
+    cv2.imwrite(str(frame),np.full((48,48,3),80,np.uint8))
+    cv2.imwrite(str(mask),np.full((48,48),255,np.uint8))
+    config=tmp_path/'config.yaml'
+    config.write_text(yaml.safe_dump({'r2ad':{'safety_zone_mask':str(mask)}}))
+    checkpoint=tmp_path/'model.pt';checkpoint.touch()
+    monkeypatch.setattr(animation,'load_models',lambda *args:(MeanEncoder(),MeanDecoder(),{'epoch':3}))
+    output=tmp_path/'animation.gif'
+    monkeypatch.setattr(sys,'argv',['animate','--config',str(config),'--image',str(frame),
+        '--checkpoint',str(checkpoint),'--output',str(output),'--device','cpu','--patch-size','32',
+        '--stride','16','--width','720','--every-n','2'])
+    animation.main()
+    with Image.open(output) as gif:
+        assert gif.n_frames==3
+        assert gif.info['loop']==0
+    report=json.loads(output.with_suffix('.json').read_text())
+    assert report['patches']==4 and report['animation_frames']==3
+    assert output.with_suffix('.png').is_file()
+    assert (tmp_path/'animation_overlay.npy').is_file()
+
+
 def test_inspection_uses_same_two_classes_for_each_checkpoint(tmp_path,monkeypatch):
     mask=tmp_path/'mask.png'
     cv2.imwrite(str(mask),np.full((48,48),255,np.uint8))

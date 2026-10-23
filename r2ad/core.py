@@ -122,7 +122,7 @@ def transform_frame(frame, tx=0,ty=0,angle=0,scale=1):
     M[:,2] += (tx,ty)
     return cv2.warpAffine(frame,M,(w,h),flags=cv2.INTER_LINEAR,borderMode=cv2.BORDER_REFLECT_101)
 
-def infer_map(frame,mask,enc,dec,device,patch=224,stride=64,coverage=.85,batch=32,sigma=1.,return_reconstruction=False):
+def infer_map(frame,mask,enc,dec,device,patch=224,stride=64,coverage=.85,batch=32,sigma=1.,return_reconstruction=False,on_patch=None):
     h,w=frame.shape[:2]
     coords=boxes(mask,patch,stride,coverage)
     accum=np.zeros((h,w),np.float32);weights=np.zeros((h,w),np.float32)
@@ -133,11 +133,12 @@ def infer_map(frame,mask,enc,dec,device,patch=224,stride=64,coverage=.85,batch=3
     patch_scores=[]
     for begin in range(0,len(coords),batch):
         chunk=coords[begin:begin+batch]
-        inp=torch.stack([extract(frame,b) for b in chunk]).to(device)
+        cpu_inputs=torch.stack([extract(frame,b) for b in chunk])
+        inp=cpu_inputs.to(device)
         with torch.inference_mode():
             mu,_=enc(inp); pred=dec(mu)
             residual=(inp-pred).abs().mean(1).cpu().numpy()/2.0
-            if return_reconstruction:
+            if return_reconstruction or on_patch is not None:
                 rgb=((pred.float().permute(0,2,3,1).cpu().numpy()+1)/2).clip(0,1)
         for index,(b,res) in enumerate(zip(chunk,residual)):
             x,y,p,_=b
@@ -148,6 +149,13 @@ def infer_map(frame,mask,enc,dec,device,patch=224,stride=64,coverage=.85,batch=3
             if return_reconstruction:
                 reconstructed[y:y+p,x:x+p]+=cv2.resize(rgb[index],(p,p),interpolation=cv2.INTER_LINEAR)*hann[...,None]
             patch_scores.append(float(np.quantile(res,.99)))
+            if on_patch is not None:
+                covered=(weights>0)&(mask>0)
+                current=np.divide(accum,weights,out=np.zeros_like(accum),where=weights>0)
+                current[mask==0]=0
+                on_patch(dict(index=begin+index+1,total=len(coords),box=b,
+                              input_rgb=((cpu_inputs[index].permute(1,2,0).numpy()+1)/2).clip(0,1),
+                              reconstruction_rgb=rgb[index],patch_error=res,map=current,covered=covered))
     valid=(weights>0)&(mask>0)
     amap=np.divide(accum,weights,out=np.zeros_like(accum),where=weights>0)
     amap[mask==0]=0

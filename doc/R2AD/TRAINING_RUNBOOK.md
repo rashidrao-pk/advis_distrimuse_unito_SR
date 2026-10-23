@@ -369,6 +369,24 @@ Use `$R2AD_RUN/smoke` for `--checkpoint-dir` if the checkpoint is inside that su
 
 First inspect a few maps in a separate directory if needed. `--max-frames 20 --save-maps` selects the first 20 CSV entries; this is a visual diagnostic and may contain only normal frames. For full scoring omit the frame limit:
 
+To animate how one scene's anomaly map is assembled, use a trained checkpoint:
+
+```bash
+python scripts/animate_r2ad_inference.py \
+  --config "$R2AD_CONFIG" \
+  --image /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/sources/unexpected/scenario_8_1/frame_000164.png \
+  --checkpoint results/r2ad/SafetyZone_fast_b32/checkpoints/model_r2ad_epoch_0003.pt \
+  --output reports/r2ad_inference_epoch3.gif \
+  --device cuda --patch-size 224 --stride 64 --min-coverage 0.85 \
+  --fps 3 --map-vmin 0 --map-vmax 0.5
+```
+
+The GIF shows the current patch in yellow and processed patches in green, the accumulated Hann-weighted/smoothed residual map, and the current patch input, latent-mean reconstruction and error. Mask pixels not yet covered are gray; the map color limits stay fixed. The partial q99 score can increase or decrease as overlapping contributions are averaged. This is explanatory playback, not a measurement of actual GPU timing: patches are still computed in batches. `--every-n 2` reduces animation frames without skipping inference patches, and `--width 720` reduces output size. Memory grows with the number of captured animation frames; use these options with dense grids.
+
+Alongside the GIF, the tool writes a final PNG, JSON provenance/settings/score, and the final overlay/heatmap/raw `.npy` map with color-scale metadata. GIF palette quantization can slightly alter displayed colors; use the raw map for numeric comparisons. Animation uses an optional callback in the regular inference path; it does not change anomaly scoring or patch selection.
+
+Full test scoring command:
+
 ```bash
 python -u scripts/evaluate_r2ad.py \
   --config "$R2AD_CONFIG" --safety-area SafetyZone \
