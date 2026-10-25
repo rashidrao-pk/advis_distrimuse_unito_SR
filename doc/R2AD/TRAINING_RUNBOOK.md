@@ -338,6 +338,8 @@ For old snapshots the log explicitly reports a **legacy weights-only warm start*
 
 ### Animate random training patches and learning across epochs
 
+For configurable translation/rotation/patch-size jitter and the epoch-16 review, see [epoch-16 findings and gentle augmentation commands](EPOCH16_REVIEW.md). Training and animation accept `--aug-translate`, `--aug-rotate`, `--aug-contrast`, `--aug-brightness`, `--patch-scale-min` and `--patch-scale-max`. Defaults preserve the previous ranges. Validation sampling is unchanged by these training controls.
+
 ```bash
 python scripts/animate_r2ad_training.py \
   --config "$R2AD_CONFIG" --train-csv "$R2AD_SPLIT/train.csv" \

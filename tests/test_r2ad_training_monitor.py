@@ -207,11 +207,15 @@ def test_mid_epoch_resume_matches_uninterrupted_and_legacy_warm_start(tmp_path,m
     torch.save({k:v for k,v in actual.items() if k not in
                 ('training_state','optimizer_g_state_dict','optimizer_d_state_dict','best_val_mse')},legacy)
     warm=tmp_path/'warm'/'model.pt'
-    monkeypatch.setattr(sys,'argv',['train','--resume',str(legacy),'--epochs','3','--output',str(warm)])
+    monkeypatch.setattr(sys,'argv',['train','--resume',str(legacy),'--epochs','3','--output',str(warm),
+                                  '--aug-translate','.005','--aug-rotate','.5','--patch-scale-min','1','--patch-scale-max','1'])
     training.main()
     continued=torch.load(warm.parent/'last_checkpoint.pt',map_location='cpu',weights_only=False)
     assert continued['epoch']==3
     assert continued['training_state']['global_step']==9
+    assert continued['config']['aug_translate']==.005
+    assert continued['config']['aug_rotate']==.5
+    assert continued['training_state']['summary']['augmentation_change']['current']['patch_scale_min']==1
 
 
 def test_pause_signals_restore_handlers():

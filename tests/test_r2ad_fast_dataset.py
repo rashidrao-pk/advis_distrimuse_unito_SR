@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import torch
+import pytest
 
 from r2ad.dataset import RectangleDataset
 
@@ -51,3 +52,23 @@ def test_no_augmentation_is_identical(tmp_path):
     first = a[0]
     np.random.seed(4)
     assert torch.equal(first, b[0])
+
+
+def test_augmentation_controls_zero_and_gentle_ranges():
+    from r2ad.dataset import sample_training_patch,validate_augmentation
+    frame=np.random.default_rng(7).integers(0,256,(240,320,3),dtype=np.uint8)
+    mask=np.ones((240,320),np.uint8)
+    zero=dict(aug_translate=0,aug_rotate=0,aug_contrast=0,aug_brightness=0,patch_scale_min=1,patch_scale_max=1)
+    _,info=sample_training_patch(frame,mask,64,.85,np.random.default_rng(10),details=True,settings=zero)
+    assert np.array_equal(info['scene'],frame)
+    assert info['augmentation']==dict(tx=0.,ty=0.,angle=0.,alpha=1.,beta=0.)
+    assert info['box'][2:]==(64,64)
+    gentle=dict(aug_translate=.005,aug_rotate=.5,aug_contrast=.05,aug_brightness=4,patch_scale_min=.98,patch_scale_max=1.02)
+    for seed in range(8):
+        _,info=sample_training_patch(frame,mask,64,.85,np.random.default_rng(seed),details=True,settings=gentle)
+        a=info['augmentation']
+        assert abs(a['tx'])<=1.6 and abs(a['ty'])<=1.2 and abs(a['angle'])<=.5
+        assert .95<=a['alpha']<=1.05 and abs(a['beta'])<=4
+        assert round(64*.98)<=info['box'][2]<=round(64*1.02)
+    with pytest.raises(ValueError):validate_augmentation(dict(aug_translate=-.1))
+    with pytest.raises(ValueError):validate_augmentation(dict(patch_scale_min=1.2,patch_scale_max=1.))

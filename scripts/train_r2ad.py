@@ -10,7 +10,7 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from r2ad.core import build_models
-from r2ad.dataset import RectangleDataset
+from r2ad.dataset import RectangleDataset,add_augmentation_arguments,augmentation_from_args,DEFAULT_AUGMENTATION
 from r2ad.mcap_data import McapRectangleDataset
 from r2ad.config import resolve, DEFAULT_CONFIG
 from tqdm.auto import tqdm
@@ -151,6 +151,7 @@ def write_training_summary(summary, path):
              f"Device: {summary['device']}. Precision: {summary.get('precision', 'fp32')}.", '', summary['timing_note'], '',
              f"Plan: {settings['epochs']} epochs, batch size {settings['batch_size']}, learning rate {settings['lr']}, "
              f"KL weight {settings['kl_weight']}, adversarial weight {settings['adv_weight']}, seed {settings['seed']}.", '',
+             'Training augmentation: '+', '.join(f'{key}={settings.get(key,value)}' for key,value in DEFAULT_AUGMENTATION.items())+'.', '',
              'Monitoring columns show fixed validation patches followed by fresh random augmented training patches. '
              'Rows show original, latent-mean reconstruction, and absolute error. Only fixed probes support comparisons of the same content over time.', '',
              '| Epoch | Train MSE | Validation MSE | Train time | Validation time | Epoch total | Patches/s | Loader wait | Best saved |',
@@ -204,6 +205,7 @@ def train(pause):
     p.add_argument('--persistent-workers',action=argparse.BooleanOptionalAction,default=True)
     p.add_argument('--opencv-threads',type=int,default=1,help='OpenCV threads in the main process; workers use one each')
     p.add_argument('--augmentation-mode',choices=('crop','full'),default='crop',help='Render only selected image ROI, or use legacy full-frame rendering (image datasets)')
+    add_augmentation_arguments(p)
     p.add_argument('--tf32',action=argparse.BooleanOptionalAction,default=False)
     p.add_argument('--cudnn-benchmark',action=argparse.BooleanOptionalAction,default=False)
     p.add_argument('--monitor-every',type=int,default=1000,help='Save monitoring images every N optimizer steps; 0 disables')
@@ -233,6 +235,11 @@ def train(pause):
                     p.error(f'Full resume requires unchanged {name}; checkpoint={saved[name]!r}')
     if not args.safety_area:
         p.error('--safety-area is required for a new run (or must be present in resume metadata)')
+    try:
+        augmentation_settings=augmentation_from_args(args)
+    except ValueError as exc:p.error(str(exc))
+    if args.dataset_source=='mcap' and augmentation_settings!=DEFAULT_AUGMENTATION:
+        p.error('Custom augmentation ranges currently require --dataset-source images')
     if args.dataset_source=='mcap':
         from r2ad.config import load_config
         cfg=load_config(args.config);root=Path(cfg['data']['dataset_base']).expanduser();rcfg=cfg.get('r2ad') or {}
@@ -279,7 +286,7 @@ def train(pause):
         train=McapRectangleDataset(args.manifest,'train',args.mask,args.patch_size,args.min_coverage,args.samples_per_frame,True,args.seed)
         val=McapRectangleDataset(args.manifest,'val',args.mask,args.patch_size,args.min_coverage,1,False,args.seed)
     else:
-        train=RectangleDataset(args.train_dir,args.mask,args.patch_size,args.min_coverage,args.samples_per_frame,True,args.seed,args.augmentation_mode)
+        train=RectangleDataset(args.train_dir,args.mask,args.patch_size,args.min_coverage,args.samples_per_frame,True,args.seed,args.augmentation_mode,augmentation_settings)
         val=RectangleDataset(args.val_dir,args.mask,args.patch_size,args.min_coverage,1,False,args.seed)
     digest=hashlib.sha256()
     for dataset in (train,val):
@@ -309,6 +316,11 @@ def train(pause):
                    epochs=[], elapsed_seconds=0, estimated_remaining_seconds=None,
                    timing_note='ETA includes measured epoch overhead after the first epoch; first-epoch ETA estimates training batches only.')
     summary_path=out.parent/'training_summary.json'
+    if resume:
+        previous_augmentation={key:resume.get('config',{}).get(key,value) for key,value in DEFAULT_AUGMENTATION.items()}
+        if previous_augmentation!=augmentation_settings:
+            summary['augmentation_change']=dict(previous=previous_augmentation,current=augmentation_settings)
+            print('[augmentation] Ranges changed on continuation; this is a new training condition, not exact replay.',flush=True)
     start_epoch=1;resume_batch=0;resume_epoch_state=None;resume_order=None
     if resume and resume.get('training_state'):
         state=resume['training_state']
@@ -339,6 +351,7 @@ def train(pause):
           f'prefetch={args.prefetch_factor if args.workers else 0} augmentation={args.augmentation_mode if args.dataset_source == "images" else "full (MCAP)"} '
           f'TF32={args.tf32} cudnn_benchmark={args.cudnn_benchmark}',flush=True)
     enc,dec,disc=build_models(args.latent_dims,device)
+    print(f'[augmentation] train={augmentation_settings}; validation keeps its original unaugmented sampling settings',flush=True)
     opt_g=torch.optim.Adam(list(enc.parameters())+list(dec.parameters()),lr=args.lr)
     opt_d=torch.optim.Adam(disc.parameters(),lr=args.lr/2)
     bce=nn.BCEWithLogitsLoss();best=float('inf')
