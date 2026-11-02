@@ -111,10 +111,21 @@ def load_models(checkpoint,device):
     try: ck=torch.load(checkpoint,map_location=device,weights_only=False)
     except TypeError:ck=torch.load(checkpoint,map_location=device)
     z=int(ck.get('latent_dims',ck.get('config',{}).get('latent_dims',64)))
-    enc,dec,_=build_models(z,device)
+    enc,dec=Encoder(z).to(device),Decoder(z).to(device)
     enc.load_state_dict(ck['encoder_state_dict']);dec.load_state_dict(ck['decoder_state_dict'])
     enc.eval();dec.eval()
     return enc,dec,ck
+
+
+def checkpoint_patch_settings(checkpoint,patch=None,stride=None):
+    """Use trained source size; prevent accidentally testing a different scale."""
+    recorded=checkpoint.get('config',{}).get('patch_size')
+    if recorded is not None and patch is not None and int(patch)!=int(recorded):
+        raise ValueError(f'Patch-size mismatch: checkpoint trained at {recorded}, requested {patch}. Use a new matching experiment.')
+    patch=int(recorded if patch is None and recorded is not None else patch if patch is not None else 224)
+    stride=int(stride if stride is not None else 64 if patch>=224 else max(1,patch//4))
+    if patch<1 or stride<1:raise ValueError('Patch size and stride must be positive')
+    return patch,stride
 
 def transform_frame(frame, tx=0,ty=0,angle=0,scale=1):
     h,w=frame.shape[:2]

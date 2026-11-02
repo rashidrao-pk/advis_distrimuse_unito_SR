@@ -11,7 +11,7 @@ import torch
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from r2ad.config import load_config
-from r2ad.core import load_models,read_mask
+from r2ad.core import load_models,read_mask,checkpoint_patch_settings
 from r2ad.dataset import sample_training_patch,add_augmentation_arguments,augmentation_from_args,validate_augmentation
 from r2ad.frame_manifest import read_frame_manifest
 from scripts.animate_r2ad_inference import render_step
@@ -25,7 +25,7 @@ def main():
     p.add_argument('--checkpoint','--checkpoints',nargs='+',required=True,type=Path,dest='checkpoints')
     p.add_argument('--output',type=Path,default=Path('reports/r2ad_training.gif'))
     p.add_argument('--device',default='auto')
-    p.add_argument('--patch-size',type=int,default=224)
+    p.add_argument('--patch-size',type=int,default=None)
     p.add_argument('--min-coverage',type=float,default=.85)
     p.add_argument('--num-patches',type=int,default=24)
     p.add_argument('--seed',type=int,default=42)
@@ -41,7 +41,7 @@ def main():
     try:augmentation_settings=augmentation_from_args(args)
     except ValueError as exc:p.error(str(exc))
     supplied={token.split('=')[0].lstrip('-').replace('-','_') for token in sys.argv[1:] if token.startswith('--')}
-    if args.num_patches<1 or args.patch_size<1 or args.width<720 or args.width%2 or args.fps<=0:
+    if args.num_patches<1 or args.width<720 or args.width%2 or args.fps<=0:
         p.error('Require positive patch counts/sizes/FPS and even width >=720')
     if not 0<args.min_coverage<=1 or not 0<=args.map_vmin<args.map_vmax<=1 or args.output.suffix.lower()!='.gif':
         p.error('Invalid coverage/color limits or output extension (must be .gif)')
@@ -62,6 +62,7 @@ def main():
     frames=[];records=[]
     for checkpoint in args.checkpoints:
         enc,dec,ck=load_models(checkpoint,device)
+        patch_size,_=checkpoint_patch_settings(ck,args.patch_size)
         settings=validate_augmentation({key:ck.get('config',{}).get(key,value) if key not in supplied else value
                                        for key,value in augmentation_settings.items()})
         if ck.get('config',{}).get('safety_area',args.safety_area)!=args.safety_area:
@@ -72,7 +73,7 @@ def main():
             if frame is None:
                 raise ValueError(f'Unreadable training image: {row["source"]}')
             mask=read_mask(mask_path,frame.shape)
-            patch,info=sample_training_patch(frame,mask,args.patch_size,args.min_coverage,
+            patch,info=sample_training_patch(frame,mask,patch_size,args.min_coverage,
                 np.random.default_rng(args.seed+index+1),args.augment,args.augmentation_mode,details=True,settings=settings)
             with torch.inference_mode():
                 x=patch.unsqueeze(0).to(device)

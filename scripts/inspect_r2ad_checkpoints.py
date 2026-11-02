@@ -13,7 +13,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from r2ad.config import load_config
-from r2ad.core import load_models, read_mask, infer_map, save_map
+from r2ad.core import load_models, read_mask, infer_map, save_map,checkpoint_patch_settings
 from r2ad.frame_manifest import read_frame_manifest
 from scripts.preview_r2ad_splits import sample_rows, scenario
 
@@ -39,8 +39,8 @@ def main():
     p.add_argument('--seed',type=int,default=42)
     p.add_argument('--device',default='auto')
     p.add_argument('--safety-area',default='SafetyZone',choices=['SafetyZone','PLeft','PRight','RoboArm','ConvBelt'])
-    p.add_argument('--patch-size',type=int,default=224)
-    p.add_argument('--stride',type=int,default=64)
+    p.add_argument('--patch-size',type=int,default=None)
+    p.add_argument('--stride',type=int,default=None)
     p.add_argument('--min-coverage',type=float,default=.85)
     p.add_argument('--sigma',type=float,default=1.)
     p.add_argument('--batch-size',type=int,default=32)
@@ -48,7 +48,7 @@ def main():
     p.add_argument('--map-vmax',type=float,default=.5)
     p.add_argument('--output-dir',type=Path,default=Path('reports/r2ad_checkpoint_inspection'))
     args=p.parse_args()
-    if min(args.max_checkpoints,args.samples_per_class,args.patch_size,args.stride,args.batch_size)<1 or not 0<args.min_coverage<=1 or args.sigma<0:
+    if min(args.max_checkpoints,args.samples_per_class,args.batch_size)<1 or not 0<args.min_coverage<=1 or args.sigma<0:
         p.error('Require positive counts, patch/stride/batch sizes, 0 < min-coverage <= 1, sigma >= 0')
     if not 0<=args.map_vmin<args.map_vmax<=1:
         p.error('Require 0 <= map-vmin < map-vmax <= 1')
@@ -79,6 +79,7 @@ def main():
     records=[];sections=[]
     for ci,checkpoint in enumerate(checkpoints):
         enc,dec,ck=load_models(checkpoint,device)
+        patch_size,stride=checkpoint_patch_settings(ck,args.patch_size,args.stride)
         settings=ck.get('config',{})
         if settings.get('safety_area',args.safety_area)!=args.safety_area:
             raise ValueError(f'{checkpoint} was trained for {settings["safety_area"]}, not {args.safety_area}')
@@ -90,7 +91,7 @@ def main():
             if frame is None:
                 raise ValueError(f'Unreadable frame: {row["source"]}')
             mask=read_mask(mask_path,frame.shape)
-            result=infer_map(frame,mask,enc,dec,device,args.patch_size,args.stride,args.min_coverage,
+            result=infer_map(frame,mask,enc,dec,device,patch_size,stride,args.min_coverage,
                              args.batch_size,args.sigma,return_reconstruction=True)
             prefix=f'{index:02d}_{scenario(row)}_{row.get("frame_id",row["source"].stem)}'
             save_map(folder/f'{prefix}_overlay.png',frame,mask,result,args.map_vmin,args.map_vmax)
@@ -117,7 +118,7 @@ def main():
             label=row['label' if args.safety_area=='SafetyZone' else f'label_{args.safety_area}']
             rec=dict(checkpoint=str(checkpoint.resolve()),epoch=ck.get('epoch'),source=str(row['source']),
                      scenario=scenario(row),frame_id=row.get('frame_id',''),label=label,score=result['score'],
-                     mean_error=float(result['map'][result['covered']].mean()),covered_mask_fraction=result['coverage_ratio'])
+                     mean_error=float(result['map'][result['covered']].mean()),covered_mask_fraction=result['coverage_ratio'],patch_size=patch_size,stride=stride)
             rec.update({f'label_{a}':row.get(f'label_{a}','unknown') for a in ('PLeft','PRight','RoboArm','ConvBelt')})
             records.append(rec)
             description=f'{label} | scenario={rec["scenario"]} frame={rec["frame_id"]} | score={rec["score"]:.5f} coverage={rec["covered_mask_fraction"]:.1%}'

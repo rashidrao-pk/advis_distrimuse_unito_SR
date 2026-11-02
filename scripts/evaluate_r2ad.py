@@ -3,7 +3,7 @@ import argparse,csv,json,sys
 from pathlib import Path
 import cv2,numpy as np,torch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from r2ad.core import images,read_mask,load_models,infer_map,save_map,transform_frame
+from r2ad.core import images,read_mask,load_models,infer_map,save_map,transform_frame,checkpoint_patch_settings
 from r2ad.config import resolve, DEFAULT_CONFIG, load_config
 from r2ad.mcap_data import load_manifest, McapFrameReader
 from r2ad.frame_manifest import read_frame_manifest
@@ -18,7 +18,7 @@ def main():
     p.add_argument('--output-dir');p.add_argument('--threshold-json')
     p.add_argument('--calibrate',action='store_true',help='Compute a normal-only percentile threshold')
     p.add_argument('--threshold-percentile',type=float,default=99.0)
-    p.add_argument('--patch-size',type=int,default=224);p.add_argument('--stride',type=int,default=64)
+    p.add_argument('--patch-size',type=int,default=None,help='Defaults to checkpoint training size; mismatches are rejected');p.add_argument('--stride',type=int,default=None)
     p.add_argument('--min-coverage',type=float,default=.85);p.add_argument('--batch-size',type=int,default=32)
     p.add_argument('--sigma',type=float,default=1.);p.add_argument('--save-maps',action='store_true')
     p.add_argument('--map-vmin',type=float,default=0.)
@@ -46,6 +46,7 @@ def main():
     else:args=resolve(args,'calibrate' if args.calibrate else 'evaluate')
     device=('cuda' if torch.cuda.is_available() else 'cpu') if args.device=='auto' else args.device
     enc,dec,ck=load_models(args.checkpoint,device)
+    args.patch_size,args.stride=checkpoint_patch_settings(ck,args.patch_size,args.stride)
     if args.dataset_source=='mcap':
         paths=load_manifest(args.manifest,args.split)
         if args.calibrate and any(r['label']!='normal' for r in paths):raise ValueError('Calibration must be normal-only')

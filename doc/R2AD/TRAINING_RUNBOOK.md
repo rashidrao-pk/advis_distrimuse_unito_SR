@@ -1,27 +1,29 @@
 # R2AD: dataset to trained and evaluated model
 
+For the 128-pixel patch experiment, matching checkpoint-based inference size, and current/final-model latent audits, see [smaller patches and latent utilization](PATCH_AND_LATENT_EXPERIMENTS.md).
+
 This is the current workflow for **V6, back_view, combined SafetyZone, extracted full-resolution images, virtual CSV splits, and the authoritative combined annotations**. Run commands from the repository root. Use this guide instead of older examples that assign every frame in scenarios 8–16 an anomaly label or require copied split directories.
 
 ## Progress tracker
 
 Update this table after each gate below passes. Status updated on 2026-10-23 is based on this checkout and the outputs shared in chat. Epito storage and training jobs are not accessible from this local session.
 
-| Step | Current status | Evidence required to mark complete |
-|---|---|---|
-| Environment on Epito | Partially verified | Preprocessing ran in `pt_312`; dependency imports and allocated CUDA device still need checking |
-| Authoritative annotations | Complete locally | Combined CSV parses: 16,774 source frames; 9,452 normal, 6,583 anomalous, 739 unknown under the SafetyZone aggregation rule |
-| Full extraction | Unverified on Epito | Every configured scenario has full-resolution frames and successful extraction logs; first-50 samples do not establish completion |
-| SafetyZone union mask | Generated; alignment reviewed locally | Epito mask creation reported 1920×1080 and 19.02% coverage; inspect a representative Epito frame |
-| Grid and random patch previews | Complete locally; review Epito inputs | Local grid covered 91.53% of mask; 48 random patches with seed 42 covered 95.54%; source frame was scenario 1_0 |
-| Annotation/frame alignment | Pending verification | Several normal/anomalous transitions visually match the same source frame IDs |
-| Annotated virtual split | Implementation tested; Epito generation unverified | Fresh annotated split, nonempty CSVs, source paths exist, scenario separation passes |
-| One-epoch smoke training | Monitoring at step 1900 reported; completion unverified | Finite losses, checkpoint, monitoring images, final completion log |
-| Full training | Pending | Chosen epoch budget completes; retained best checkpoint and run provenance |
-| Threshold calibration | Pending | Normal validation scores and matching `threshold.json` |
-| Labeled test evaluation | Pending | Complete scores with ground truth, coverage inspected, both classes represented |
-| Metrics | Pending | `metrics.json` generated with exact file joins and fixed validation threshold |
-| Shift robustness | Pending | Normal-only held-out inputs, `robustness.csv`, plots |
-| Comparison with ADVIS | Pending, optional follow-up | Same held-out frames/labels and independently calibrated method thresholds |
+| Step                           | Current status                                          | Evidence required to mark complete                                                                                                |
+| ------------------------------ | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Environment on Epito           | Partially verified                                      | Preprocessing ran in `pt_312`; dependency imports and allocated CUDA device still need checking                                   |
+| Authoritative annotations      | Complete locally                                        | Combined CSV parses: 16,774 source frames; 9,452 normal, 6,583 anomalous, 739 unknown under the SafetyZone aggregation rule       |
+| Full extraction                | Unverified on Epito                                     | Every configured scenario has full-resolution frames and successful extraction logs; first-50 samples do not establish completion |
+| SafetyZone union mask          | Generated; alignment reviewed locally                   | Epito mask creation reported 1920×1080 and 19.02% coverage; inspect a representative Epito frame                                  |
+| Grid and random patch previews | Complete locally; review Epito inputs                   | Local grid covered 91.53% of mask; 48 random patches with seed 42 covered 95.54%; source frame was scenario 1_0                   |
+| Annotation/frame alignment     | Pending verification                                    | Several normal/anomalous transitions visually match the same source frame IDs                                                     |
+| Annotated virtual split        | Implementation tested; Epito generation unverified      | Fresh annotated split, nonempty CSVs, source paths exist, scenario separation passes                                              |
+| One-epoch smoke training       | Monitoring at step 1900 reported; completion unverified | Finite losses, checkpoint, monitoring images, final completion log                                                                |
+| Full training                  | Pending                                                 | Chosen epoch budget completes; retained best checkpoint and run provenance                                                        |
+| Threshold calibration          | Pending                                                 | Normal validation scores and matching `threshold.json`                                                                            |
+| Labeled test evaluation        | Pending                                                 | Complete scores with ground truth, coverage inspected, both classes represented                                                   |
+| Metrics                        | Pending                                                 | `metrics.json` generated with exact file joins and fixed validation threshold                                                     |
+| Shift robustness               | Pending                                                 | Normal-only held-out inputs, `robustness.csv`, plots                                                                              |
+| Comparison with ADVIS          | Pending, optional follow-up                             | Same held-out frames/labels and independently calibrated method thresholds                                                        |
 
 Get a fresh read-only artifact report on the machine holding the data:
 
@@ -36,25 +38,25 @@ python scripts/check_r2ad_workflow.py \
 
 ## 1. Understand the repository and chosen model
 
-| Component | Role in this experiment |
-|---|---|
-| `configs/cf_dataset_epito.yaml` / `cf_dataset_mac.yaml` | Machine-specific bags, masks, full-frame sources, split references and result defaults |
-| `scripts/process_rosbags_to_frames_rrad.py` | ROS-free MCAP extraction, preserves source resolution and original per-topic frame indices |
-| `scripts/process_rosbags_from_config.py` | Other extraction/masked-video workflow; useful annotation context, not required for the R2AD image route |
-| `reports/safety_area_annotations/saved_annotation/` | Human ground truth; use only the combined CSV for this run |
-| `r2ad/safetyzone.py`, `scripts/preprocess_r2ad.py` | Union masks, validate every frame, group normal recordings, produce virtual splits |
-| `r2ad/annotations.py`, `frame_manifest.py` | Source-ID annotation joins and CSV reference loading |
-| `r2ad/dataset.py` | Online random rectangles, matched image/mask geometric augmentation, brightness augmentation |
-| `r2ad/core.py` | Encoder/decoder/discriminator, rectangle sampling, inference, residual maps and stitching |
-| `scripts/train_r2ad.py` | VAE-GAN optimization, validation MSE, best checkpoint, monitoring |
-| `scripts/evaluate_r2ad.py` | Fixed-grid reconstruction, normal threshold calibration, test scoring, overlays and ground truth export |
-| `scripts/compare_scores.py` | Binary classification metrics from scores and explicit labels |
-| `scripts/stress_test_r2ad.py` | Synthetic image translations, rotations and scale changes on normal test frames |
-| `scripts/preview_r2ad_mask.py` | Mask overlay, sampled rectangle coverage, grid/random visualization |
-| `r2ad/mcap_data.py`, `scripts/index_rosbags_r2ad.py` | Alternative direct-MCAP data route; not used in this runbook and not the same CSV format |
-| Other ADVIS training/inference scripts, `services/`, `zenoh_dashboard/` | Existing area-crop/TAAS and deployment workflows; not dependencies of this offline R2AD experiment |
-| `hpc/setup_env.sh`, `pixi.toml`, requirements files | Compute/environment setup |
-| `tests/`, `doc/` | Verification and other workflow references |
+| Component                                                               | Role in this experiment                                                                                  |
+| ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `configs/cf_dataset_epito.yaml` / `cf_dataset_mac.yaml`                 | Machine-specific bags, masks, full-frame sources, split references and result defaults                   |
+| `scripts/process_rosbags_to_frames_rrad.py`                             | ROS-free MCAP extraction, preserves source resolution and original per-topic frame indices               |
+| `scripts/process_rosbags_from_config.py`                                | Other extraction/masked-video workflow; useful annotation context, not required for the R2AD image route |
+| `reports/safety_area_annotations/saved_annotation/`                     | Human ground truth; use only the combined CSV for this run                                               |
+| `r2ad/safetyzone.py`, `scripts/preprocess_r2ad.py`                      | Union masks, validate every frame, group normal recordings, produce virtual splits                       |
+| `r2ad/annotations.py`, `frame_manifest.py`                              | Source-ID annotation joins and CSV reference loading                                                     |
+| `r2ad/dataset.py`                                                       | Online random rectangles, matched image/mask geometric augmentation, brightness augmentation             |
+| `r2ad/core.py`                                                          | Encoder/decoder/discriminator, rectangle sampling, inference, residual maps and stitching                |
+| `scripts/train_r2ad.py`                                                 | VAE-GAN optimization, validation MSE, best checkpoint, monitoring                                        |
+| `scripts/evaluate_r2ad.py`                                              | Fixed-grid reconstruction, normal threshold calibration, test scoring, overlays and ground truth export  |
+| `scripts/compare_scores.py`                                             | Binary classification metrics from scores and explicit labels                                            |
+| `scripts/stress_test_r2ad.py`                                           | Synthetic image translations, rotations and scale changes on normal test frames                          |
+| `scripts/preview_r2ad_mask.py`                                          | Mask overlay, sampled rectangle coverage, grid/random visualization                                      |
+| `r2ad/mcap_data.py`, `scripts/index_rosbags_r2ad.py`                    | Alternative direct-MCAP data route; not used in this runbook and not the same CSV format                 |
+| Other ADVIS training/inference scripts, `services/`, `zenoh_dashboard/` | Existing area-crop/TAAS and deployment workflows; not dependencies of this offline R2AD experiment       |
+| `hpc/setup_env.sh`, `pixi.toml`, requirements files                     | Compute/environment setup                                                                                |
+| `tests/`, `doc/`                                                        | Verification and other workflow references                                                               |
 
 One SafetyZone model learns normal appearance across the union of PLeft, PRight, RoboArm and ConvBelt. It outputs a frame score and spatial residual map; it does not currently output four independent area alarms.
 
@@ -170,33 +172,33 @@ The normal source is split by entire top-level scenario folders. Fractions apply
 
 All unexpected-source recordings stay in test, including confirmed normal frames. For the union mask:
 
-| Area labels for a source frame | SafetyZone label |
-|---|---|
-| Any `Anomalous` | `anomalous` |
-| All four `Normal` | `normal` |
-| Otherwise, including missing labels / `Verify` | `unknown` |
+| Area labels for a source frame                 | SafetyZone label |
+| ---------------------------------------------- | ---------------- |
+| Any `Anomalous`                                | `anomalous`      |
+| All four `Normal`                              | `normal`         |
+| Otherwise, including missing labels / `Verify` | `unknown`        |
 
 Normal-source recordings retain the configured normal assumption; the combined CSV labels the held-out unexpected source. Missing annotations are never silently treated as normal there.
 
-| Output | Meaning |
-|---|---|
-| `train.csv`, `val.csv` | Normal frames from separate normal-source scenario groups |
-| `test.csv` | Known normal/anomalous test frames only |
-| `normal_test.csv` | All confirmed normal test frames, including normal intervals in unexpected recordings |
-| `unknown_test.csv` | Unresolved test frames, excluded from scored evaluation |
-| `manifest.csv` | All split assignments, labels, source paths and per-area labels |
-| `metadata.json` | Split groups/counts, seed, input roots, annotation CSV path |
+| Output                 | Meaning                                                                               |
+| ---------------------- | ------------------------------------------------------------------------------------- |
+| `train.csv`, `val.csv` | Normal frames from separate normal-source scenario groups                             |
+| `test.csv`             | Known normal/anomalous test frames only                                               |
+| `normal_test.csv`      | All confirmed normal test frames, including normal intervals in unexpected recordings |
+| `unknown_test.csv`     | Unresolved test frames, excluded from scored evaluation                               |
+| `manifest.csv`         | All split assignments, labels, source paths and per-area labels                       |
+| `metadata.json`        | Split groups/counts, seed, input roots, annotation CSV path                           |
 
 No image copies or symlinks are created. CSV paths reference original images: keep them available. Preserve the CSVs rather than regenerating the split between experiments.
 
 Optionally update the existing `r2ad` keys to these files for default commands:
 
 ```yaml
-  preprocessed_dir: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/annotated_split
-  train_frames: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/annotated_split/train.csv
-  val_frames: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/annotated_split/val.csv
-  test_frames: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/annotated_split/test.csv
-  normal_test_frames: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/annotated_split/normal_test.csv
+preprocessed_dir: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/annotated_split
+train_frames: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/annotated_split/train.csv
+val_frames: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/annotated_split/val.csv
+test_frames: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/annotated_split/test.csv
+normal_test_frames: /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/annotated_split/normal_test.csv
 ```
 
 Commands below pass explicit split paths so they also work without this config edit. Leave `--dataset-source images` (default); `--manifest` on the training script refers to the different direct-MCAP route.
@@ -277,11 +279,11 @@ Training prints source-frame counts, train/validation patches and batches per ep
 
 The checkpoint directory also contains:
 
-| Artifact | Contents |
-|---|---|
+| Artifact                | Contents                                                                                                        |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------- |
 | `training_summary.json` | Resolved arguments, data counts, status, epoch history, best epoch/MSE, elapsed and estimated remaining seconds |
-| `training_report.md` | Human-readable account of data, sampling, losses, monitoring and epoch timing/results |
-| `epoch_metrics.csv` | Train/validation MSE, phase/epoch timing and checkpoint improvement per completed epoch |
+| `training_report.md`    | Human-readable account of data, sampling, losses, monitoring and epoch timing/results                           |
+| `epoch_metrics.csv`     | Train/validation MSE, phase/epoch timing and checkpoint improvement per completed epoch                         |
 
 Reports update during training even when images are disabled with `--monitor-every 0`. `status=completed` is written only after the training loop finishes normally; an interrupted run can leave a stale `training` status and earlier elapsed-time estimate. Training phase time includes batch loading, optimization and step monitoring; total epoch time also includes validation, epoch plots and checkpoint saving. At completion the final message reports total run time including setup and the best epoch.
 
@@ -426,7 +428,7 @@ python scripts/animate_r2ad_inference.py \
   --config "$R2AD_CONFIG" \
   --image /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/sources/unexpected/scenario_8_1/frame_000164.png \
   --checkpoint results/r2ad/SafetyZone_fast_b32/checkpoints/model_r2ad_epoch_0003.pt \
-  --output reports/r2ad_inference_epoch3.gif \
+  --output reports/r2ad_inference_epoch11.gif \
   --device cuda --patch-size 224 --stride 64 --min-coverage 0.85 \
   --fps 3 --map-vmin 0 --map-vmax 0.5
 ```
@@ -508,17 +510,17 @@ Only then compare with existing ADVIS on the same held-out frames/labels, with e
 
 ## Troubleshooting
 
-| Symptom | Check/action |
-|---|---|
-| Nonempty split output error | Choose a new output directory; do not delete source frames |
-| All test frames labeled anomalous/unexpected | Rebuild with the authoritative `--annotations` file and use that new `test.csv` |
-| Most labels unknown | Verify camera and original source frame IDs; check annotation coverage and sampling history |
-| No anomalies in extracted test frames | Remove first-50 limit; inspect full recording annotations |
-| Mask dimension mismatch | Use original camera frames and matching full-resolution mask; do not silently resize |
-| No rectangles satisfy coverage | Inspect mask; test smaller patch/lower occupancy in previews, then record and recalibrate the chosen settings |
-| Out of GPU memory | Lower batch size; architecture contains large fully connected layers |
-| Calibration/test parameter mismatch | Use identical patch size, stride, occupancy and sigma, or recalibrate |
-| Checkpoint exists but run stopped | Resume `last_checkpoint.pt` with a larger total epoch target as needed; old snapshots only support weights-only continuation |
-| A newer run appears to reuse old metrics | Use separate run directories and explicit checkpoint/threshold/output paths |
+| Symptom                                      | Check/action                                                                                                                 |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Nonempty split output error                  | Choose a new output directory; do not delete source frames                                                                   |
+| All test frames labeled anomalous/unexpected | Rebuild with the authoritative `--annotations` file and use that new `test.csv`                                              |
+| Most labels unknown                          | Verify camera and original source frame IDs; check annotation coverage and sampling history                                  |
+| No anomalies in extracted test frames        | Remove first-50 limit; inspect full recording annotations                                                                    |
+| Mask dimension mismatch                      | Use original camera frames and matching full-resolution mask; do not silently resize                                         |
+| No rectangles satisfy coverage               | Inspect mask; test smaller patch/lower occupancy in previews, then record and recalibrate the chosen settings                |
+| Out of GPU memory                            | Lower batch size; architecture contains large fully connected layers                                                         |
+| Calibration/test parameter mismatch          | Use identical patch size, stride, occupancy and sigma, or recalibrate                                                        |
+| Checkpoint exists but run stopped            | Resume `last_checkpoint.pt` with a larger total epoch target as needed; old snapshots only support weights-only continuation |
+| A newer run appears to reuse old metrics     | Use separate run directories and explicit checkpoint/threshold/output paths                                                  |
 
 Related: [mask and split details](../R2AD_SAFETYZONE.md), [direct-MCAP alternative](../R2AD_MCAP_NATIVE.md), [legacy R2AD overview](../R2AD.md).

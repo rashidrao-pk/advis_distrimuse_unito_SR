@@ -55,11 +55,13 @@ def test_training_reports_and_transposed_random_probes(tmp_path, monkeypatch, wo
     monkeypatch.setattr(sys, 'argv', ['train_r2ad.py', '--config', str(config), '--safety-area', 'SafetyZone',
         '--output', str(output), '--epochs', '1', '--batch-size', '1', '--workers', str(workers), '--device', 'cpu',
         '--latent-dims', '2', '--patch-size', '16', '--samples-per-frame', '1',
-        '--monitor-every', '1', '--monitor-probes', '1', '--save-cp-k', '1'])
+        '--monitor-every', '1', '--monitor-probes', '1', '--save-cp-k', '1', '--fixed-patch-size'])
     training.main()
     summary = json.loads((output.parent / 'training_summary.json').read_text())
     assert summary['status'] == 'completed'
     assert summary['precision'] == 'fp32'
+    assert summary['config']['fixed_patch_size'] is True
+    assert summary['config']['patch_scale_min']==summary['config']['patch_scale_max']==1
     assert summary['optimizer_steps'] == 1
     assert summary['best_epoch'] == 1
     assert summary['estimated_remaining_seconds'] == 0
@@ -156,6 +158,9 @@ def test_mid_epoch_resume_matches_uninterrupted_and_legacy_warm_start(tmp_path,m
     monkeypatch.setattr(sys,'argv',base+['--output',str(baseline)])
     training.main()
     expected=torch.load(baseline.parent/'last_checkpoint.pt',map_location='cpu',weights_only=False)
+    audit=json.loads((baseline.parent/'latent_audit'/'epoch_0002'/'summary.json').read_text())
+    assert audit['latent_dims']==2 and audit['samples']==3
+    assert expected['training_state']['summary']['latest_latent_audit']['latent_dims']==2
     pause=SimpleNamespace(requested=False)
     real_adam=torch.optim.Adam
     optimizers=[]
@@ -216,6 +221,9 @@ def test_mid_epoch_resume_matches_uninterrupted_and_legacy_warm_start(tmp_path,m
     assert continued['config']['aug_translate']==.005
     assert continued['config']['aug_rotate']==.5
     assert continued['training_state']['summary']['augmentation_change']['current']['patch_scale_min']==1
+    # A wider latent model cannot silently load a smaller checkpoint.
+    monkeypatch.setattr(sys,'argv',['train','--resume',str(legacy),'--epochs','3','--latent-dims','128'])
+    with pytest.raises(SystemExit):training.main()
 
 
 def test_pause_signals_restore_handlers():

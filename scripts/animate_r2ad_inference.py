@@ -13,7 +13,7 @@ from PIL import Image
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from r2ad.config import load_config
-from r2ad.core import load_models,read_mask,infer_map,save_map
+from r2ad.core import load_models,read_mask,infer_map,save_map,checkpoint_patch_settings
 
 
 def render_step(frame, mask, state, visited, width, vmin, vmax):
@@ -64,8 +64,8 @@ def main():
     p.add_argument('--output',type=Path,default=Path('reports/r2ad_inference.gif'))
     p.add_argument('--safety-area',choices=['SafetyZone','PLeft','PRight','RoboArm','ConvBelt'],default='SafetyZone')
     p.add_argument('--device',default='auto')
-    p.add_argument('--patch-size',type=int,default=224)
-    p.add_argument('--stride',type=int,default=64)
+    p.add_argument('--patch-size',type=int,default=None)
+    p.add_argument('--stride',type=int,default=None)
     p.add_argument('--min-coverage',type=float,default=.85)
     p.add_argument('--sigma',type=float,default=1.)
     p.add_argument('--batch-size',type=int,default=32)
@@ -75,7 +75,7 @@ def main():
     p.add_argument('--every-n',type=int,default=1,help='Include every Nth patch, plus first and last; all patches are inferred')
     p.add_argument('--width',type=int,default=1024)
     args=p.parse_args()
-    if min(args.patch_size,args.stride,args.batch_size,args.every_n)<1 or args.width<720 or args.width%2 or args.fps<=0:
+    if min(args.batch_size,args.every_n)<1 or args.width<720 or args.width%2 or args.fps<=0:
         p.error('Require positive sizes/counts/FPS and an even width >=720')
     if not 0<args.min_coverage<=1 or args.sigma<0 or not 0<=args.map_vmin<args.map_vmax<=1:
         p.error('Invalid mask coverage, sigma or color limits')
@@ -92,6 +92,7 @@ def main():
     mask=read_mask(mask_path,frame.shape)
     device=('cuda' if torch.cuda.is_available() else 'cpu') if args.device=='auto' else args.device
     enc,dec,ck=load_models(args.checkpoint,device)
+    args.patch_size,args.stride=checkpoint_patch_settings(ck,args.patch_size,args.stride)
     if ck.get('config',{}).get('safety_area',args.safety_area)!=args.safety_area:
         raise ValueError('Checkpoint safety area differs from requested mask')
     frames=[];visited=[]

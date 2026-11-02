@@ -16,6 +16,7 @@ from r2ad.config import resolve, DEFAULT_CONFIG
 from tqdm.auto import tqdm
 from contextlib import nullcontext
 from r2ad.training_state import atomic_save,capture_rng,restore_rng,ResumableBatches,PauseSignals
+from r2ad.latent_audit import save_latent_audit
 
 
 def initialize_worker(worker_id):
@@ -197,6 +198,12 @@ def train(pause):
     p.add_argument('--epochs',type=int);p.add_argument('--batch-size',type=int)
     p.add_argument('--patch-size',type=int,default=224);p.add_argument('--min-coverage',type=float,default=.85)
     p.add_argument('--samples-per-frame',type=int,default=6);p.add_argument('--latent-dims',type=int)
+    p.add_argument('--fixed-patch-size',action=argparse.BooleanOptionalAction,default=False,
+                   help='Disable crop-size jitter for training and validation; inference uses checkpoint patch-size')
+    p.add_argument('--latent-audit',action=argparse.BooleanOptionalAction,default=True,
+                   help='Save latent utilization diagnostics on final-epoch normal validation patches')
+    p.add_argument('--latent-audit-every',type=int,default=0,help='Also audit every K epochs; 0 means final epoch only')
+    p.add_argument('--latent-active-threshold',type=float,default=.01)
     p.add_argument('--lr',type=float,default=.0002);p.add_argument('--workers',type=int)
     p.add_argument('--kl-weight',type=float,default=.0001);p.add_argument('--adv-weight',type=float,default=.01)
     p.add_argument('--seed',type=int,default=42);p.add_argument('--device',default='auto')
@@ -227,7 +234,10 @@ def train(pause):
         for name,value in saved.items():
             if hasattr(args,name) and name not in supplied and name not in ('resume','save_every_steps'):
                 setattr(args,name,value)
-        args.latent_dims=resume.get('latent_dims',args.latent_dims)
+        recorded_latent=resume.get('latent_dims',saved.get('latent_dims',64))
+        if 'latent_dims' in supplied and args.latent_dims!=recorded_latent:
+            p.error('Changing latent width requires a new training run without --resume')
+        args.latent_dims=recorded_latent
         if resume.get('training_state'):
             for name in ('dataset_source','safety_area','latent_dims','batch_size','patch_size','min_coverage',
                          'samples_per_frame','augmentation_mode','kl_weight','adv_weight','lr','seed','train_dir','val_dir','manifest','mask'):
@@ -235,6 +245,7 @@ def train(pause):
                     p.error(f'Full resume requires unchanged {name}; checkpoint={saved[name]!r}')
     if not args.safety_area:
         p.error('--safety-area is required for a new run (or must be present in resume metadata)')
+    if args.fixed_patch_size:args.patch_scale_min=args.patch_scale_max=1.
     try:
         augmentation_settings=augmentation_from_args(args)
     except ValueError as exc:p.error(str(exc))
@@ -258,6 +269,8 @@ def train(pause):
         if not Path(args.manifest).is_file():raise FileNotFoundError(args.manifest)
         if not Path(args.mask).is_file():raise FileNotFoundError(args.mask)
     else:args=resolve(args,'train')
+    if args.latent_dims<1 or args.patch_size<1 or args.latent_audit_every<0 or args.latent_active_threshold<0:
+        p.error('Require positive latent/patch sizes, nonnegative audit interval and threshold')
     if args.epochs < 1 or args.batch_size < 1 or args.samples_per_frame < 1:
         p.error('epochs, batch-size and samples-per-frame must be positive')
     if args.save_cp_k < 0 or args.save_every_steps < 0:
@@ -287,7 +300,8 @@ def train(pause):
         val=McapRectangleDataset(args.manifest,'val',args.mask,args.patch_size,args.min_coverage,1,False,args.seed)
     else:
         train=RectangleDataset(args.train_dir,args.mask,args.patch_size,args.min_coverage,args.samples_per_frame,True,args.seed,args.augmentation_mode,augmentation_settings)
-        val=RectangleDataset(args.val_dir,args.mask,args.patch_size,args.min_coverage,1,False,args.seed)
+        val=RectangleDataset(args.val_dir,args.mask,args.patch_size,args.min_coverage,1,False,args.seed,
+                             augmentation_settings={'patch_scale_min':1.,'patch_scale_max':1.} if args.fixed_patch_size else None)
     digest=hashlib.sha256()
     for dataset in (train,val):
         digest.update(json.dumps(dataset.rows if hasattr(dataset,'rows') else [str(path.resolve()) for path in dataset.paths],sort_keys=True).encode())
@@ -497,6 +511,8 @@ def train(pause):
         train_seconds=time.monotonic()-epoch_started
         validation_started=time.monotonic()
         print(f'[validation] epoch={epoch} batches={len(va)}',flush=True)
+        audit_this_epoch=args.latent_audit and (epoch==args.epochs or args.latent_audit_every>0 and epoch%args.latent_audit_every==0)
+        audit_mu=[];audit_logvar=[]
         enc.eval();dec.eval();vals=[]
         with torch.inference_mode():
             for x in tqdm(pause_aware_batches(va,pause),total=len(va),desc=f'Epoch {epoch} validation',leave=False):
@@ -507,7 +523,9 @@ def train(pause):
                     return
                 x=x.to(device,non_blocking=True)
                 with precision_context(device,precision):
-                    mu,_=enc(x);recon=dec(mu)
+                    mu,logvar=enc(x);recon=dec(mu)
+                if audit_this_epoch:
+                    audit_mu.append(mu.float().cpu().numpy());audit_logvar.append(logvar.float().cpu().numpy())
                 vals.append((F.mse_loss(recon.float(),x,reduction='none').mean((1,2,3))).cpu())
         if pause.requested:
             state=partial_state();state['train_seconds']=train_seconds
@@ -516,6 +534,16 @@ def train(pause):
             return
         v=float(torch.cat(vals).mean());t=float(loss_sums[0].item()/samples_processed)
         validation_seconds=time.monotonic()-validation_started
+        if audit_this_epoch:
+            codes=np.concatenate(audit_mu);variances=np.concatenate(audit_logvar)
+            if len(codes)>=2:
+                diagnostic=save_latent_audit(codes,variances,out.parent/'latent_audit'/f'epoch_{epoch:04d}',
+                    dict(epoch=epoch,scope='normal_validation',patch_size=args.patch_size,
+                         fixed_patch_size=args.fixed_patch_size,precision=precision,source=args.val_dir if args.dataset_source=='images' else args.manifest),
+                    args.latent_active_threshold)
+                summary['latest_latent_audit']=diagnostic
+                print(f'[latent] {diagnostic["active_units"]}/{diagnostic["latent_dims"]} active; '
+                      f'effective rank={diagnostic["effective_rank_participation"]:.2f}',flush=True)
         print(f'[epoch {epoch:03d}] train_rec={t:.6f} val_mse={v:.6f}')
         if args.monitor_every:
             fresh=random_monitor_patches(train,args.monitor_random_probes,args.seed+global_step+epoch+1) if args.monitor_random_probes else None
