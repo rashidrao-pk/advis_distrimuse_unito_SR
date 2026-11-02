@@ -17,6 +17,7 @@ from tqdm.auto import tqdm
 from contextlib import nullcontext
 from r2ad.training_state import atomic_save,capture_rng,restore_rng,ResumableBatches,PauseSignals
 from r2ad.latent_audit import save_latent_audit
+from r2ad.training_preview import save_training_preview
 
 
 def initialize_worker(worker_id):
@@ -204,6 +205,10 @@ def train(pause):
                    help='Save latent utilization diagnostics on final-epoch normal validation patches')
     p.add_argument('--latent-audit-every',type=int,default=0,help='Also audit every K epochs; 0 means final epoch only')
     p.add_argument('--latent-active-threshold',type=float,default=.01)
+    p.add_argument('--save-training-preview',action=argparse.BooleanOptionalAction,default=True,
+                   help='Save mask, crop locations and actual inputs before optimization')
+    p.add_argument('--preview-samples',type=int,default=4,help='Representative samples per train/validation preview')
+    p.add_argument('--preview-only',action='store_true',help='Save training input preview and exit without constructing models or training')
     p.add_argument('--lr',type=float,default=.0002);p.add_argument('--workers',type=int)
     p.add_argument('--kl-weight',type=float,default=.0001);p.add_argument('--adv-weight',type=float,default=.01)
     p.add_argument('--seed',type=int,default=42);p.add_argument('--device',default='auto')
@@ -269,8 +274,8 @@ def train(pause):
         if not Path(args.manifest).is_file():raise FileNotFoundError(args.manifest)
         if not Path(args.mask).is_file():raise FileNotFoundError(args.mask)
     else:args=resolve(args,'train')
-    if args.latent_dims<1 or args.patch_size<16 or args.latent_audit_every<0 or args.latent_active_threshold<0:
-        p.error('Require latent size >0, source patch size >=16, nonnegative audit interval and threshold')
+    if args.latent_dims<1 or args.patch_size<16 or args.latent_audit_every<0 or args.latent_active_threshold<0 or args.preview_samples<1:
+        p.error('Require latent size >0, source patch size >=16, preview-samples >0, nonnegative audit interval and threshold')
     if args.epochs < 1 or args.batch_size < 1 or args.samples_per_frame < 1:
         p.error('epochs, batch-size and samples-per-frame must be positive')
     if args.save_cp_k < 0 or args.save_every_steps < 0:
@@ -283,12 +288,12 @@ def train(pause):
         p.error('Require 0 <= map-vmin < map-vmax <= 1')
     cv2.setNumThreads(args.opencv_threads)
     random.seed(args.seed);np.random.seed(args.seed);torch.manual_seed(args.seed)
-    device=('cuda' if torch.cuda.is_available() else 'cpu') if args.device=='auto' else args.device
+    device='cpu' if args.preview_only else ('cuda' if torch.cuda.is_available() else 'cpu') if args.device=='auto' else args.device
     is_cuda=torch.device(device).type == 'cuda'
     if is_cuda and torch.device(device).index is not None:
         torch.cuda.set_device(torch.device(device).index)
     bf16_supported=is_cuda and torch.cuda.is_bf16_supported()
-    if args.precision == 'bf16' and not bf16_supported:
+    if args.precision == 'bf16' and not bf16_supported and not args.preview_only:
         p.error('BF16 requires a supported CUDA device; use --precision fp32')
     precision='bf16' if (args.precision == 'bf16' or args.precision == 'auto' and bf16_supported) else 'fp32'
     if is_cuda:
@@ -310,6 +315,14 @@ def train(pause):
     data_signature=digest.hexdigest()
     if resume and resume.get('training_state',{}).get('data_signature',data_signature)!=data_signature:
         p.error('Training/validation manifest, image inventory or mask changed since checkpoint')
+    out=Path(args.output)
+    preview_directory=None
+    if args.save_training_preview or args.preview_only:
+        preview_directory,_=save_training_preview(train,val,args,out.parent/'training_setup',resuming=bool(resume))
+        print(f'[preview] Saved area, source crops and model inputs: {preview_directory/"index.html"}',flush=True)
+    if args.preview_only:
+        print('[preview] Preview-only: no model or optimizer created; training did not start.',flush=True)
+        return
     loader_options=dict(num_workers=args.workers,pin_memory=is_cuda,worker_init_fn=initialize_worker,
                         generator=torch.Generator().manual_seed(args.seed+2468))
     if args.workers:
@@ -318,7 +331,7 @@ def train(pause):
     total_batches=(len(train)+args.batch_size-1)//args.batch_size
     tr=DataLoader(train,batch_sampler=sampler,**loader_options)
     va=DataLoader(val,batch_size=args.batch_size,shuffle=False,**loader_options)
-    out=Path(args.output);out.parent.mkdir(parents=True,exist_ok=True)
+    out.parent.mkdir(parents=True,exist_ok=True)
     train_frames = len(train.rows) if args.dataset_source == 'mcap' else len(train.paths)
     val_frames = len(val.rows) if args.dataset_source == 'mcap' else len(val.paths)
     summary = dict(status='initializing', started_at=started_at, config={k:str(v) if isinstance(v,Path) else v for k,v in vars(args).items()}, device=device,precision=precision,
@@ -330,6 +343,7 @@ def train(pause):
                    epochs=[], elapsed_seconds=0, estimated_remaining_seconds=None,
                    timing_note='ETA includes measured epoch overhead after the first epoch; first-epoch ETA estimates training batches only.')
     summary_path=out.parent/'training_summary.json'
+    summary['training_preview']=str(preview_directory) if preview_directory else None
     if resume:
         previous_augmentation={key:resume.get('config',{}).get(key,value) for key,value in DEFAULT_AUGMENTATION.items()}
         if previous_augmentation!=augmentation_settings:

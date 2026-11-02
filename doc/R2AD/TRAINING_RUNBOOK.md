@@ -217,6 +217,33 @@ sha256sum reports/safety_area_annotations/saved_annotation/scenario_8_16_back_vi
 
 ## 6. Run one smoke-training epoch
 
+Every new training invocation now saves a **`training_setup/` input preview beside the checkpoint before model initialization or optimizer updates** (independent of monitoring frequency). It contains:
+
+- `index.html`, `train_samples.jpg`, `val_samples.jpg`: representative source locations, augmented crop locations, source crops and resized model inputs.
+- `mask.png` and `area_overlay.jpg`: the actual thresholded safety mask and its placement on a source frame.
+- `train_01_source_crop.png` / `val_01_source_crop.png`, etc.: native source crops (64×64 with `--patch-size 64 --fixed-patch-size`).
+- `*_model_input.png` and `*_model_input.npy`: 128×128 visualization and exact normalized CHW tensor respectively.
+- `plan.json`: source paths, mask checksum/area, patch size/occupancy, source and transformed crop coordinates, affine transforms, zoom/translation/brightness settings, dataset counts and resolved arguments.
+
+To inspect the setup **without starting training**, append `--preview-only` to the full intended training command. For the current p64/z64 run:
+
+```bash
+python -u scripts/train_r2ad.py \
+  --config configs/cf_dataset_epito.yaml --safety-area SafetyZone \
+  --train-dir /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/annotated_split/train.csv \
+  --val-dir /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/annotated_split/val.csv \
+  --output results/r2ad/SafetyZone_p64_z64/model_r2ad.pt \
+  --patch-size 64 --fixed-patch-size --latent-dims 64 \
+  --epochs 20 --batch-size 32 --workers 8 --device cuda --precision bf16 \
+  --aug-translate 0.005 --aug-rotate 0 --aug-zoom-min 1 --aug-zoom-max 1.03 \
+  --aug-contrast 0.05 --aug-brightness 4 --samples-per-frame 6 \
+  --save-cp-k 1 --latent-audit-every 5 --preview-only
+```
+
+Open `results/r2ad/SafetyZone_p64_z64/training_setup/index.html`; the log prints the exact location. Preview-only mode needs no CUDA device, constructs no models/optimizers and does not write training summary/checkpoints. If a preview folder already exists, a timestamped child preserves earlier setup artifacts. Resumed runs also retain the original setup and create a new preview. For the real training command, remove `--preview-only`. Adjust `--preview-samples 4` for examples per split, or explicitly disable automatic setup images with `--no-save-training-preview`.
+
+These are representative seeded samples, not the exact first queued training batch or a reconstruction of an old run's initial sampling. Sampling does not consume the training RNG sequence. Source polygons are inverse-mapped from augmented crop coordinates, so camera zoom/translation are visible and recorded. A currently running older process is not modified by updating the code; preview-only can be run separately to inspect its intended configuration without stopping it.
+
 Before training, preview normal train/validation frames and anomalous test frames:
 
 ```bash
