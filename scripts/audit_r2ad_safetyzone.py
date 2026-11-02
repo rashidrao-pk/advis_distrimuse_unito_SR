@@ -20,8 +20,7 @@ from r2ad.mcap_data import McapFrameReader, load_manifest
 from r2ad.config import load_config
 from r2ad.frame_manifest import read_frame_manifest
 
-AREAS = ('PLeft', 'PRight', 'RoboArm', 'ConvBelt')
-COLORS = [(240,140,20),(20,180,240),(30,220,70),(200,90,220)]
+SAFETYZONE_COLOR = (240, 160, 30)
 
 
 def path_from(root, entry):
@@ -130,14 +129,14 @@ def main():
         try: frame=reader.read(rows[args.frame_index])
         finally: reader.close()
     hh,ww=frame.shape[:2]
-    mask_paths=cfg['data']['mask_types']
-    masks={name:read_mask(path_from(root,mask_paths[name]),frame.shape) for name in AREAS}
-    union=np.logical_or.reduce([m.astype(bool) for m in masks.values()]).astype(np.uint8)
-    existing=rcfg.get('safety_zone_mask') or mask_paths.get('SafetyZone')
-    if existing:
-        disk_mask=read_mask(path_from(root,existing),frame.shape)
-        if not np.array_equal(union,disk_mask):
-            print('[WARNING] The saved SafetyZone mask does not match the OR of the four masks.')
+    mask_paths=cfg['data'].get('mask_types', {})
+    mask_entry=rcfg.get('safety_zone_mask') or mask_paths.get('SafetyZone')
+    if not mask_entry:
+        p.error('Configure r2ad.safety_zone_mask or data.mask_types.SafetyZone')
+    mask_path=path_from(root,mask_entry)
+    union=read_mask(mask_path,frame.shape)
+    if not np.any(union):
+        p.error(f'SafetyZone mask is empty: {mask_path}')
     rng=np.random.default_rng(args.seed)
     scale = (1., 1.) if args.fixed_patch_size else (.9, 1.1)
     six=random_boxes(union,args.patch_size,args.samples_per_frame,rng,args.min_coverage,scale=scale)
@@ -153,23 +152,23 @@ def main():
                  'split':args.split,'manifest_records':len(rows)},
         'settings':{'patch_size':args.patch_size,'stride':args.stride,'patch_scale':scale,
                     'min_coverage':args.min_coverage,'seed':args.seed,'manifest':str(manifest),
+                    'safety_zone_mask':str(mask_path),
                     'source':str(rows[args.frame_index].get('source', 'MCAP')),
                     'augmentation':'none; geometry-only sampling audit'},
-        'six_random_rectangles':stats_for(patch_coverage(union,six),{'SafetyZone':union,**masks}),
+        'six_random_rectangles':stats_for(patch_coverage(union,six),{'SafetyZone':union}),
         'simulation':{'frames':args.simulate_frames,'patches':len(random_many),
-                      'coverage':stats_for(patch_coverage(union,random_many),{'SafetyZone':union,**masks})},
+                      'coverage':stats_for(patch_coverage(union,random_many),{'SafetyZone':union})},
         'fixed_inference_grid':{'rectangles':len(fixed),
-                                'coverage':stats_for(patch_coverage(union,fixed),{'SafetyZone':union,**masks})},
+                                'coverage':stats_for(patch_coverage(union,fixed),{'SafetyZone':union})},
         'note':'Simulation is a diagnostic random draw on this mask; it is not a record of rectangles actually seen during training.'
     }
-    # Safety regions visualization
+    # Display the same saved SafetyZone used for sampling as one region.
     region=frame.copy()
-    for (name,m),col in zip(masks.items(),COLORS):
-        tint=np.zeros_like(frame);tint[:]=col
-        sel=m>0
-        region[sel]=cv2.addWeighted(frame,.65,tint,.35,0)[sel]
-        cnts,_=cv2.findContours(m,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
-        cv2.drawContours(region,cnts,-1,col,2)
+    tint=np.full_like(frame,SAFETYZONE_COLOR)
+    sel=union>0
+    region[sel]=cv2.addWeighted(frame,.65,tint,.35,0)[sel]
+    cnts,_=cv2.findContours(union,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+    cv2.drawContours(region,cnts,-1,SAFETYZONE_COLOR,2)
     cv2.imwrite(str(out/'01_safetyzone_areas.png'),region)
     cv2.imwrite(str(out/'02_random_6_rectangles.png'),overlay_boxes(region,six))
     save_heatmap(patch_coverage(union,random_many),union,out/'03_random_sampling_frequency.png')
