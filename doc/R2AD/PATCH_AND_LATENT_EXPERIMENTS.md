@@ -76,7 +76,25 @@ On this mask, six random 64×64 patches cover only about **7.63%** on average in
 
 Smaller source patches can reduce shared scene context, but do not eliminate correlation from neighboring/overlapping patches or adjacent video frames. Preserve recording-group separation and consider temporal subsampling separately; patch size alone cannot establish independent samples. Choose patch size/coverage on normal validation data, then recalibrate the new model.
 
-### Initial 128-pixel control experiment
+### Animate smaller crops before training a new model
+
+`scripts/animate_r2ad_patch_sampling.py` needs no checkpoint or split CSV. It visualizes geometry, actual source pixels, the resized 128×128 model input, and the mask inside each crop. It does not produce neural reconstructions or anomaly scores; those require a matching trained checkpoint for a representative evaluation.
+
+```bash
+python scripts/animate_r2ad_patch_sampling.py \
+  --config configs/cf_dataset_epito.yaml \
+  --image /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/sources/normal/scenario_1_0/frame_000000.png \
+  --output reports/r2ad_p64_random_zoom_translation.gif \
+  --patch-size 64 --sampling random --num-patches 24 \
+  --aug-translate 0.005 --aug-rotate 0 --aug-zoom-min 1 --aug-zoom-max 1.03 \
+  --aug-contrast 0.05 --aug-brightness 4 --fps 3
+```
+
+For cumulative grid placement and coverage, replace the random-sampling options with `--sampling grid --stride 32 --every-n 10` and choose another output filename. All grid patches contribute to coverage; only every tenth is captured to keep playback shorter (plus first/last). Grid mode uses the unaugmented frame; random mode applies the configured camera/brightness transforms and resets coverage per scene. Source crop size is fixed in both modes. Use `--patch-size 32` for smaller crops, with e.g. stride 16 in grid mode.
+
+The local 64-pixel previews already generated are `reports/r2ad_p64_random_zoom_translation.gif` (24 augmented patches) and `reports/r2ad_p64_grid_coverage.gif` (250 grid patches at stride 32, 26 captured GIF frames, 96.44% mask coverage). Each has a final PNG and JSON. Red shading denotes uncovered ROI, not anomaly; no trained model is invoked.
+
+### 128-pixel control command
 
 For the first experiment, use **128×128 source crops**, matching the existing network's 128×128 input. Enable `--fixed-patch-size` so training and validation disable crop-size jitter. Without this flag, the historical 0.9–1.1 crop-size range remains enabled unless manually configured.
 
@@ -155,12 +173,25 @@ This zoom is independent of source patch-size jitter. `--fixed-patch-size` keeps
 
 Add `--full-frame` to `scripts/animate_r2ad_training.py` to append these views for every random augmented scene:
 
-- Hann-weighted full-scene reconstruction.
-- Full-image fixed-scale Reds residual map.
+- Hann-weighted SafetyZone reconstruction composited over faded input outside the zone.
+- Full-size fixed-scale Reds residual map, white outside SafetyZone.
 - Combined SafetyZone residual overlay and isolated map.
 - PLeft, PRight, RoboArm and ConvBelt maps with coverage and q99 scores.
 
 All four original masks from `data.mask_types` are required. The exact zoom/translation/rotation matrix used for the image is also applied to each area mask with nearest-neighbor interpolation. The model, nominal source patch size and scene match the random-patch panel; full-frame reconstruction uses an additional fixed overlapping grid. Training itself still optimizes random patches and does not stitch full-frame maps.
+
+Full-frame animations now default to `--layout landscape`: the random-patch view is on the left and full-frame/area panels are on the right. `--width 1024` is the width of each section, so the combined landscape GIF is 2048 pixels wide. `--layout portrait` retains the earlier stacked view.
+
+An existing portrait GIF can be rearranged without running model inference again:
+
+```bash
+python scripts/reformat_r2ad_animation.py \
+  --input reports/r2ad_zoom_translation_full_frame.gif \
+  --output reports/r2ad_zoom_translation_full_frame_landscape.gif \
+  --split-height 640
+```
+
+The 640-pixel boundary applies to the shown 1024-wide GIF made from 1920×1080 frames. When a companion JSON and its original source image are available, omit `--split-height` for automatic detection. Reflow retains timing, loop behavior and image content, and updates the directional header to left/right. The original GIF is preserved. A landscape copy of the local example was generated without recomputing reconstructions.
 
 ```bash
 python scripts/animate_r2ad_training.py \
@@ -171,12 +202,12 @@ python scripts/animate_r2ad_training.py \
   --aug-translate 0.005 --aug-rotate 0 --aug-zoom-min 1 --aug-zoom-max 1.03 \
   --aug-contrast 0.05 --aug-brightness 4 --patch-scale-min 1 --patch-scale-max 1 \
   --num-patches 6 --seed 42 --fps 2 --map-vmin 0 --map-vmax 0.5 \
-  --full-frame --full-frame-scope all --batch-size 32
+  --full-frame --full-frame-scope safety --outside-dim 0.35 --batch-size 32
 ```
 
-This inherits the checkpoint's source patch size; an older 224-pixel model does not become a 128-pixel model by disabling size jitter. Grid stride defaults from that size and can be set explicitly with `--stride`. Full-image inference is much more expensive than one random patch per GIF frame, so begin with six samples. For repeated zooms of one scene, add `--image /path/to/a/frame/in/train.csv`.
+This inherits the checkpoint's source patch size; an older 224-pixel model does not become a 128-pixel model by disabling size jitter. Grid stride defaults from that size and can be set explicitly with `--stride`. SafetyZone grid inference is still more expensive than one random patch per GIF frame, so begin with six samples. For repeated zooms of one scene, add `--image /path/to/a/frame/in/train.csv`.
 
-`--full-frame-scope all` reconstructs outside the SafetyZone training ROI too; those pixels are diagnostic **extrapolation**, not validated detection. `--full-frame-scope safety` restricts inference to the trained ROI and shows unscored regions gray. The full-image score in safety scope is only over covered pixels, with incomplete coverage explicitly reported. Area views restrict the same model's stitched residual map; they are not independent area detectors, and their q99 values are not calibrated alarm decisions. A full-image grid can also produce different ROI values from an ROI-filtered grid, so existing calibration thresholds must not be applied to these diagnostic scores.
+Inference is now restricted to SafetyZone; the earlier `--full-frame-scope all` option has been removed. Outside-zone reconstruction pixels are the original input dimmed by `--outside-dim` (default 0.35; 1 retains normal input brightness). They are not model predictions. All residual maps show white outside their displayed area; uncovered pixels inside the ROI remain gray and are excluded from scoring. Boundary patches still obey `--min-coverage`, but their out-of-zone pixels are neither blended into the displayed reconstruction nor scored. The JSON full-image entry reports frame coverage and a q99 over covered ROI pixels only. Area views restrict the same model's stitched map; they are not independent detectors or calibrated alarms. Regenerate older GIFs using the safety-only grid: reformatting an old GIF cannot change the inference that originally produced it.
 
 The residual map blends smoothed per-patch errors, as in regular inference; it is not recomputed by subtracting the stitched RGB reconstruction from the original scene. All panels share `--map-vmin`/`--map-vmax`. Companion JSON records full-grid settings and combined/per-area coverage, mean error and q99 per sample; the final PNG preserves the last composite at GIF resolution. No extra raw full-frame dataset is copied or created.
 

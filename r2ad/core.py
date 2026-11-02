@@ -188,6 +188,8 @@ def save_map(out,frame,mask,result,vmin=0.,vmax=.5):
     # Fixed RGB residual scale permits comparison across frames; no per-image normalization.
     rgb=colormaps['Reds'](np.clip((amap-vmin)/(vmax-vmin),0,1),bytes=True)[...,:3]
     heat=np.ascontiguousarray(rgb[...,::-1])
+    heat[(mask>0)&~valid]=(140,140,140)
+    heat[mask==0]=(255,255,255)
     overlay=frame.copy(); overlay[valid]=cv2.addWeighted(frame,.6,heat,.4,0)[valid]
     cv2.imwrite(str(out),overlay)
     cv2.imwrite(str(out.with_name(out.stem+'_heat.png')),heat)

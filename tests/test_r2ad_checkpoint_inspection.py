@@ -172,14 +172,16 @@ def test_training_animation_full_frame_and_aligned_area_maps(tmp_path,monkeypatc
     full=record['full_frame'];a=record['augmentation']
     assert full['grid_patch_count']==4
     assert set(full['scores'])==set(AREAS)|{'SafetyZone','full_image'}
-    assert full['scores']['full_image']['coverage']==1
+    assert full['scores']['full_image']['covered_pixels']==full['scores']['SafetyZone']['covered_pixels']
     matrix=cv2.getRotationMatrix2D((24,24),a['angle'],a['zoom']);matrix[:,2]+=(a['tx'],a['ty'])
+    expected_zone=cv2.warpAffine(np.ones((48,48),np.uint8),matrix,(48,48),flags=cv2.INTER_NEAREST,borderMode=cv2.BORDER_CONSTANT)
+    assert full['scores']['full_image']['coverage']==pytest.approx(expected_zone.mean())
     for name in AREAS:
         expected=cv2.warpAffine(originals[name],matrix,(48,48),flags=cv2.INTER_NEAREST,borderMode=cv2.BORDER_CONSTANT)
         assert full['scores'][name]['mask_pixels']==int(expected.sum())
         assert full['scores'][name]['q99'] is not None
     with Image.open(output) as gif:
-        assert gif.height>1000 and gif.width==720
+        assert gif.width==1440 and gif.width>gif.height
 
 
 def test_full_frame_safety_scope_does_not_score_outside_mask():
@@ -187,7 +189,31 @@ def test_full_frame_safety_scope_does_not_score_outside_mask():
     frame=np.full((48,48,3),80,np.uint8)
     mask=np.zeros((48,48),np.uint8);mask[:24]=1
     areas={name:mask.copy() for name in AREAS};areas['PRight']=1-mask
-    _,report=full_frame_preview(frame,mask,areas,MeanEncoder(),MeanDecoder(),'cpu',16,8,.85,4,0,720,0,.5,scope='safety')
+    visual,report=full_frame_preview(frame,mask,areas,MeanEncoder(),MeanDecoder(),'cpu',16,8,.85,4,0,720,0,.5,scope='safety')
     assert report['scores']['PRight']['q99'] is None
     assert report['scores']['PRight']['coverage']==0
     assert report['scores']['full_image']['coverage']<1
+    assert visual.getpixel((100,336))==(28,28,28)  # Faded original 80*0.35, not model output.
+    assert visual.getpixel((460,336))==(255,255,255)  # Exact white outside SafetyZone.
+    assert report['scope']=='safety' and report['outside_map_color']=='white'
+    assert report['grid_patch_count']<25  # Full-image 16/8 grid has 25 patches.
+
+
+def test_existing_gif_reflow_preserves_frames_and_timing(tmp_path,monkeypatch):
+    from PIL import Image
+    from scripts import reformat_r2ad_animation as reformat
+    source=tmp_path/'portrait.gif';output=tmp_path/'landscape.gif'
+    frames=[]
+    for color in ('red','blue'):
+        image=Image.new('RGB',(100,160),'green')
+        image.paste(Image.new('RGB',(100,60),color),(0,0));frames.append(image)
+    frames[0].save(source,save_all=True,append_images=frames[1:],duration=[200,700],loop=0)
+    monkeypatch.setattr(sys,'argv',['reformat','--input',str(source),'--output',str(output),'--split-height','60'])
+    reformat.main()
+    with Image.open(output) as gif:
+        assert gif.size==(200,100) and gif.n_frames==2
+        assert gif.info['duration']==200
+        assert gif.convert('RGB').getpixel((10,10))==(255,0,0)
+        assert gif.convert('RGB').getpixel((110,10))==(0,128,0)
+        gif.seek(1);assert gif.info['duration']==700
+    assert source.is_file() and output.with_suffix('.png').is_file()

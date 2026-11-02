@@ -32,7 +32,7 @@ def render_step(frame, mask, state, visited, width, vmin, vmax):
     x,y,w,h=state['box']
     cv2.rectangle(scene,(x,y),(x+w-1,y+h-1),(0,255,255),4)
     heat=red(state['map'])
-    heat[mask==0]=(30,30,30)
+    heat[mask==0]=(255,255,255)
     heat[(mask>0)&~state['covered']]=(140,140,140)
     half=width//2;scene_h=round(frame.shape[0]*half/frame.shape[1])
     top=np.hstack([panel(scene,state.get('scene_title','Grid: yellow=current, green=processed'),half,scene_h),

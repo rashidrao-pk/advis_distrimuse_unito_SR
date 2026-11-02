@@ -135,6 +135,11 @@ def test_error_maps_use_fixed_red_scale(tmp_path):
         assert scale == {'cmap': 'Reds', 'vmin': 0., 'vmax': .5}
     assert np.array_equal(cv2.imread(str(tmp_path / 'first_heat.png'))[0],
                           cv2.imread(str(tmp_path / 'second_heat.png'))[0])
+    partial_mask=np.array([[1,0],[1,0]],np.uint8)
+    from r2ad.core import save_map
+    save_map(tmp_path/'partial.png',frame,partial_mask,{'map':values,'covered':partial_mask.astype(bool)})
+    heat=cv2.imread(str(tmp_path/'partial_heat.png'))
+    assert np.array_equal(heat[:,1],np.full((2,3),255,np.uint8))
 
 
 @pytest.mark.parametrize('stop_after',[1,3])
