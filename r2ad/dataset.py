@@ -4,13 +4,15 @@ import numpy as np
 from torch.utils.data import Dataset
 from .core import images,read_mask,random_boxes,extract,transform_frame
 
-DEFAULT_AUGMENTATION=dict(aug_translate=.03,aug_rotate=2.,aug_contrast=.15,aug_brightness=12.,patch_scale_min=.9,patch_scale_max=1.1)
+DEFAULT_AUGMENTATION=dict(aug_translate=.03,aug_rotate=2.,aug_zoom_min=1.,aug_zoom_max=1.,aug_contrast=.15,aug_brightness=12.,patch_scale_min=.9,patch_scale_max=1.1)
 
 
 def add_augmentation_arguments(parser):
     for flag,help_text in [
         ('aug-translate','Maximum translation as fraction of full image width/height; 0 disables'),
         ('aug-rotate','Maximum absolute rotation in degrees; 0 disables'),
+        ('aug-zoom-min','Minimum camera zoom about image center; 1 means unchanged'),
+        ('aug-zoom-max','Maximum camera zoom; >1 zooms in; independent of crop-size jitter'),
         ('aug-contrast','Contrast multiplier jitter around 1; 0 disables'),
         ('aug-brightness','Maximum absolute pixel brightness offset; 0 disables'),
         ('patch-scale-min','Minimum random crop size / patch-size (apparent zoom)'),
@@ -30,6 +32,8 @@ def validate_augmentation(settings=None):
         raise ValueError('Require translation/contrast in [0,1], rotation in [0,180], brightness in [0,255]')
     if not 0<settings['patch_scale_min']<=settings['patch_scale_max']:
         raise ValueError('Require 0 < patch-scale-min <= patch-scale-max')
+    if not 0<settings['aug_zoom_min']<=settings['aug_zoom_max']:
+        raise ValueError('Require 0 < aug-zoom-min <= aug-zoom-max')
     return settings
 
 
@@ -40,7 +44,9 @@ def sample_training_patch(frame,mask,patch,coverage,rng,augment=True,augmentatio
     if augment:
         translation=settings['aug_translate'];rotation=settings['aug_rotate']
         tx=float(rng.uniform(-translation,translation)*frame.shape[1]);ty=float(rng.uniform(-translation,translation)*frame.shape[0]);angle=float(rng.uniform(-rotation,rotation))
-        h,w=frame.shape[:2];M=cv2.getRotationMatrix2D((w/2,h/2),angle,1.)
+        # Do not consume another random draw when zoom is disabled: preserve older seeds.
+        zoom=float(rng.uniform(settings['aug_zoom_min'],settings['aug_zoom_max'])) if settings['aug_zoom_min']!=settings['aug_zoom_max'] else settings['aug_zoom_min']
+        h,w=frame.shape[:2];M=cv2.getRotationMatrix2D((w/2,h/2),angle,zoom)
         M[:,2]+=(tx,ty)
         mask=cv2.warpAffine(mask,M,(w,h),flags=cv2.INTER_NEAREST,borderMode=cv2.BORDER_CONSTANT)
         contrast=settings['aug_contrast'];brightness=settings['aug_brightness']
@@ -64,7 +70,7 @@ def sample_training_patch(frame,mask,patch,coverage,rng,augment=True,augmentatio
         scene=cv2.warpAffine(original,M,(original.shape[1],original.shape[0]),borderMode=cv2.BORDER_REFLECT_101)
         scene=np.uint8(np.clip(scene.astype(np.float32)*alpha+beta,0,255))
     return tensor,dict(scene=scene,mask=mask,box=box,
-                       augmentation=dict(tx=tx,ty=ty,angle=angle,alpha=alpha,beta=beta) if augment else {})
+                       augmentation=dict(tx=tx,ty=ty,angle=angle,zoom=zoom,alpha=alpha,beta=beta) if augment else {})
 
 
 class RectangleDataset(Dataset):

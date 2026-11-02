@@ -61,7 +61,7 @@ def test_augmentation_controls_zero_and_gentle_ranges():
     zero=dict(aug_translate=0,aug_rotate=0,aug_contrast=0,aug_brightness=0,patch_scale_min=1,patch_scale_max=1)
     _,info=sample_training_patch(frame,mask,64,.85,np.random.default_rng(10),details=True,settings=zero)
     assert np.array_equal(info['scene'],frame)
-    assert info['augmentation']==dict(tx=0.,ty=0.,angle=0.,alpha=1.,beta=0.)
+    assert info['augmentation']==dict(tx=0.,ty=0.,angle=0.,zoom=1.,alpha=1.,beta=0.)
     assert info['box'][2:]==(64,64)
     gentle=dict(aug_translate=.005,aug_rotate=.5,aug_contrast=.05,aug_brightness=4,patch_scale_min=.98,patch_scale_max=1.02)
     for seed in range(8):
@@ -72,3 +72,25 @@ def test_augmentation_controls_zero_and_gentle_ranges():
         assert round(64*.98)<=info['box'][2]<=round(64*1.02)
     with pytest.raises(ValueError):validate_augmentation(dict(aug_translate=-.1))
     with pytest.raises(ValueError):validate_augmentation(dict(patch_scale_min=1.2,patch_scale_max=1.))
+
+
+def test_camera_zoom_translation_without_rotation():
+    from r2ad.dataset import sample_training_patch,validate_augmentation
+    image=np.random.default_rng(1).integers(0,256,(240,320,3),dtype=np.uint8)
+    mask=np.zeros((240,320),np.uint8);mask[30:210,50:270]=1
+    settings=dict(aug_translate=.005,aug_rotate=0,aug_zoom_min=1.,aug_zoom_max=1.03,
+                  aug_contrast=0,aug_brightness=0,patch_scale_min=1,patch_scale_max=1)
+    for seed in range(4):
+        crop,info=sample_training_patch(image,mask,64,.85,np.random.default_rng(seed),details=True,settings=settings)
+        full,reference=sample_training_patch(image,mask,64,.85,np.random.default_rng(seed),
+                                            augmentation_mode='full',details=True,settings=settings)
+        a=info['augmentation']
+        assert a['angle']==0 and 1<=a['zoom']<=1.03
+        assert abs(a['tx'])<=1.6 and abs(a['ty'])<=1.2
+        assert info['box'][2:]==(64,64)
+        matrix=cv2.getRotationMatrix2D((160,120),0,a['zoom']);matrix[:,2]+=(a['tx'],a['ty'])
+        expected=cv2.warpAffine(mask,matrix,(320,240),flags=cv2.INTER_NEAREST,borderMode=cv2.BORDER_CONSTANT)
+        assert np.array_equal(info['mask'],expected)
+        assert (crop-full).abs().mean()<.002
+    with pytest.raises(ValueError):validate_augmentation(dict(aug_zoom_min=0))
+    with pytest.raises(ValueError):validate_augmentation(dict(aug_zoom_min=1.1,aug_zoom_max=1.))
