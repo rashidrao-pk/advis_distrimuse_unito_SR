@@ -70,6 +70,7 @@ def sample_training_patch(frame,mask,patch,coverage,rng,augment=True,augmentatio
         scene=cv2.warpAffine(original,M,(original.shape[1],original.shape[0]),borderMode=cv2.BORDER_REFLECT_101)
         scene=np.uint8(np.clip(scene.astype(np.float32)*alpha+beta,0,255))
     return tensor,dict(scene=scene,mask=mask,box=box,
+                       affine_matrix=M if augment else np.array([[1.,0.,0.],[0.,1.,0.]]),
                        augmentation=dict(tx=tx,ty=ty,angle=angle,zoom=zoom,alpha=alpha,beta=beta) if augment else {})
 
 

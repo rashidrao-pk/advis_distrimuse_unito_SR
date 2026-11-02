@@ -31,18 +31,52 @@ Use a specific periodic checkpoint instead if needed. The tool requires normal `
 
 Only `model_r2ad_epoch_0012.pt` (64-dimensional latent) and one original normal frame were available locally. A deliberately marked exploratory audit used 256 unaugmented random patches from scenario 1_0:
 
-| Diagnostic | Result |
-|---|---:|
-| Active dimensions at threshold 0.01 | 64 / 64 |
-| Participation-ratio effective rank | 20.14 |
-| Entropy effective rank | 31.40 |
-| Components for 95% variation | 41 |
-| Mean KL per dimension | 5.0546 nats |
-| Independent source frames used | **1** |
+| Diagnostic                          |      Result |
+| ----------------------------------- | ----------: |
+| Active dimensions at threshold 0.01 |     64 / 64 |
+| Participation-ratio effective rank  |       20.14 |
+| Entropy effective rank              |       31.40 |
+| Components for 95% variation        |          41 |
+| Mean KL per dimension               | 5.0546 nats |
+| Independent source frames used      |       **1** |
 
 Artifacts: `reports/r2ad_latent_audit_epoch12_exploratory/`. This is not the latest Epito model, not a held-out validation audit, and not evidence that 64 dimensions are saturated. All units are varying on this sample, but some directions are correlated. It does not establish that increasing width will help.
 
 ## Smaller source patches with matching inference
+
+### Estimate 32–128 pixel coverage before choosing the next experiment
+
+```bash
+python scripts/estimate_r2ad_patch_coverage.py \
+  --config configs/cf_dataset_epito.yaml \
+  --patch-sizes 32 48 64 96 128 224 \
+  --stride-ratios 1 0.5 0.25 --min-coverage 0.85 \
+  --output-dir reports/r2ad_patch_coverage
+```
+
+Optionally add `--image /path/to/original/frame.png` for overlays on the scene; without it the mask is shown on a gray background. Open `index.html`, `grid_coverage.csv`, `random_coverage.csv`, and `report.json`. Green is covered mask, red is uncovered, and yellow outlines accepted crops. Every source crop still resizes to 128×128 network input. Source patches >=16 are supported; use `--patch-size 64 --fixed-patch-size` or `--patch-size 32 --fixed-patch-size` for genuinely smaller training crops. Validation and inference use that same nominal source size.
+
+The estimator uses the actual inference grid including its end-aligned windows. Counts are accepted grid windows, not a minimum packing solution; even stride=patch can overlap at image edges. `min-coverage` is the fraction of each patch inside SafetyZone, whereas `target-coverage` (default 99%) concerns all SafetyZone pixels. These are different quantities. The optimistic `ceil(mask_pixels/patch_area)` bound ignores boundaries, rejected windows and overlap, so it is not a practical coverage guarantee. Changing grid origin/stride/occupancy can change the result.
+
+Random trials use fixed-size patches on the unaugmented mask, with default budgets 6/24/48/96/192 and three seeds. They estimate union coverage on one frame; they do not guarantee that training's random patches fully cover each frame or predict pixel coverage under changing zoom/translation. Grid CSVs include per-area coverage when component masks are available. Missing component files are explicitly reported; combined-mask estimates still work, or use `--strict-area-masks` to require all four.
+
+The current Mac mask examined for this estimator contains **302,859 positive pixels** in a 1920×1080 frame (14.61%). It differs from the earlier 394,399-pixel mask (19.02%). These counts therefore describe the current local file, not automatically the mask in an older checkpoint or on Epito. The report records the mask checksum; rerun on the target machine and inspect the overlay.
+
+| Source size | Stride | Accepted grid patches | Mask coverage |
+|---|---:|---:|---:|
+| 32×32 | 16 | 1,101 | 98.53% |
+| 32×32 | 8 | 4,289 | 99.20% |
+| 48×48 | 24 | 482 | 99.03% |
+| 64×64 | 32 | 250 | 96.44% |
+| 64×64 | 16 | 973 | 99.32% |
+| 96×96 | 24 | 402 | 99.77% |
+| 128×128 | 32 | 193 | 97.77% |
+
+On this mask, six random 64×64 patches cover only about **7.63%** on average in the seeded trials; six random 32×32 patches cover about **2.02%**. Smaller crops therefore reduce sampled area per frame at a fixed training sample budget. Increasing samples/frame increases network work, because the model still sees 128×128 inputs. Grid inference can be much more expensive with smaller crops. Upsampling does not create source detail, and very small crops discard context needed for some anomalies.
+
+Smaller source patches can reduce shared scene context, but do not eliminate correlation from neighboring/overlapping patches or adjacent video frames. Preserve recording-group separation and consider temporal subsampling separately; patch size alone cannot establish independent samples. Choose patch size/coverage on normal validation data, then recalibrate the new model.
+
+### Initial 128-pixel control experiment
 
 For the first experiment, use **128×128 source crops**, matching the existing network's 128×128 input. Enable `--fixed-patch-size` so training and validation disable crop-size jitter. Without this flag, the historical 0.9–1.1 crop-size range remains enabled unless manually configured.
 
@@ -56,6 +90,32 @@ python -u scripts/train_r2ad.py \
   --epochs 20 --batch-size 32 --workers 8 --device cuda --precision bf16 \
   --aug-translate 0.005 --aug-rotate 0.5 --aug-contrast 0.05 --aug-brightness 4 \
   --samples-per-frame 6 --save-cp-k 1 --latent-audit-every 5
+```
+
+```bash
+python -u scripts/train_r2ad.py \
+  --config configs/cf_dataset_epito.yaml --safety-area SafetyZone \
+  --train-dir /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/annotated_split/train.csv \
+  --val-dir /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/annotated_split/val.csv \
+  --output results/r2ad/SafetyZone_p128_z64/model_r2ad.pt \
+  --patch-size 128 --fixed-patch-size --latent-dims 64 \
+  --epochs 20 --batch-size 32 --workers 8 --device cuda --precision bf16 \
+  --aug-translate 0.005 \
+  --aug-rotate 0.5 \
+  --aug-contrast 0.05 --aug-brightness 4 \
+  --samples-per-frame 6 --save-cp-k 1 --latent-audit-every 5
+  --aug-translate 0.005 \
+  --aug-rotate 0 \
+  --aug-zoom-min 1.0 \
+  --aug-zoom-max 1.03 \
+  --aug-contrast 0.05 \
+  --aug-brightness 4 \
+  --patch-size 128 \
+  --fixed-patch-size \
+  --samples-per-frame 6 \
+  --save-cp-k 1 \
+  --latent-audit-every 5
+
 ```
 
 This is a new experiment: do not resume a 224-pixel full-state run while changing its training scale. The network input/output remain 128×128; smaller source crops do not automatically reduce network FLOPs. Smaller patches also lose scene context and cover fewer source pixels per training sample; preserve these facts in comparisons.
@@ -91,7 +151,36 @@ Camera zoom is a centered affine scaling of both image and mask, followed by tra
 
 This zoom is independent of source patch-size jitter. `--fixed-patch-size` keeps the source crop at 128×128 while objects within it can become larger under camera zoom. The network still receives 128×128. Training animations use the same zoom-aware sampler, record the sampled zoom in JSON, and inherit range settings from updated checkpoint metadata unless overridden. They do not change checkpoint weights. Defaults are `--aug-zoom-min 1 --aug-zoom-max 1`, retaining previous behavior and random seeds for older runs; custom camera zoom currently uses the extracted-image route. Add the zoom flags to the existing training command; changing them during resume is recorded as a new augmentation condition.
 
-### Latent-width comparison
+### Full-frame and safety-area panels in the augmentation animation
+
+Add `--full-frame` to `scripts/animate_r2ad_training.py` to append these views for every random augmented scene:
+
+- Hann-weighted full-scene reconstruction.
+- Full-image fixed-scale Reds residual map.
+- Combined SafetyZone residual overlay and isolated map.
+- PLeft, PRight, RoboArm and ConvBelt maps with coverage and q99 scores.
+
+All four original masks from `data.mask_types` are required. The exact zoom/translation/rotation matrix used for the image is also applied to each area mask with nearest-neighbor interpolation. The model, nominal source patch size and scene match the random-patch panel; full-frame reconstruction uses an additional fixed overlapping grid. Training itself still optimizes random patches and does not stitch full-frame maps.
+
+```bash
+python scripts/animate_r2ad_training.py \
+  --config configs/cf_dataset_epito.yaml \
+  --train-csv /beegfs/home/mrashid/datasets/AD/SR/V6/r2ad/annotated_split/train.csv \
+  --checkpoint results/r2ad/SafetyZone_fast_b32/checkpoints/model_r2ad_epoch_0016.pt \
+  --output reports/r2ad_zoom_translation_full_frame.gif --device cuda \
+  --aug-translate 0.005 --aug-rotate 0 --aug-zoom-min 1 --aug-zoom-max 1.03 \
+  --aug-contrast 0.05 --aug-brightness 4 --patch-scale-min 1 --patch-scale-max 1 \
+  --num-patches 6 --seed 42 --fps 2 --map-vmin 0 --map-vmax 0.5 \
+  --full-frame --full-frame-scope all --batch-size 32
+```
+
+This inherits the checkpoint's source patch size; an older 224-pixel model does not become a 128-pixel model by disabling size jitter. Grid stride defaults from that size and can be set explicitly with `--stride`. Full-image inference is much more expensive than one random patch per GIF frame, so begin with six samples. For repeated zooms of one scene, add `--image /path/to/a/frame/in/train.csv`.
+
+`--full-frame-scope all` reconstructs outside the SafetyZone training ROI too; those pixels are diagnostic **extrapolation**, not validated detection. `--full-frame-scope safety` restricts inference to the trained ROI and shows unscored regions gray. The full-image score in safety scope is only over covered pixels, with incomplete coverage explicitly reported. Area views restrict the same model's stitched residual map; they are not independent area detectors, and their q99 values are not calibrated alarm decisions. A full-image grid can also produce different ROI values from an ROI-filtered grid, so existing calibration thresholds must not be applied to these diagnostic scores.
+
+The residual map blends smoothed per-patch errors, as in regular inference; it is not recomputed by subtracting the stitched RGB reconstruction from the original scene. All panels share `--map-vmin`/`--map-vmax`. Companion JSON records full-grid settings and combined/per-area coverage, mean error and q99 per sample; the final PNG preserves the last composite at GIF resolution. No extra raw full-frame dataset is copied or created.
+
+### Comparing latent widths
 
 After the validation audit, compare **64 versus 128 latent dimensions** with the same 128-pixel patches, data split, augmentation, epoch budget, seeds and scoring configuration. Replace `--latent-dims 64` above with `--latent-dims 128` and use `results/r2ad/SafetyZone_p128_z128/model_r2ad.pt`. This must start a new model: a 64-wide checkpoint cannot be resumed as 128-wide because encoder/decoder parameter shapes differ. The trainer now rejects that request explicitly rather than silently retaining the old width.
 

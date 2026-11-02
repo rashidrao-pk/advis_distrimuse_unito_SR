@@ -15,6 +15,7 @@ from r2ad.core import load_models,read_mask,checkpoint_patch_settings
 from r2ad.dataset import sample_training_patch,add_augmentation_arguments,augmentation_from_args,validate_augmentation
 from r2ad.frame_manifest import read_frame_manifest
 from scripts.animate_r2ad_inference import render_step
+from r2ad.frame_preview import full_frame_preview,append_panels,AREAS
 
 
 def main():
@@ -36,6 +37,11 @@ def main():
     p.add_argument('--map-vmin',type=float,default=0.)
     p.add_argument('--map-vmax',type=float,default=.5)
     p.add_argument('--width',type=int,default=1024)
+    p.add_argument('--full-frame',action='store_true',help='Append stitched scene, combined SafetyZone, and per-area maps')
+    p.add_argument('--full-frame-scope',choices=['all','safety'],default='all',help='all reconstructs outside the training ROI too (diagnostic extrapolation)')
+    p.add_argument('--stride',type=int,default=None,help='Full-frame grid stride; defaults from checkpoint patch size')
+    p.add_argument('--batch-size',type=int,default=32,help='Full-frame inference batch size')
+    p.add_argument('--sigma',type=float,default=1.,help='Full-frame residual smoothing, same as evaluation')
     p.add_argument('--safety-area',choices=['SafetyZone','PLeft','PRight','RoboArm','ConvBelt'],default='SafetyZone')
     args=p.parse_args()
     try:augmentation_settings=augmentation_from_args(args)
@@ -43,6 +49,7 @@ def main():
     supplied={token.split('=')[0].lstrip('-').replace('-','_') for token in sys.argv[1:] if token.startswith('--')}
     if args.num_patches<1 or args.width<720 or args.width%2 or args.fps<=0:
         p.error('Require positive patch counts/sizes/FPS and even width >=720')
+    if args.batch_size<1 or args.sigma<0:p.error('Require batch-size >0 and sigma >=0')
     if not 0<args.min_coverage<=1 or not 0<=args.map_vmin<args.map_vmax<=1 or args.output.suffix.lower()!='.gif':
         p.error('Invalid coverage/color limits or output extension (must be .gif)')
     rows=read_frame_manifest(args.train_csv,with_metadata=True)
@@ -53,16 +60,20 @@ def main():
         if not rows:
             raise ValueError('--image is not a member of the normal training split')
     cfg=load_config(args.config)
+    if args.full_frame:
+        if args.safety_area!='SafetyZone':p.error('--full-frame combined/per-area view requires a SafetyZone model')
+        missing=set(AREAS)-set(cfg.get('data',{}).get('mask_types',{}))
+        if missing:p.error(f'--full-frame requires all four original area masks; missing {sorted(missing)}')
     value=cfg['r2ad']['safety_zone_mask'] if args.safety_area=='SafetyZone' else cfg['data']['mask_types'][args.safety_area]
     mask_path=Path(value).expanduser()
     if not mask_path.is_absolute():
         mask_path=Path(cfg['data']['dataset_base']).expanduser()/mask_path
     device=('cuda' if torch.cuda.is_available() else 'cpu') if args.device=='auto' else args.device
     choices=np.random.default_rng(args.seed).integers(len(rows),size=args.num_patches)
-    frames=[];records=[]
+    frames=[];records=[];area_cache={}
     for checkpoint in args.checkpoints:
         enc,dec,ck=load_models(checkpoint,device)
-        patch_size,_=checkpoint_patch_settings(ck,args.patch_size)
+        patch_size,stride=checkpoint_patch_settings(ck,args.patch_size,args.stride)
         settings=validate_augmentation({key:ck.get('config',{}).get(key,value) if key not in supplied else value
                                        for key,value in augmentation_settings.items()})
         if ck.get('config',{}).get('safety_area',args.safety_area)!=args.safety_area:
@@ -90,12 +101,27 @@ def main():
                        input_rgb=((patch.permute(1,2,0).numpy()+1)/2).clip(0,1),reconstruction_rgb=rgb,patch_error=error,
                        scene_title='Augmented normal training scene; yellow=sample',
                        map_title=f'Current patch error only [{args.map_vmin:g}, {args.map_vmax:g}]',
-                       status_lines=[label,'Random sampling + augmentation from trainer. Frozen checkpoint; no optimizer updates or map stitching.'])
-            frames.append(render_step(info['scene'],info['mask'],state,[],args.width,args.map_vmin,args.map_vmax))
+                       status_lines=[label,'Random training patch above; full-grid diagnostic below. Frozen checkpoint, no optimizer updates.' if args.full_frame
+                                     else 'Random sampling + augmentation from trainer. Frozen checkpoint; no optimizer updates or map stitching.'])
+            visual=render_step(info['scene'],info['mask'],state,[],args.width,args.map_vmin,args.map_vmax)
+            full_report=None
+            if args.full_frame:
+                transformed={}
+                for name in AREAS:
+                    value=Path(cfg['data']['mask_types'][name]).expanduser()
+                    if not value.is_absolute():value=Path(cfg['data']['dataset_base']).expanduser()/value
+                    key=(str(value),frame.shape[:2])
+                    if key not in area_cache:area_cache[key]=read_mask(value,frame.shape)
+                    transformed[name]=cv2.warpAffine(area_cache[key],info['affine_matrix'],(frame.shape[1],frame.shape[0]),
+                                                     flags=cv2.INTER_NEAREST,borderMode=cv2.BORDER_CONSTANT)
+                extra,full_report=full_frame_preview(info['scene'],info['mask'],transformed,enc,dec,device,
+                    patch_size,stride,args.min_coverage,args.batch_size,args.sigma,args.width,args.map_vmin,args.map_vmax,args.full_frame_scope)
+                visual=append_panels(visual,extra)
+            frames.append(visual)
             records.append(dict(checkpoint=str(checkpoint.resolve()),epoch=ck.get('epoch'),sample=index+1,
                                 source=str(row['source']),box=list(info['box']),augmentation=info['augmentation'],
                                 augmentation_settings=settings,
-                                mean_patch_error=float(error.mean())))
+                                mean_patch_error=float(error.mean()),full_frame=full_report))
             print(label,flush=True)
         del enc,dec,ck
     args.output.parent.mkdir(parents=True,exist_ok=True)
@@ -105,7 +131,7 @@ def main():
     frames[0].save(args.output,save_all=True,append_images=frames[1:],duration=durations,loop=0,optimize=False)
     frames[-1].save(args.output.with_suffix('.png'))
     report=dict(samples=records,settings={k:[str(p) for p in v] if k=='checkpoints' else str(v) if isinstance(v,Path) else v for k,v in vars(args).items()},
-                note='Uses the actual image-training sampler and augmentations. Frozen latent-mean reconstructions; not a replay of optimizer steps. Multiple checkpoints reuse identical samples and augmentations in supplied order. No training anomaly map is stitched.')
+                note='Uses the actual image-training sampler and augmentations. Frozen latent-mean reconstructions; not optimizer updates. Optional full-frame panels run a separate fixed-grid diagnostic on the same augmented scene; training itself does not stitch maps. All area masks use the identical affine transform. Outside trained ROI is extrapolation; area scores are uncalibrated views of one model.')
     args.output.with_suffix('.json').write_text(json.dumps(report,indent=2))
     print(f'Saved {args.output}',flush=True)
 

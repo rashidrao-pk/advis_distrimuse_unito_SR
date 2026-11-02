@@ -142,3 +142,52 @@ def test_inspection_uses_same_two_classes_for_each_checkpoint(tmp_path,monkeypat
     with (output/'class_summary.csv').open() as stream:
         assert len(list(csv.DictReader(stream)))==4
     assert json.loads((output/'report.json').read_text())['sample_count']==2
+
+
+def test_training_animation_full_frame_and_aligned_area_maps(tmp_path,monkeypatch):
+    from PIL import Image
+    from scripts import animate_r2ad_training as animation
+    from r2ad.frame_preview import AREAS
+    frame=tmp_path/'frame.png';mask=tmp_path/'mask.png'
+    cv2.imwrite(str(frame),np.full((48,48,3),80,np.uint8))
+    cv2.imwrite(str(mask),np.full((48,48),255,np.uint8))
+    paths={};originals={}
+    for i,area in enumerate(AREAS):
+        data=np.zeros((48,48),np.uint8)
+        y,x=(i//2)*24,(i%2)*24;data[y:y+24,x:x+24]=1
+        path=tmp_path/f'{area}.png';cv2.imwrite(str(path),data*255)
+        paths[area]=str(path);originals[area]=data
+    config=tmp_path/'config.yaml'
+    config.write_text(yaml.safe_dump({'r2ad':{'safety_zone_mask':str(mask)},'data':{'mask_types':paths}}))
+    manifest=tmp_path/'train.csv'
+    manifest.write_text(f'source,split,label\n{frame},train,normal\n')
+    monkeypatch.setattr(animation,'load_models',lambda *args:(MeanEncoder(),MeanDecoder(),{'epoch':3}))
+    output=tmp_path/'full.gif'
+    monkeypatch.setattr(sys,'argv',['animate','--config',str(config),'--train-csv',str(manifest),
+        '--checkpoint',str(tmp_path/'model.pt'),'--output',str(output),'--device','cpu',
+        '--patch-size','32','--stride','16','--num-patches','1','--width','720',
+        '--aug-rotate','0','--aug-zoom-min','1.03','--aug-zoom-max','1.03','--full-frame'])
+    animation.main()
+    record=json.loads(output.with_suffix('.json').read_text())['samples'][0]
+    full=record['full_frame'];a=record['augmentation']
+    assert full['grid_patch_count']==4
+    assert set(full['scores'])==set(AREAS)|{'SafetyZone','full_image'}
+    assert full['scores']['full_image']['coverage']==1
+    matrix=cv2.getRotationMatrix2D((24,24),a['angle'],a['zoom']);matrix[:,2]+=(a['tx'],a['ty'])
+    for name in AREAS:
+        expected=cv2.warpAffine(originals[name],matrix,(48,48),flags=cv2.INTER_NEAREST,borderMode=cv2.BORDER_CONSTANT)
+        assert full['scores'][name]['mask_pixels']==int(expected.sum())
+        assert full['scores'][name]['q99'] is not None
+    with Image.open(output) as gif:
+        assert gif.height>1000 and gif.width==720
+
+
+def test_full_frame_safety_scope_does_not_score_outside_mask():
+    from r2ad.frame_preview import full_frame_preview,AREAS
+    frame=np.full((48,48,3),80,np.uint8)
+    mask=np.zeros((48,48),np.uint8);mask[:24]=1
+    areas={name:mask.copy() for name in AREAS};areas['PRight']=1-mask
+    _,report=full_frame_preview(frame,mask,areas,MeanEncoder(),MeanDecoder(),'cpu',16,8,.85,4,0,720,0,.5,scope='safety')
+    assert report['scores']['PRight']['q99'] is None
+    assert report['scores']['PRight']['coverage']==0
+    assert report['scores']['full_image']['coverage']<1

@@ -269,8 +269,8 @@ def train(pause):
         if not Path(args.manifest).is_file():raise FileNotFoundError(args.manifest)
         if not Path(args.mask).is_file():raise FileNotFoundError(args.mask)
     else:args=resolve(args,'train')
-    if args.latent_dims<1 or args.patch_size<1 or args.latent_audit_every<0 or args.latent_active_threshold<0:
-        p.error('Require positive latent/patch sizes, nonnegative audit interval and threshold')
+    if args.latent_dims<1 or args.patch_size<16 or args.latent_audit_every<0 or args.latent_active_threshold<0:
+        p.error('Require latent size >0, source patch size >=16, nonnegative audit interval and threshold')
     if args.epochs < 1 or args.batch_size < 1 or args.samples_per_frame < 1:
         p.error('epochs, batch-size and samples-per-frame must be positive')
     if args.save_cp_k < 0 or args.save_every_steps < 0:
