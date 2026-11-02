@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from r2ad.core import read_mask, random_boxes, boxes, extract, load_models
 from r2ad.mcap_data import McapFrameReader, load_manifest
 from r2ad.config import load_config
+from r2ad.frame_manifest import read_frame_manifest
 
 AREAS = ('PLeft', 'PRight', 'RoboArm', 'ConvBelt')
 COLORS = [(240,140,20),(20,180,240),(30,220,70),(200,90,220)]
@@ -91,7 +92,8 @@ def save_reconstruction_grid(frame, coords, checkpoint, out, device, n=6):
 def main():
     p=argparse.ArgumentParser(description='Visual audit of randomized training patches and fixed inference grid')
     p.add_argument('--config',default='configs/cf_dataset_epito.yaml')
-    p.add_argument('--manifest',default=None)
+    p.add_argument('--manifest',default=None, help='Image split CSV or legacy MCAP manifest')
+    p.add_argument('--fixed-patch-size',action='store_true', help='Use exact source patch dimensions; disable size jitter')
     p.add_argument('--split',choices=['train','val'],default='val')
     p.add_argument('--frame-index',type=int,default=0)
     p.add_argument('--patch-size',type=int,default=224)
@@ -108,14 +110,25 @@ def main():
     root=Path(cfg['data']['dataset_base']).expanduser()
     rcfg=cfg.get('r2ad') or {}
     manifest=path_from(root,args.manifest or rcfg.get('manifest') or 'r2ad/manifest.csv')
-    rows=load_manifest(manifest,args.split)
+    with manifest.open(newline='', encoding='utf-8') as stream:
+        image_manifest = 'source' in (csv.DictReader(stream).fieldnames or [])
+    rows = read_frame_manifest(manifest, with_metadata=True) if image_manifest else load_manifest(manifest,args.split)
+    if image_manifest:
+        rows = [row for row in rows if not row.get('split') or row['split'] == args.split]
+    if args.patch_size <= 0 or args.stride <= 0 or args.samples_per_frame <= 0 or args.simulate_frames <= 0:
+        p.error('Patch size, stride, samples and simulated frames must be positive')
     if args.frame_index<0 or args.frame_index>=len(rows):
         p.error(f'--frame-index must be from 0 to {len(rows)-1}')
     out=Path(args.output_dir) if args.output_dir else Path('results')/'r2ad'/'coverage_audit'
     out.mkdir(parents=True,exist_ok=True)
-    reader=McapFrameReader()
-    try: frame=reader.read(rows[args.frame_index])
-    finally: reader.close()
+    if image_manifest:
+        frame = cv2.imread(str(rows[args.frame_index]['source']))
+        if frame is None:
+            raise ValueError('Cannot decode selected source frame')
+    else:
+        reader=McapFrameReader()
+        try: frame=reader.read(rows[args.frame_index])
+        finally: reader.close()
     hh,ww=frame.shape[:2]
     mask_paths=cfg['data']['mask_types']
     masks={name:read_mask(path_from(root,mask_paths[name]),frame.shape) for name in AREAS}
@@ -126,17 +139,22 @@ def main():
         if not np.array_equal(union,disk_mask):
             print('[WARNING] The saved SafetyZone mask does not match the OR of the four masks.')
     rng=np.random.default_rng(args.seed)
-    six=random_boxes(union,args.patch_size,args.samples_per_frame,rng,args.min_coverage)
+    scale = (1., 1.) if args.fixed_patch_size else (.9, 1.1)
+    six=random_boxes(union,args.patch_size,args.samples_per_frame,rng,args.min_coverage,scale=scale)
     random_many=[]
     for _ in range(args.simulate_frames):
-        random_many.extend(random_boxes(union,args.patch_size,args.samples_per_frame,rng,args.min_coverage))
+        random_many.extend(random_boxes(union,args.patch_size,args.samples_per_frame,rng,args.min_coverage,scale=scale))
     try: fixed=boxes(union,args.patch_size,args.stride,args.min_coverage)
     except ValueError as e:
         print('[WARNING] Fixed grid has no valid boxes:',e)
         fixed=[]
     summary={
-        'input':{'scenario':rows[args.frame_index]['scenario'],'frame_shape':[hh,ww],
+        'input':{'scenario':rows[args.frame_index].get('scenario', rows[args.frame_index].get('scenario_id', 'unknown')),'frame_shape':[hh,ww],
                  'split':args.split,'manifest_records':len(rows)},
+        'settings':{'patch_size':args.patch_size,'stride':args.stride,'patch_scale':scale,
+                    'min_coverage':args.min_coverage,'seed':args.seed,'manifest':str(manifest),
+                    'source':str(rows[args.frame_index].get('source', 'MCAP')),
+                    'augmentation':'none; geometry-only sampling audit'},
         'six_random_rectangles':stats_for(patch_coverage(union,six),{'SafetyZone':union,**masks}),
         'simulation':{'frames':args.simulate_frames,'patches':len(random_many),
                       'coverage':stats_for(patch_coverage(union,random_many),{'SafetyZone':union,**masks})},
