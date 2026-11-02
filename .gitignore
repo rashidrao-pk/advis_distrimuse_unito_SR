@@ -49,3 +49,6 @@ scripts/build/
 /data/**
 data/
 data
+
+logs
+logs/
