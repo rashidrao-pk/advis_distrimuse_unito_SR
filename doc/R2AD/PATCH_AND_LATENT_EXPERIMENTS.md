@@ -63,14 +63,14 @@ Random trials use fixed-size patches on the unaugmented mask, with default budge
 The current Mac mask examined for this estimator contains **302,859 positive pixels** in a 1920×1080 frame (14.61%). It differs from the earlier 394,399-pixel mask (19.02%). These counts therefore describe the current local file, not automatically the mask in an older checkpoint or on Epito. The report records the mask checksum; rerun on the target machine and inspect the overlay.
 
 | Source size | Stride | Accepted grid patches | Mask coverage |
-|---|---:|---:|---:|
-| 32×32 | 16 | 1,101 | 98.53% |
-| 32×32 | 8 | 4,289 | 99.20% |
-| 48×48 | 24 | 482 | 99.03% |
-| 64×64 | 32 | 250 | 96.44% |
-| 64×64 | 16 | 973 | 99.32% |
-| 96×96 | 24 | 402 | 99.77% |
-| 128×128 | 32 | 193 | 97.77% |
+| ----------- | -----: | --------------------: | ------------: |
+| 32×32       |     16 |                 1,101 |        98.53% |
+| 32×32       |      8 |                 4,289 |        99.20% |
+| 48×48       |     24 |                   482 |        99.03% |
+| 64×64       |     32 |                   250 |        96.44% |
+| 64×64       |     16 |                   973 |        99.32% |
+| 96×96       |     24 |                   402 |        99.77% |
+| 128×128     |     32 |                   193 |        97.77% |
 
 On this mask, six random 64×64 patches cover only about **7.63%** on average in the seeded trials; six random 32×32 patches cover about **2.02%**. Smaller crops therefore reduce sampled area per frame at a fixed training sample budget. Increasing samples/frame increases network work, because the model still sees 128×128 inputs. Grid inference can be much more expensive with smaller crops. Upsampling does not create source detail, and very small crops discard context needed for some anomalies.
 

@@ -56,6 +56,10 @@ def main():
     device = torch.device(args.device)
     cuda = device.type == 'cuda'
     if cuda:
+        if not torch.cuda.is_available():
+            p.error('CUDA is unavailable; run on an allocated GPU node or use --device cpu')
+        if device.index is None:
+            device = torch.device('cuda', torch.cuda.current_device())
         torch.cuda.set_device(device)
     def sync():
         if cuda:
